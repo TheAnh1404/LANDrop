@@ -2,6 +2,7 @@ package com.landrop.network;
 
 import com.landrop.chat.ChatCli;
 import com.landrop.chat.ChatService;
+import com.landrop.discovery.PeerNode;
 import com.landrop.peer.PeerConnection;
 import com.landrop.peer.PeerListener;
 
@@ -26,10 +27,59 @@ public class Main {
         String mode = args[0].trim().toLowerCase();
 
         switch (mode) {
+            case "peer" -> handlePeer(args);
+            case "discovery" -> handleDiscovery(args);
             case "server" -> handleServer(args);
             case "client" -> handleClient(args);
             default -> printUsage();
         }
+    }
+
+    private static void handlePeer(String[] args) {
+        if (args.length < 5) {
+            printUsage();
+            return;
+        }
+
+        int localPort;
+        try {
+            localPort = Integer.parseInt(args[1].trim());
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid local P2P port: " + args[1]);
+            return;
+        }
+
+        String discoveryHost = args[2].trim();
+        int discoveryPort;
+        try {
+            discoveryPort = Integer.parseInt(args[3].trim());
+        } catch (NumberFormatException e) {
+            System.err.println("Invalid discovery port: " + args[3]);
+            return;
+        }
+
+        String displayName = args[4].trim();
+        String advertisedHost = args.length > 5 ? args[5].trim() : "127.0.0.1";
+
+        try {
+            PeerNode node = new PeerNode(localPort, discoveryHost, discoveryPort, displayName, advertisedHost, System.in, System.out);
+            Runtime.getRuntime().addShutdownHook(new Thread(node::close, "peer-node-shutdown"));
+            node.start();
+        } catch (Exception e) {
+            System.err.println("[Peer Error] " + e.getMessage());
+        }
+    }
+
+    private static void handleDiscovery(String[] args) {
+        int port = 8000;
+        if (args.length > 1) {
+            try {
+                port = Integer.parseInt(args[1].trim());
+            } catch (NumberFormatException e) {
+                System.err.println("Invalid discovery port: " + args[1] + ". Using default 8000.");
+            }
+        }
+        com.landrop.discovery.DiscoveryServer.main(new String[]{String.valueOf(port)});
     }
 
     private static void handleServer(String[] args) {
@@ -181,6 +231,12 @@ public class Main {
 
     private static void printUsage() {
         System.out.println("Usage:");
+        System.out.println();
+        System.out.println("Peer (Phase 4):");
+        System.out.println("  peer <local P2P port> <discovery host> <discovery port> <display name> [advertised host]");
+        System.out.println();
+        System.out.println("Discovery Server (Phase 4):");
+        System.out.println("  discovery [port]");
         System.out.println();
         System.out.println("Chat Server (Phase 3):");
         System.out.println("  server <port>");

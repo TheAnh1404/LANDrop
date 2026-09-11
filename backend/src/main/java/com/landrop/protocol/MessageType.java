@@ -16,7 +16,14 @@ public enum MessageType {
     FILE_REQUEST((byte) 6),
     CHUNK_REQUEST((byte) 7),
     CHUNK_RESPONSE((byte) 8),
-    TRANSFER_ACK((byte) 9);
+    TRANSFER_ACK((byte) 9),
+    REGISTER((byte) 10),
+    REGISTER_ACK((byte) 11),
+    PEER_LIST_REQUEST((byte) 12),
+    PEER_LIST((byte) 13),
+    HEARTBEAT((byte) 14),
+    HEARTBEAT_ACK((byte) 15),
+    UNREGISTER((byte) 16);
 
     private final byte code;
 
