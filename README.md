@@ -15,7 +15,7 @@ Từ thư mục gốc `LANDrop`:
 ```bash
 mvn clean install
 ```
-*(Biên dịch và chạy kiểm thử toàn bộ 92 unit & integration tests trên cả `backend` (82 tests) và `frontend` (10 tests)).*
+*(Biên dịch và chạy kiểm thử toàn bộ 111 unit & integration tests trên cả `backend` (100 tests) và `frontend` (11 tests)).*
 
 ---
 
@@ -148,50 +148,76 @@ Nếu muốn chạy chat P2P không cần giao diện đồ họa:
 
 ---
 
-### 8. Chuyển File P2P Trực Tiếp (Phase 6 - P2P File Transfer Guide)
+### 8. Chuyển File P2P Phân Đoạn & Kiểm Tra Toàn Vẹn SHA-256 (Phase 7 Guide)
 
-LANDrop hỗ trợ gửi file trực tiếp giữa 2 peer qua kết nối TCP riêng biệt mà không thông qua bất kỳ server trung gian hay cloud nào:
+LANDrop hỗ trợ truyền file phân đoạn (Chunk-based) tuần tự, kiểm tra tính toàn vẹn bằng mã băm SHA-256 dạng streaming trực tiếp giữa 2 peer:
 
 ```mermaid
 sequenceDiagram
     autonumber
-    actor PeerA as Peer A (Sender)
     actor PeerB as Peer B (Receiver)
+    actor PeerA as Peer A (Sender)
 
-    Note over PeerA,PeerB: Direct TCP PeerConnection (Port 5001 <-> Port 5002)
-    PeerA->>PeerB: FILE_OFFER (transferId, fileName, fileSize, senderInfo)
-    Note over PeerB: Hiển thị thẻ xác nhận (Accept / Reject)
-    PeerB-->>PeerA: FILE_REQUEST (transferId, accepted=true)
-    
-    loop Streaming từng chunk 64 KB (NIO FileChannel)
-        PeerA->>PeerB: FILE_DATA [1B idLen][transferId][8B offset][chunkBytes]
-        Note over PeerA,PeerB: Cập nhật Progress Bar & Speed (KB/s, MB/s)
+    Note over PeerA: Tính trước SHA-256 (Streaming) & chia chunk (1 MiB)
+    PeerA->>PeerB: FILE_OFFER (transferId, fileName, fileSize, chunkSize, totalChunks, fileSha256)
+    Note over PeerB: Kiểm tra tính hợp lệ của metadata & Hiển thị thẻ xác nhận
+    PeerB->>PeerA: FILE_REQUEST (transferId, accepted=true)
+
+    loop Tải từng chunk tuần tự (Pull-based)
+        PeerB->>PeerA: CHUNK_REQUEST (transferId, chunkIndex=0)
+        PeerA-->>PeerB: CHUNK_RESPONSE #0 [1B idLen][transferId][4B idx][4B len][chunkData]
+        Note over PeerB: Ghi vào file tạm .landrop.part tại offset tương ứng
+        PeerB->>PeerA: CHUNK_REQUEST (transferId, chunkIndex=1)
+        PeerA-->>PeerB: CHUNK_RESPONSE #1 [1B idLen][transferId][4B idx][4B len][chunkData]
+        Note over PeerA,PeerB: Cập nhật Progress: Chunk X/Y, %, Tốc độ (MB/s)
     end
 
-    PeerB-->>PeerA: TRANSFER_ACK (transferId, success=true, transferredBytes)
-    Note over PeerB: Lưu vào ~/Downloads/LANDrop/ (Nút "Open File")
+    Note over PeerB: Đổi trạng thái: VERIFYING<br/>Tính SHA-256 file tạm & đối soát với hash người gửi
+    Note over PeerB: Đổi tên nguyên tử: .landrop.part -> file gốc
+    PeerB->>PeerA: TRANSFER_ACK (transferId, success=true, transferredBytes)
+    Note over PeerA,PeerB: Đổi trạng thái: COMPLETED (Hiển thị SHA-256 đã xác minh)
 ```
 
-#### Các bước chuyển file trên giao diện Desktop UI:
-1. Đảm bảo **Peer A** và **Peer B** đã kết nối với nhau (đang ở màn hình **Messages**).
-2. Tại khung chat, bấm nút kẹp giấy **📎** ở cạnh ô nhập tin nhắn.
-3. Chọn file bất kỳ từ máy tính (hỗ trợ mọi định dạng, file rỗng 0-byte, file dung lượng lớn nhiều GB).
-4. Phía người gửi: xuất hiện thẻ file đang ở trạng thái *"Waiting for receiver to accept..."*.
-5. Phía người nhận: xuất hiện thẻ file với 2 nút tương tác **"Accept"** và **"Reject"**.
-   - Bấm **"Reject"**: Huỷ chuyển, thông báo từ chối cho người gửi.
-   - Bấm **"Accept"**: Bắt đầu truyền dữ liệu trực tiếp tức thì qua kênh TCP!
-6. Thanh tiến trình (Progress Bar), phần trăm (%), dung lượng đã truyền (`transferred / total`), tốc độ truyền (`KB/s` hoặc `MB/s`), và nút **"Cancel"** được cập nhật trực quan thời gian thực.
-7. **Trò chuyện song song không gián đoạn**: Trong lúc file đang truyền, bạn vẫn có thể gõ tin nhắn chat văn bản và `/ping` bình thường mà không bị block.
-8. Khi hoàn tất:
-   - File được lưu an toàn tại: `~/Downloads/LANDrop/<fileName>`.
-   - Bấm nút **"Open File"** để mở trực tiếp file hoặc thư mục đích.
-9. Quản lý lịch sử truyền file: Bấm vào tab **Transfers** (📁) ở thanh điều hướng bên trái để theo dõi tổng số file, file đang truyền, file đã hoàn tất và kích thước/tốc độ của từng file.
+#### Cấu Trúc Các Gói Tin Điều Khiển & Dữ Liệu (Packet Layouts):
+1. **`FILE_OFFER` (Code 5, JSON)**:
+   ```json
+   {
+     "transferId": "41a996f0-4fa8-4b71-9ce1-8dfb8417c805",
+     "fileName": "document.pdf",
+     "fileSize": 10485760,
+     "senderPeerId": "peer-a-uuid",
+     "senderDisplayName": "Peer A",
+     "chunkSize": 1048576,
+     "totalChunks": 10,
+     "fileSha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+   }
+   ```
+2. **`FILE_REQUEST` (Code 6, JSON)**:
+   `{"transferId": "...", "accepted": true, "reason": ""}`
+3. **`CHUNK_REQUEST` (Code 7, JSON)**:
+   `{"transferId": "...", "chunkIndex": 0}`
+4. **`CHUNK_RESPONSE` (Code 8, Binary Framing)**:
+   `[1B transferIdLen][N bytes transferId][4B chunkIndex (int)][4B chunkLength (int)][M bytes chunkData]`
+5. **`TRANSFER_ACK` (Code 9, JSON)**:
+   `{"transferId": "...", "success": true, "transferredBytes": 10485760, "message": "Transfer completed successfully"}`
 
-#### Cơ chế An toàn & Độ tin cậy (Security & Reliability):
-* **Chống Path Traversal**: Tên file được chuẩn hóa bỏ các ký tự độc hại, thư mục cha (`../`), và kiểm tra containment nghiêm ngặt trong thư mục lưu trữ.
-* **Tự động xử lý trùng tên**: Nếu file đã tồn tại ở máy nhận, hệ thống tự động đổi tên dạng `document (1).pdf`, `document (2).pdf` thay vì ghi đè.
-* **Bộ đệm an toàn (64 KB Chunks)**: Sử dụng Java NIO `FileChannel` đọc/ghi tuần tự, không bao giờ nạp toàn bộ file vào RAM, tránh hiện tượng `OutOfMemoryError`.
-* **Phân tách luồng không block**: Tiến trình gửi/nhận chạy trên Virtual Thread độc lập; luồng đọc gói tin TCP được điều phối không làm chậm các gói `CHAT_MESSAGE`.
+#### Các tính năng an toàn & độ tin cậy cốt lõi (Core Safety & Integrity):
+* **Kiểm tra tính toàn vẹn SHA-256 (Streaming Hash)**:
+  * Người gửi tính hash toàn bộ file trước khi phát thông điệp `FILE_OFFER`.
+  * Người nhận sau khi thu thập đủ tất cả các chunk sẽ tính lại SHA-256 của file tạm. Nếu mã băm khớp 100%, file mới được xác nhận hợp lệ.
+  * Nếu mã băm không khớp, file tạm lập tức bị xóa bỏ và chuyển trạng thái sang `FAILED`.
+  * Quá trình băm chạy luồng ảo (`Virtual Thread`) với bộ đệm luồng, không nạp toàn bộ file vào RAM $\rightarrow$ an toàn với file nhiều GB.
+* **Tập tin tạm (`.landrop.part`) & Đổi tên nguyên tử (`Atomic Move`)**:
+  * Dữ liệu đang nhận được ghi trực tiếp vào `filename.landrop.part`.
+  * Chỉ khi xác minh SHA-256 thành công, file mới được đổi tên nguyên tử thành tên tệp chính thức, không để lộ tệp tải dở dang.
+* **Chống gói tin trùng lặp (`BitSet De-duplication`)**:
+  * Người nhận theo dõi các chunk đã nhận qua cấu trúc `BitSet`, bỏ qua các gói tin trùng lặp mà không gây sai lệch dữ liệu.
+* **Kiểm tra tính nhất quán tệp nguồn (Sender Consistency Check)**:
+  * Người gửi kiểm tra dung lượng và sự tồn tại của tệp nguồn trước khi đọc từng chunk, phát hiện kịp thời nếu file bị can thiệp giữa chừng.
+* **Hỗ trợ tệp 0-byte**:
+  * Tệp rỗng (0 byte) được xử lý trực tiếp (`totalChunks = 0`), tính mã băm chuẩn của tệp rỗng và hoàn tất ngay lập tức mà không cần gửi `CHUNK_REQUEST`.
+* **Trò chuyện song song không ngắt quãng**:
+  * Các gói tin `CHAT_MESSAGE` và `PING`/`PONG` được xen kẽ nhịp nhàng trên cùng kết nối TCP nhờ cơ chế khóa ghi luồng an toàn (`writeLock`).
 
 ---
 
@@ -214,7 +240,7 @@ LANDrop/
 │       ├── peer/           # PeerConnection, PeerListener, Handshake
 │       ├── chat/           # ChatService, ChatMessage, ChatCli
 │       ├── discovery/      # DiscoveryServer, DiscoveryClient, PeerRegistry
-│       └── transfer/       # FileTransferService, FileDataChunk, Messages, Utils
+│       └── transfer/       # FileTransferService, FileChunk, ChunkRequest/Response, SHA-256 Utils
 │
 └── frontend/               # Module Frontend (JavaFX Desktop UI)
     ├── pom.xml
@@ -240,4 +266,5 @@ LANDrop/
 * [x] **Phase 4**: Centralized Discovery Server (PeerRegistry, Heartbeat, Timeout Eviction, DiscoveryClient)
 * [x] **Phase 5**: JavaFX Desktop User Interface (Modern Light Theme, Setup Screen, Dashboard, Peer Discovery View, Real-time Chat UI)
 * [x] **Phase 6**: Basic P2P File Transfer (Direct TCP Streaming, 64KB NIO Chunks, Safe Path Resolution, In-Chat Transfer Cards, Transfers History View)
-* [ ] **Phase 7**: Advanced Transfer Features (Chunk-level Checksums, Resume/Retry, Multi-peer Sharing - Giai đoạn tiếp theo)
+* [x] **Phase 7**: Chunked P2P File Transfer + SHA-256 Integrity Verification (Sequential 1 MiB Chunk Streaming, CHUNK_REQUEST/RESPONSE, Streaming SHA-256 Verification, Partial Files .part, BitSet De-duplication)
+* [ ] **Phase 8**: Resume & Retry Strategy (Chunk Bitmap Persistence, Re-requesting Missing Chunks - Giai đoạn tiếp theo)
