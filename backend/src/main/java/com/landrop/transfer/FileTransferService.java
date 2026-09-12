@@ -11,6 +11,8 @@ import com.landrop.transfer.messages.ChunkResponseMessage;
 import com.landrop.transfer.messages.FileDataChunk;
 import com.landrop.transfer.messages.FileOfferMessage;
 import com.landrop.transfer.messages.FileRequestMessage;
+import com.landrop.transfer.messages.ResumeRequestMessage;
+import com.landrop.transfer.messages.ResumeResponseMessage;
 import com.landrop.transfer.messages.TransferAckMessage;
 
 import java.io.EOFException;
@@ -31,59 +33,139 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Service managing peer-to-peer chunked file transfer operations over an established PeerConnection.
  * <p>
- * Phase 7 Architecture:
+ * Phase 8 Architecture:
  * <ul>
- *   <li>Sequential pull-based chunk streaming (Receiver requests chunk -> Sender sends chunk)</li>
- *   <li>Zero-based chunk indexing with configurable chunk size (default 1 MiB)</li>
- *   <li>Streaming SHA-256 hash calculation and integrity verification</li>
- *   <li>Temporary partial file (.landrop.part) with atomic rename upon verification</li>
- *   <li>Sender source file consistency checks</li>
- *   <li>Duplicate chunk filtering using BitSet</li>
- *   <li>Zero-byte file handling</li>
- *   <li>Non-blocking virtual threads for file I/O and packet dispatch, keeping chat responsive</li>
+ *   <li>Session-level transfer interruption detection without deleting partial (.landrop.part) files</li>
+ *   <li>Transfer state preservation (transferId, BitSet chunk completion, transferred bytes, SHA-256)</li>
+ *   <li>Controlled reconnect strategy with bounded backoff (MAX_RECONNECT_ATTEMPTS = 5)</li>
+ *   <li>Two-way resume handshake (RESUME_REQUEST and RESUME_RESPONSE)</li>
+ *   <li>Strict metadata and source file change validation on resume</li>
+ *   <li>Resume from first missing chunk without re-transmitting completed chunks</li>
+ *   <li>Per-chunk retry mechanism with per-chunk timeout (MAX_CHUNK_RETRIES = 3)</li>
+ *   <li>Final file size check, streaming SHA-256 verification, and atomic rename</li>
+ *   <li>Responsive multiplexed chat and ping during transfer and reconnect</li>
  * </ul>
  */
 public class FileTransferService implements AutoCloseable {
 
     public static final int DEFAULT_CHUNK_SIZE = 1024 * 1024; // 1 MiB (1,048,576 bytes)
+    public static final int MAX_RECONNECT_ATTEMPTS = 5;
+    public static final long[] RECONNECT_DELAYS_MS = { 1000L, 2000L, 4000L, 8000L, 10000L };
+    public static final int MAX_CHUNK_RETRIES = 3;
+    public static final long DEFAULT_CHUNK_TIMEOUT_MS = 5000L;
     private static final long PROGRESS_THROTTLE_MS = 100L; // 10 Hz progress updates
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    private final PeerConnection connection;
+    private volatile PeerConnection connection;
     private final String localPeerId;
     private final String localPeerName;
     private final Path downloadDirectory;
     private final int configuredChunkSize;
 
+    private volatile long chunkTimeoutMs = DEFAULT_CHUNK_TIMEOUT_MS;
+    private volatile long[] reconnectDelaysMs = RECONNECT_DELAYS_MS;
+    private volatile boolean autoReconnectEnabled = true;
+    private volatile String remoteHost;
+    private volatile int remotePort = -1;
+    private final AtomicBoolean reconnecting = new AtomicBoolean(false);
+
     private final Map<String, FileTransfer> transfers = new ConcurrentHashMap<>();
     private final Map<String, ReceiverContext> openReceivers = new ConcurrentHashMap<>();
     private final Map<String, SenderContext> activeSenders = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<ChunkResponseMessage>> pendingChunkRequests = new ConcurrentHashMap<>();
+    private final Map<String, CompletableFuture<ResumeResponseMessage>> pendingResumeResponses = new ConcurrentHashMap<>();
     private final List<FileTransferListener> listeners = new CopyOnWriteArrayList<>();
 
     private final AtomicBoolean running = new AtomicBoolean(true);
 
-    private record ReceiverContext(
-            FileChannel channel,
-            Path tempPartPath,
-            Path finalDestPath,
-            long totalSize,
-            int chunkSize,
-            int totalChunks,
-            String expectedSha256,
-            BitSet receivedChunks,
-            long startTimeMs,
-            AtomicLong lastNotifyMs,
-            AtomicBoolean cancelled) {}
+    public static class ReceiverContext {
+        private final AtomicReference<FileChannel> channelRef = new AtomicReference<>();
+        private final Path tempPartPath;
+        private final Path finalDestPath;
+        private final long totalSize;
+        private final int chunkSize;
+        private final int totalChunks;
+        private final String expectedSha256;
+        private final BitSet receivedChunks;
+        private final long startTimeMs;
+        private final AtomicLong lastNotifyMs;
+        private final AtomicBoolean cancelled = new AtomicBoolean(false);
 
-    private record SenderContext(
+        public ReceiverContext(
+                FileChannel channel,
+                Path tempPartPath,
+                Path finalDestPath,
+                long totalSize,
+                int chunkSize,
+                int totalChunks,
+                String expectedSha256,
+                BitSet receivedChunks,
+                long startTimeMs,
+                AtomicLong lastNotifyMs) {
+            this.channelRef.set(channel);
+            this.tempPartPath = tempPartPath;
+            this.finalDestPath = finalDestPath;
+            this.totalSize = totalSize;
+            this.chunkSize = chunkSize;
+            this.totalChunks = totalChunks;
+            this.expectedSha256 = expectedSha256;
+            this.receivedChunks = receivedChunks != null ? receivedChunks : new BitSet(totalChunks);
+            this.startTimeMs = startTimeMs;
+            this.lastNotifyMs = lastNotifyMs;
+        }
+
+        public FileChannel channel() {
+            return channelRef.get();
+        }
+
+        public synchronized FileChannel ensureOpenChannel() throws IOException {
+            FileChannel ch = channelRef.get();
+            if (ch == null || !ch.isOpen()) {
+                ch = FileChannel.open(tempPartPath,
+                        StandardOpenOption.CREATE,
+                        StandardOpenOption.READ,
+                        StandardOpenOption.WRITE);
+                channelRef.set(ch);
+            }
+            return ch;
+        }
+
+        public synchronized void closeChannel() {
+            FileChannel ch = channelRef.getAndSet(null);
+            if (ch != null && ch.isOpen()) {
+                try {
+                    ch.force(true);
+                    ch.close();
+                } catch (Exception ignored) {
+                }
+            }
+        }
+
+        public Path tempPartPath() { return tempPartPath; }
+        public Path finalDestPath() { return finalDestPath; }
+        public long totalSize() { return totalSize; }
+        public int chunkSize() { return chunkSize; }
+        public int totalChunks() { return totalChunks; }
+        public String expectedSha256() { return expectedSha256; }
+        public BitSet receivedChunks() { return receivedChunks; }
+        public long startTimeMs() { return startTimeMs; }
+        public AtomicLong lastNotifyMs() { return lastNotifyMs; }
+        public AtomicBoolean cancelled() { return cancelled; }
+    }
+
+    public record SenderContext(
             Path sourcePath,
             long fileSize,
             long lastModifiedTime,
@@ -92,66 +174,98 @@ public class FileTransferService implements AutoCloseable {
             String fileSha256,
             AtomicBoolean cancelled) {}
 
-    /**
-     * Constructs a FileTransferService bound to the specified PeerConnection with default download directory and 1 MiB chunks.
-     *
-     * @param connection active PeerConnection
-     * @param localPeerId local peer ID
-     * @param localPeerName local display name
-     * @throws IOException if default download directory cannot be created
-     */
     public FileTransferService(PeerConnection connection, String localPeerId, String localPeerName) throws IOException {
         this(connection, localPeerId, localPeerName, FileTransferUtils.getDefaultDownloadDirectory(), DEFAULT_CHUNK_SIZE);
     }
 
-    /**
-     * Constructs a FileTransferService with a custom download directory and default chunk size (1 MiB).
-     *
-     * @param connection active PeerConnection
-     * @param localPeerId local peer ID
-     * @param localPeerName local display name
-     * @param downloadDirectory custom target download folder
-     */
     public FileTransferService(PeerConnection connection, String localPeerId, String localPeerName, Path downloadDirectory) {
         this(connection, localPeerId, localPeerName, downloadDirectory, DEFAULT_CHUNK_SIZE);
     }
 
-    /**
-     * Constructs a FileTransferService with custom download directory and custom chunk size.
-     *
-     * @param connection active PeerConnection
-     * @param localPeerId local peer ID
-     * @param localPeerName local display name
-     * @param downloadDirectory custom target download folder
-     * @param chunkSize chunk size in bytes (> 0)
-     */
     public FileTransferService(PeerConnection connection, String localPeerId, String localPeerName, Path downloadDirectory, int chunkSize) {
-        this.connection = Objects.requireNonNull(connection, "PeerConnection cannot be null");
         this.localPeerId = localPeerId != null ? localPeerId : UUID.randomUUID().toString();
         this.localPeerName = (localPeerName != null && !localPeerName.isBlank()) ? localPeerName : "Peer";
         this.downloadDirectory = Objects.requireNonNull(downloadDirectory, "downloadDirectory cannot be null");
         this.configuredChunkSize = chunkSize > 0 ? chunkSize : DEFAULT_CHUNK_SIZE;
 
-        // Register protocol packet handlers
-        connection.registerHandler(MessageType.FILE_OFFER, this::handleFileOfferPacket);
-        connection.registerHandler(MessageType.FILE_REQUEST, this::handleFileRequestPacket);
-        connection.registerHandler(MessageType.CHUNK_REQUEST, this::handleChunkRequestPacket);
-        connection.registerHandler(MessageType.CHUNK_RESPONSE, this::handleChunkResponsePacket);
-        connection.registerHandler(MessageType.TRANSFER_ACK, this::handleTransferAckPacket);
-        connection.registerHandler(MessageType.FILE_DATA, this::handleLegacyFileDataPacket);
+        attachConnection(connection);
+    }
 
-        // Listen for disconnect to fail active transfers cleanly
-        connection.addListener(new ConnectionListener() {
+    /**
+     * Attaches a new or re-established PeerConnection to this FileTransferService.
+     * Registers all packet handlers and adds a disconnection listener.
+     *
+     * @param newConnection the active PeerConnection
+     */
+    public synchronized void attachConnection(PeerConnection newConnection) {
+        Objects.requireNonNull(newConnection, "PeerConnection cannot be null");
+        this.connection = newConnection;
+
+        // Register protocol packet handlers
+        newConnection.registerHandler(MessageType.FILE_OFFER, this::handleFileOfferPacket);
+        newConnection.registerHandler(MessageType.FILE_REQUEST, this::handleFileRequestPacket);
+        newConnection.registerHandler(MessageType.CHUNK_REQUEST, this::handleChunkRequestPacket);
+        newConnection.registerHandler(MessageType.CHUNK_RESPONSE, this::handleChunkResponsePacket);
+        newConnection.registerHandler(MessageType.TRANSFER_ACK, this::handleTransferAckPacket);
+        newConnection.registerHandler(MessageType.RESUME_REQUEST, this::handleResumeRequestPacket);
+        newConnection.registerHandler(MessageType.RESUME_RESPONSE, this::handleResumeResponsePacket);
+        newConnection.registerHandler(MessageType.FILE_DATA, this::handleLegacyFileDataPacket);
+
+        // Listen for disconnect to interrupt active transfers cleanly
+        newConnection.addListener(new ConnectionListener() {
             @Override
             public void onDisconnected() {
-                failAllActiveTransfers("Peer connection disconnected");
+                handleConnectionLoss("Peer connection disconnected");
             }
 
             @Override
             public void onError(Exception error) {
-                failAllActiveTransfers("Connection error: " + error.getMessage());
+                handleConnectionLoss("Connection error: " + (error != null ? error.getMessage() : "unknown"));
             }
         });
+    }
+
+    public PeerConnection getConnection() {
+        return connection;
+    }
+
+    public void setRemoteEndpoint(String host, int port) {
+        this.remoteHost = host;
+        this.remotePort = port;
+    }
+
+    public String getRemoteHost() {
+        return remoteHost;
+    }
+
+    public int getRemotePort() {
+        return remotePort;
+    }
+
+    public void setChunkTimeoutMs(long chunkTimeoutMs) {
+        this.chunkTimeoutMs = Math.max(50L, chunkTimeoutMs);
+    }
+
+    public long getChunkTimeoutMs() {
+        return chunkTimeoutMs;
+    }
+
+    public void setReconnectDelaysMs(long[] delays) {
+        if (delays != null && delays.length > 0) {
+            this.reconnectDelaysMs = delays;
+        }
+    }
+
+    public long[] getReconnectDelaysMs() {
+        return reconnectDelaysMs;
+    }
+
+    public void setAutoReconnectEnabled(boolean enabled) {
+        this.autoReconnectEnabled = enabled;
+    }
+
+    public boolean isAutoReconnectEnabled() {
+        return autoReconnectEnabled;
     }
 
     /**
@@ -249,7 +363,7 @@ public class FileTransferService implements AutoCloseable {
         Path destPath = FileTransferUtils.resolveUniqueDestination(downloadDirectory, transfer.getFileName());
         transfer.setLocalPath(destPath);
 
-        // Zero-byte file handling (Section 28)
+        // Zero-byte file handling
         if (transfer.getFileSize() == 0) {
             Files.createFile(destPath);
             String emptyHash = FileTransferUtils.calculateSha256(new byte[0]);
@@ -277,8 +391,8 @@ public class FileTransferService implements AutoCloseable {
 
         FileChannel channel = FileChannel.open(tempPartPath,
                 StandardOpenOption.CREATE,
-                StandardOpenOption.WRITE,
-                StandardOpenOption.TRUNCATE_EXISTING);
+                StandardOpenOption.READ,
+                StandardOpenOption.WRITE);
 
         long now = System.currentTimeMillis();
         ReceiverContext ctx = new ReceiverContext(
@@ -291,8 +405,7 @@ public class FileTransferService implements AutoCloseable {
                 transfer.getFileSha256(),
                 new BitSet(transfer.getTotalChunks()),
                 now,
-                new AtomicLong(now),
-                new AtomicBoolean(false)
+                new AtomicLong(now)
         );
         openReceivers.put(transferId, ctx);
 
@@ -305,8 +418,8 @@ public class FileTransferService implements AutoCloseable {
 
         notifyStarted(transfer);
 
-        // Request first chunk (index 0)
-        sendChunkRequest(transferId, 0);
+        // Start pulling chunks sequentially using virtual worker
+        startChunkPullerWorker(transfer, ctx);
     }
 
     /**
@@ -352,6 +465,16 @@ public class FileTransferService implements AutoCloseable {
         transfer.setStatus(FileTransferStatus.CANCELLED);
         transfer.setErrorMessage("Transfer cancelled by user");
 
+        // Cancel pending requests
+        CompletableFuture<?> future = pendingChunkRequests.remove(transferId);
+        if (future != null) {
+            future.cancel(true);
+        }
+        CompletableFuture<?> resumeFut = pendingResumeResponses.remove(transferId);
+        if (resumeFut != null) {
+            resumeFut.cancel(true);
+        }
+
         // Stop sender loop if outgoing
         SenderContext sender = activeSenders.remove(transferId);
         if (sender != null) {
@@ -362,15 +485,15 @@ public class FileTransferService implements AutoCloseable {
         ReceiverContext receiver = openReceivers.remove(transferId);
         if (receiver != null) {
             receiver.cancelled().set(true);
+            receiver.closeChannel();
             try {
-                receiver.channel().close();
                 Files.deleteIfExists(receiver.tempPartPath());
             } catch (Exception ignored) {
             }
         }
 
         // Notify peer via TRANSFER_ACK failure if still connected
-        if (connection.isConnected()) {
+        if (connection != null && connection.isConnected()) {
             try {
                 TransferAckMessage ack = TransferAckMessage.failure(transferId, transfer.getTransferredBytes(), "Transfer cancelled");
                 long reqId = connection.getRequestIdGenerator().nextId();
@@ -383,6 +506,309 @@ public class FileTransferService implements AutoCloseable {
     }
 
     // ==========================================
+    // RECONNECT & RESUME ENGINE (Phase 8)
+    // ==========================================
+
+    /**
+     * Initiates resume handshake for an interrupted transfer.
+     *
+     * @param transferId unique transfer ID
+     */
+    public void resumeTransfer(String transferId) {
+        FileTransfer transfer = transfers.get(transferId);
+        if (transfer == null || transfer.isTerminal()) {
+            return;
+        }
+
+        if (transfer.getDirection() == FileTransferDirection.INCOMING) {
+            ReceiverContext ctx = openReceivers.get(transferId);
+            if (ctx == null) {
+                return;
+            }
+
+            Thread.ofVirtual().name("resume-incoming-" + transferId).start(() -> {
+                try {
+                    transfer.setStatus(FileTransferStatus.RESUMING);
+                    int fromChunk = transfer.getFirstMissingChunk() >= 0 ? transfer.getFirstMissingChunk() : 0;
+                    System.out.println("[RESUME] Initiating resume handshake transferId=" + transferId +
+                            " fromChunk=" + fromChunk + "/" + transfer.getTotalChunks());
+                    notifyResuming(transfer, fromChunk, transfer.getTotalChunks());
+
+                    ResumeRequestMessage req = ResumeRequestMessage.of(transfer, ctx.receivedChunks());
+                    CompletableFuture<ResumeResponseMessage> respFuture = new CompletableFuture<>();
+                    pendingResumeResponses.put(transferId, respFuture);
+
+                    long reqId = connection.getRequestIdGenerator().nextId();
+                    connection.send(Packet.of(MessageType.RESUME_REQUEST, reqId, req.toBytes()));
+
+                    ResumeResponseMessage resp = respFuture.get(chunkTimeoutMs, TimeUnit.MILLISECONDS);
+                    pendingResumeResponses.remove(transferId);
+
+                    if (!resp.isAccepted()) {
+                        String reason = resp.getReason() != null ? resp.getReason() : "Resume rejected";
+                        System.err.println("[RESUME] Resume rejected: " + reason);
+                        failTransfer(transfer, reason);
+                        return;
+                    }
+
+                    System.out.println("[RESUME] Resume accepted transferId=" + transferId);
+                    transfer.setStatus(FileTransferStatus.TRANSFERRING);
+                    transfer.setErrorMessage("");
+
+                    startChunkPullerWorker(transfer, ctx);
+
+                } catch (TimeoutException te) {
+                    pendingResumeResponses.remove(transferId);
+                    System.err.println("[RESUME] Resume handshake timed out for transferId=" + transferId);
+                    handleConnectionLoss("Resume handshake timed out");
+                } catch (Exception e) {
+                    pendingResumeResponses.remove(transferId);
+                    System.err.println("[RESUME] Resume handshake failed: " + e.getMessage());
+                    handleConnectionLoss("Resume handshake error: " + e.getMessage());
+                }
+            });
+        }
+    }
+
+    /**
+     * Background worker pulling missing chunks sequentially with timeout and retry.
+     */
+    private void startChunkPullerWorker(FileTransfer transfer, ReceiverContext ctx) {
+        Thread.ofVirtual().name("chunk-puller-" + transfer.getTransferId()).start(() -> {
+            try {
+                FileChannel channel = ctx.ensureOpenChannel();
+
+                while (running.get() && !transfer.isTerminal() && !ctx.cancelled().get()) {
+                    int nextMissing;
+                    synchronized (ctx.receivedChunks()) {
+                        nextMissing = ctx.receivedChunks().nextClearBit(0);
+                    }
+
+                    if (nextMissing >= ctx.totalChunks()) {
+                        // All chunks received! Verify SHA-256 and finalize
+                        finalizeAndVerifyIncomingTransfer(transfer, ctx);
+                        break;
+                    }
+
+                    boolean chunkSuccess = false;
+                    for (int attempt = 1; attempt <= MAX_CHUNK_RETRIES; attempt++) {
+                        if (!running.get() || transfer.isTerminal() || ctx.cancelled().get()) {
+                            break;
+                        }
+                        if (connection == null || !connection.isConnected()) {
+                            break;
+                        }
+
+                        transfer.setChunkRetryIndex(nextMissing);
+                        transfer.setChunkRetryAttempt(attempt);
+                        transfer.setMaxChunkRetries(MAX_CHUNK_RETRIES);
+
+                        if (attempt > 1) {
+                            System.out.println("[RETRY] chunk=" + nextMissing + " attempt=" + attempt + "/" + MAX_CHUNK_RETRIES);
+                            notifyChunkRetrying(transfer, nextMissing, attempt, MAX_CHUNK_RETRIES);
+                        }
+
+                        CompletableFuture<ChunkResponseMessage> future = new CompletableFuture<>();
+                        pendingChunkRequests.put(transfer.getTransferId(), future);
+
+                        try {
+                            sendChunkRequest(transfer.getTransferId(), nextMissing);
+                            ChunkResponseMessage chunkResp = future.get(chunkTimeoutMs, TimeUnit.MILLISECONDS);
+
+                            if (chunkResp.chunkIndex() != nextMissing) {
+                                throw new ProtocolException("Unexpected chunk index: " + chunkResp.chunkIndex() +
+                                        ", expected: " + nextMissing);
+                            }
+
+                            int expectedLen = FileChunk.calculateChunkLength(nextMissing, ctx.totalChunks(),
+                                    ctx.chunkSize(), ctx.totalSize());
+                            if (chunkResp.chunkLength() != expectedLen) {
+                                throw new ProtocolException("Chunk length mismatch for chunk " + nextMissing +
+                                        ": expected " + expectedLen + ", got " + chunkResp.chunkLength());
+                            }
+
+                            // Write chunk to partial file at exact offset
+                            long offset = FileChunk.calculateChunkOffset(nextMissing, ctx.chunkSize());
+                            ByteBuffer bb = ByteBuffer.wrap(chunkResp.data());
+                            long currentOffset = offset;
+                            while (bb.hasRemaining()) {
+                                int w = channel.write(bb, currentOffset);
+                                if (w <= 0) break;
+                                currentOffset += w;
+                            }
+
+                            // Mark chunk in BitSet
+                            synchronized (ctx.receivedChunks()) {
+                                ctx.receivedChunks().set(nextMissing);
+                            }
+                            transfer.markChunkCompleted(nextMissing);
+                            transfer.setCurrentChunk(nextMissing + 1);
+                            transfer.addTransferredBytes(chunkResp.chunkLength());
+
+                            // Clear retry indicators
+                            transfer.setChunkRetryAttempt(0);
+                            transfer.setChunkRetryIndex(-1);
+
+                            long transferred = transfer.getTransferredBytes();
+                            long total = ctx.totalSize();
+                            long now = System.currentTimeMillis();
+                            long elapsed = now - ctx.startTimeMs();
+                            double speed = elapsed > 0 ? (transferred * 1000.0) / elapsed : 0.0;
+                            transfer.setSpeedBytesPerSec(speed);
+
+                            long lastNotify = ctx.lastNotifyMs().get();
+                            if (now - lastNotify >= PROGRESS_THROTTLE_MS || nextMissing + 1 >= ctx.totalChunks()) {
+                                if (ctx.lastNotifyMs().compareAndSet(lastNotify, now)) {
+                                    notifyProgress(transfer, transferred, total, speed);
+                                }
+                            }
+
+                            chunkSuccess = true;
+                            break; // Successfully got this chunk!
+
+                        } catch (TimeoutException te) {
+                            System.err.println("[TRANSFER] Chunk " + nextMissing + " request timed out (attempt " +
+                                    attempt + "/" + MAX_CHUNK_RETRIES + ")");
+                        } catch (Exception e) {
+                            System.err.println("[TRANSFER] Chunk " + nextMissing + " error: " + e.getMessage() +
+                                    " (attempt " + attempt + "/" + MAX_CHUNK_RETRIES + ")");
+                        } finally {
+                            pendingChunkRequests.remove(transfer.getTransferId());
+                        }
+                    }
+
+                    if (!chunkSuccess) {
+                        if (connection == null || !connection.isConnected()) {
+                            // Interrupted by connection drop
+                            handleConnectionLoss("Connection lost during chunk transfer");
+                        } else {
+                            // Repeated retry failure on healthy connection
+                            failTransfer(transfer, "Failed downloading chunk " + nextMissing +
+                                    " after " + MAX_CHUNK_RETRIES + " attempts");
+                        }
+                        break;
+                    }
+                }
+
+            } catch (Exception e) {
+                notifyError(e);
+            }
+        });
+    }
+
+    /**
+     * Handles disconnection or socket error. Transitions active transfers to INTERRUPTED
+     * and preserves .landrop.part files without deleting them.
+     */
+    private void handleConnectionLoss(String reason) {
+        System.out.println("[TRANSFER] Connection lost: " + reason);
+
+        // Cancel in-flight chunk requests and resume responses
+        for (CompletableFuture<?> f : pendingChunkRequests.values()) {
+            f.completeExceptionally(new IOException("Connection lost: " + reason));
+        }
+        pendingChunkRequests.clear();
+
+        for (CompletableFuture<?> f : pendingResumeResponses.values()) {
+            f.completeExceptionally(new IOException("Connection lost: " + reason));
+        }
+        pendingResumeResponses.clear();
+
+        FileTransfer incomingToReconnect = null;
+
+        for (FileTransfer transfer : transfers.values()) {
+            if (transfer.getStatus() == FileTransferStatus.TRANSFERRING ||
+                transfer.getStatus() == FileTransferStatus.RESUMING ||
+                transfer.getStatus() == FileTransferStatus.ACCEPTED) {
+
+                transfer.setStatus(FileTransferStatus.INTERRUPTED);
+                transfer.setErrorMessage(reason);
+                System.out.println("[TRANSFER] Transfer interrupted transferId=" + transfer.getTransferId() +
+                        " completedChunks=" + transfer.getCompletedChunkCount() + "/" + transfer.getTotalChunks());
+
+                // Safely close receiver channel without deleting partial file
+                ReceiverContext rCtx = openReceivers.get(transfer.getTransferId());
+                if (rCtx != null) {
+                    rCtx.closeChannel();
+                }
+
+                notifyInterrupted(transfer, reason);
+
+                if (transfer.getDirection() == FileTransferDirection.INCOMING && incomingToReconnect == null) {
+                    incomingToReconnect = transfer;
+                }
+            }
+        }
+
+        // Trigger controlled reconnect if configured
+        if (autoReconnectEnabled && incomingToReconnect != null && remoteHost != null && remotePort > 0) {
+            scheduleReconnect(incomingToReconnect);
+        }
+    }
+
+    /**
+     * Bounded exponential backoff reconnect task (MAX_RECONNECT_ATTEMPTS = 5).
+     */
+    private void scheduleReconnect(FileTransfer transfer) {
+        if (!reconnecting.compareAndSet(false, true)) {
+            return;
+        }
+
+        Thread.ofVirtual().name("p2p-reconnector-" + transfer.getTransferId()).start(() -> {
+            try {
+                for (int attempt = 1; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
+                    if (!running.get() || transfer.isTerminal()) {
+                        break;
+                    }
+
+                    long delay = reconnectDelaysMs[Math.min(attempt - 1, reconnectDelaysMs.length - 1)];
+                    transfer.setStatus(FileTransferStatus.RECONNECTING);
+                    transfer.setReconnectAttempt(attempt);
+                    transfer.setMaxReconnectAttempts(MAX_RECONNECT_ATTEMPTS);
+                    System.out.println("[RECONNECT] Attempt " + attempt + "/" + MAX_RECONNECT_ATTEMPTS +
+                            " peer=" + transfer.getRemotePeerName() + " (" + remoteHost + ":" + remotePort + ")");
+                    notifyReconnecting(transfer, attempt, MAX_RECONNECT_ATTEMPTS);
+
+                    try {
+                        Thread.sleep(delay);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        break;
+                    }
+
+                    try {
+                        PeerConnection newConn = PeerConnection.connectTo(remoteHost, remotePort, 5000);
+                        newConn.start();
+                        newConn.initiateHandshake(localPeerName);
+                        if (!newConn.awaitReady(5, TimeUnit.SECONDS)) {
+                            newConn.close();
+                            continue;
+                        }
+
+                        System.out.println("[RECONNECT] Connected successfully on attempt " + attempt);
+                        attachConnection(newConn);
+                        reconnecting.set(false);
+
+                        // Resume transfer
+                        resumeTransfer(transfer.getTransferId());
+                        return;
+                    } catch (Exception e) {
+                        System.err.println("[RECONNECT] Attempt " + attempt + " failed: " + e.getMessage());
+                    }
+                }
+
+                // All attempts failed!
+                reconnecting.set(false);
+                failTransfer(transfer, "Failed to reconnect to peer after " + MAX_RECONNECT_ATTEMPTS + " attempts");
+
+            } catch (Exception e) {
+                reconnecting.set(false);
+                failTransfer(transfer, "Reconnection error: " + e.getMessage());
+            }
+        });
+    }
+
+    // ==========================================
     // INCOMING PACKET DISPATCH HANDLERS
     // ==========================================
 
@@ -390,11 +816,9 @@ public class FileTransferService implements AutoCloseable {
         try {
             FileOfferMessage offer = OBJECT_MAPPER.readValue(packet.getPayload(), FileOfferMessage.class);
 
-            // Validate remote metadata strictly (Section 4)
             try {
                 offer.validate();
             } catch (ProtocolException validationEx) {
-                // Reject invalid offer
                 FileRequestMessage rejectMsg = FileRequestMessage.reject(offer.getTransferId(),
                         "Invalid file metadata: " + validationEx.getMessage());
                 long reqId = connection.getRequestIdGenerator().nextId();
@@ -442,7 +866,6 @@ public class FileTransferService implements AutoCloseable {
                         activeSenders.remove(transfer.getTransferId());
                         notifyCompleted(transfer);
                     }
-                    // For non-empty files, sender waits for CHUNK_REQUEST from receiver
                 }
             } else {
                 transfer.setStatus(FileTransferStatus.REJECTED);
@@ -513,7 +936,7 @@ public class FileTransferService implements AutoCloseable {
                 long sentBytes = offset + length;
                 transfer.setTransferredBytes(sentBytes);
                 transfer.setCurrentChunk(chunkIndex + 1);
-                transfer.setCompletedChunks(chunkIndex + 1);
+                transfer.markChunkCompleted(chunkIndex);
 
                 long now = System.currentTimeMillis();
                 long elapsed = now - transfer.getStartTimeMs();
@@ -530,90 +953,111 @@ public class FileTransferService implements AutoCloseable {
 
     /**
      * Handles incoming CHUNK_RESPONSE from sender (Receiver side).
+     * Decodes binary packet and notifies the pending chunk future.
      */
     private void handleChunkResponsePacket(Packet packet) {
-        Thread.ofVirtual().name("handle-chunk-response").start(() -> {
+        try {
+            ChunkResponseMessage chunk = ChunkResponseMessage.decode(packet.getPayload());
+            CompletableFuture<ChunkResponseMessage> future = pendingChunkRequests.get(chunk.transferId());
+            if (future != null) {
+                future.complete(chunk);
+            }
+        } catch (Exception e) {
+            notifyError(e);
+        }
+    }
+
+    /**
+     * Handles incoming RESUME_REQUEST from receiver (Sender side).
+     */
+    private void handleResumeRequestPacket(Packet packet) {
+        Thread.ofVirtual().name("handle-resume-request").start(() -> {
             try {
-                ChunkResponseMessage chunk = ChunkResponseMessage.decode(packet.getPayload());
-                String transferId = chunk.transferId();
+                ResumeRequestMessage req = ResumeRequestMessage.fromBytes(packet.getPayload());
+                String transferId = req.getTransferId();
                 FileTransfer transfer = transfers.get(transferId);
-                ReceiverContext ctx = openReceivers.get(transferId);
+                SenderContext senderCtx = activeSenders.get(transferId);
 
-                if (transfer == null || ctx == null || ctx.cancelled().get()) {
+                long reqId = connection.getRequestIdGenerator().nextId();
+
+                if (transfer == null || senderCtx == null) {
+                    ResumeResponseMessage reject = ResumeResponseMessage.reject(transferId,
+                            ResumeResponseMessage.REASON_TRANSFER_NOT_FOUND);
+                    connection.send(Packet.of(MessageType.RESUME_RESPONSE, reqId, reject.toBytes()));
                     return;
                 }
 
-                int chunkIndex = chunk.chunkIndex();
-                if (chunkIndex < 0 || chunkIndex >= ctx.totalChunks()) {
-                    failTransfer(transfer, "Invalid chunk index received: " + chunkIndex +
-                            " (expected < " + ctx.totalChunks() + ")");
+                // Metadata validation (Section 13)
+                try {
+                    req.validate();
+                } catch (ProtocolException pe) {
+                    ResumeResponseMessage reject = ResumeResponseMessage.reject(transferId,
+                            ResumeResponseMessage.REASON_METADATA_MISMATCH + ": " + pe.getMessage());
+                    connection.send(Packet.of(MessageType.RESUME_RESPONSE, reqId, reject.toBytes()));
                     return;
                 }
 
-                // Duplicate chunk check (Section 23)
-                synchronized (ctx.receivedChunks()) {
-                    if (ctx.receivedChunks().get(chunkIndex)) {
-                        return; // Ignore duplicate chunk cleanly
-                    }
-                }
-
-                // Verify chunk length
-                int expectedLen = FileChunk.calculateChunkLength(chunkIndex, ctx.totalChunks(),
-                        ctx.chunkSize(), ctx.totalSize());
-                if (chunk.chunkLength() != expectedLen) {
-                    failTransfer(transfer, "Chunk length mismatch for chunk " + chunkIndex +
-                            ": expected " + expectedLen + ", got " + chunk.chunkLength());
+                if (req.getFileSize() != senderCtx.fileSize()) {
+                    ResumeResponseMessage reject = ResumeResponseMessage.reject(transferId,
+                            ResumeResponseMessage.REASON_FILE_SIZE_MISMATCH);
+                    connection.send(Packet.of(MessageType.RESUME_RESPONSE, reqId, reject.toBytes()));
                     return;
                 }
 
-                // Write chunk to partial file at offset
-                long offset = FileChunk.calculateChunkOffset(chunkIndex, ctx.chunkSize());
-                ByteBuffer bb = ByteBuffer.wrap(chunk.data());
-                long currentOffset = offset;
-                while (bb.hasRemaining()) {
-                    int w = ctx.channel().write(bb, currentOffset);
-                    if (w <= 0) {
-                        break;
-                    }
-                    currentOffset += w;
+                if (req.getChunkSize() != senderCtx.chunkSize()) {
+                    ResumeResponseMessage reject = ResumeResponseMessage.reject(transferId,
+                            ResumeResponseMessage.REASON_CHUNK_SIZE_MISMATCH);
+                    connection.send(Packet.of(MessageType.RESUME_RESPONSE, reqId, reject.toBytes()));
+                    return;
                 }
 
-                // Mark chunk in BitSet
-                boolean allReceived;
-                int completedCount;
-                synchronized (ctx.receivedChunks()) {
-                    ctx.receivedChunks().set(chunkIndex);
-                    completedCount = ctx.receivedChunks().cardinality();
-                    allReceived = (completedCount == ctx.totalChunks());
+                if (req.getTotalChunks() != senderCtx.totalChunks()) {
+                    ResumeResponseMessage reject = ResumeResponseMessage.reject(transferId,
+                            ResumeResponseMessage.REASON_METADATA_MISMATCH);
+                    connection.send(Packet.of(MessageType.RESUME_RESPONSE, reqId, reject.toBytes()));
+                    return;
                 }
 
-                // Update transfer progress
-                transfer.setCompletedChunks(completedCount);
-                transfer.setCurrentChunk(chunkIndex + 1);
-                transfer.addTransferredBytes(chunk.chunkLength());
-
-                long transferred = transfer.getTransferredBytes();
-                long total = ctx.totalSize();
-                long now = System.currentTimeMillis();
-                long elapsed = now - ctx.startTimeMs();
-                double speed = elapsed > 0 ? (transferred * 1000.0) / elapsed : 0.0;
-                transfer.setSpeedBytesPerSec(speed);
-
-                long lastNotify = ctx.lastNotifyMs().get();
-                if (now - lastNotify >= PROGRESS_THROTTLE_MS || allReceived) {
-                    if (ctx.lastNotifyMs().compareAndSet(lastNotify, now)) {
-                        notifyProgress(transfer, transferred, total, speed);
-                    }
+                if (!req.getFileSha256().equalsIgnoreCase(senderCtx.fileSha256())) {
+                    ResumeResponseMessage reject = ResumeResponseMessage.reject(transferId,
+                            ResumeResponseMessage.REASON_HASH_MISMATCH);
+                    connection.send(Packet.of(MessageType.RESUME_RESPONSE, reqId, reject.toBytes()));
+                    return;
                 }
 
-                // Sequential flow (Section 11)
-                if (!allReceived) {
-                    // Request next chunk sequentially
-                    sendChunkRequest(transferId, chunkIndex + 1);
-                } else {
-                    // All chunks received! Start SHA-256 verification and finalization
-                    finalizeAndVerifyIncomingTransfer(transfer, ctx);
+                // Source file check on disk (Section 22)
+                Path sourcePath = senderCtx.sourcePath();
+                if (!Files.exists(sourcePath) || Files.size(sourcePath) != senderCtx.fileSize()) {
+                    ResumeResponseMessage reject = ResumeResponseMessage.reject(transferId,
+                            ResumeResponseMessage.REASON_SOURCE_FILE_CHANGED);
+                    connection.send(Packet.of(MessageType.RESUME_RESPONSE, reqId, reject.toBytes()));
+                    failTransfer(transfer, "Source file modified or missing: " + sourcePath);
+                    return;
                 }
+
+                // Check source file hash integrity
+                String currentHash = FileTransferUtils.calculateSha256(sourcePath);
+                if (!currentHash.equalsIgnoreCase(senderCtx.fileSha256())) {
+                    ResumeResponseMessage reject = ResumeResponseMessage.reject(transferId,
+                            ResumeResponseMessage.REASON_SOURCE_FILE_CHANGED);
+                    connection.send(Packet.of(MessageType.RESUME_RESPONSE, reqId, reject.toBytes()));
+                    failTransfer(transfer, "Source file hash modified during interruption: " + sourcePath);
+                    return;
+                }
+
+                // Resume validation succeeded!
+                BitSet completedBits = req.getCompletedChunksBitSet();
+                transfer.setCompletedChunksBitSet(completedBits);
+                transfer.setStatus(FileTransferStatus.TRANSFERRING);
+                transfer.setErrorMessage("");
+
+                System.out.println("[RESUME] Resume accepted transferId=" + transferId +
+                        " nextMissingChunk=" + completedBits.nextClearBit(0));
+
+                ResumeResponseMessage accept = ResumeResponseMessage.accept(transferId);
+                connection.send(Packet.of(MessageType.RESUME_RESPONSE, reqId, accept.toBytes()));
+
+                notifyStarted(transfer);
 
             } catch (Exception e) {
                 notifyError(e);
@@ -622,15 +1066,29 @@ public class FileTransferService implements AutoCloseable {
     }
 
     /**
+     * Handles incoming RESUME_RESPONSE from sender (Receiver side).
+     */
+    private void handleResumeResponsePacket(Packet packet) {
+        try {
+            ResumeResponseMessage resp = ResumeResponseMessage.fromBytes(packet.getPayload());
+            CompletableFuture<ResumeResponseMessage> future = pendingResumeResponses.get(resp.getTransferId());
+            if (future != null) {
+                future.complete(resp);
+            }
+        } catch (Exception e) {
+            notifyError(e);
+        }
+    }
+
+    /**
      * Verifies file integrity, moves partial file to destination, and completes incoming transfer.
      */
     private void finalizeAndVerifyIncomingTransfer(FileTransfer transfer, ReceiverContext ctx) {
         try {
             openReceivers.remove(transfer.getTransferId());
-            ctx.channel().force(true);
-            ctx.channel().close();
+            ctx.closeChannel();
 
-            // Transition to VERIFYING state (Section 15)
+            // Transition to VERIFYING state
             transfer.transitionStatus(FileTransferStatus.TRANSFERRING, FileTransferStatus.VERIFYING);
             notifyVerifying(transfer);
 
@@ -642,6 +1100,7 @@ public class FileTransferService implements AutoCloseable {
             }
 
             // 2. Compute SHA-256 of partial file
+            System.out.println("[VERIFY] SHA-256 verification started for " + transfer.getFileName());
             String computedHash = FileTransferUtils.calculateSha256(ctx.tempPartPath());
             transfer.setVerifiedSha256(computedHash);
 
@@ -651,7 +1110,9 @@ public class FileTransferService implements AutoCloseable {
                         ctx.expectedSha256() + ", but computed " + computedHash);
             }
 
-            // 4. Atomic move partial file -> final destination (Section 13)
+            System.out.println("[VERIFY] SHA-256 verification successful: " + computedHash);
+
+            // 4. Atomic move partial file -> final destination
             try {
                 Files.move(ctx.tempPartPath(), ctx.finalDestPath(),
                         StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
@@ -680,17 +1141,10 @@ public class FileTransferService implements AutoCloseable {
         }
     }
 
-    private void sendChunkRequest(String transferId, int chunkIndex) {
-        try {
-            ChunkRequestMessage req = ChunkRequestMessage.of(transferId, chunkIndex);
-            long reqId = connection.getRequestIdGenerator().nextId();
-            connection.send(Packet.of(MessageType.CHUNK_REQUEST, reqId, req.toBytes()));
-        } catch (Exception e) {
-            FileTransfer transfer = transfers.get(transferId);
-            if (transfer != null) {
-                failTransfer(transfer, "Failed sending CHUNK_REQUEST for chunk " + chunkIndex + ": " + e.getMessage());
-            }
-        }
+    private void sendChunkRequest(String transferId, int chunkIndex) throws IOException {
+        ChunkRequestMessage req = ChunkRequestMessage.of(transferId, chunkIndex);
+        long reqId = connection.getRequestIdGenerator().nextId();
+        connection.send(Packet.of(MessageType.CHUNK_REQUEST, reqId, req.toBytes()));
     }
 
     private void handleTransferAckPacket(Packet packet) {
@@ -736,8 +1190,9 @@ public class FileTransferService implements AutoCloseable {
 
             ByteBuffer buf = ByteBuffer.wrap(chunk.data());
             long currentOffset = chunk.offset();
+            FileChannel ch = ctx.ensureOpenChannel();
             while (buf.hasRemaining()) {
-                int written = ctx.channel().write(buf, currentOffset);
+                int written = ch.write(buf, currentOffset);
                 if (written <= 0) break;
                 currentOffset += written;
             }
@@ -758,14 +1213,14 @@ public class FileTransferService implements AutoCloseable {
         activeSenders.remove(transfer.getTransferId());
         ReceiverContext ctx = openReceivers.remove(transfer.getTransferId());
         if (ctx != null) {
+            ctx.closeChannel();
             try {
-                ctx.channel().close();
                 Files.deleteIfExists(ctx.tempPartPath());
             } catch (Exception ignored) {
             }
         }
 
-        if (connection.isConnected()) {
+        if (connection != null && connection.isConnected()) {
             try {
                 TransferAckMessage ack = TransferAckMessage.failure(transfer.getTransferId(),
                         transfer.getTransferredBytes(), reason);
@@ -788,8 +1243,8 @@ public class FileTransferService implements AutoCloseable {
         }
 
         for (ReceiverContext ctx : openReceivers.values()) {
+            ctx.closeChannel();
             try {
-                ctx.channel().close();
                 Files.deleteIfExists(ctx.tempPartPath());
             } catch (Exception ignored) {
             }
@@ -818,6 +1273,17 @@ public class FileTransferService implements AutoCloseable {
 
     public FileTransfer getTransfer(String transferId) {
         return transfers.get(transferId);
+    }
+
+    /**
+     * Registers a transfer directly into the transfer map. Mainly used for testing or state restoration.
+     *
+     * @param transfer the transfer to register
+     */
+    public void registerTransfer(FileTransfer transfer) {
+        if (transfer != null) {
+            transfers.put(transfer.getTransferId(), transfer);
+        }
     }
 
     public Path getDownloadDirectory() {
@@ -864,6 +1330,42 @@ public class FileTransferService implements AutoCloseable {
         }
     }
 
+    private void notifyInterrupted(FileTransfer transfer, String reason) {
+        for (FileTransferListener l : listeners) {
+            try {
+                l.onTransferInterrupted(transfer, reason);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void notifyReconnecting(FileTransfer transfer, int attempt, int maxAttempts) {
+        for (FileTransferListener l : listeners) {
+            try {
+                l.onTransferReconnecting(transfer, attempt, maxAttempts);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void notifyResuming(FileTransfer transfer, int fromChunk, int totalChunks) {
+        for (FileTransferListener l : listeners) {
+            try {
+                l.onTransferResuming(transfer, fromChunk, totalChunks);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    private void notifyChunkRetrying(FileTransfer transfer, int chunkIndex, int attempt, int maxAttempts) {
+        for (FileTransferListener l : listeners) {
+            try {
+                l.onTransferChunkRetrying(transfer, chunkIndex, attempt, maxAttempts);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
     private void notifyCompleted(FileTransfer transfer) {
         for (FileTransferListener l : listeners) {
             try {
@@ -892,12 +1394,24 @@ public class FileTransferService implements AutoCloseable {
     }
 
     private void notifyError(Exception error) {
-        // Log or handle internal unexpected error
+        // Log internal error
+    }
+
+    public void shutdown() {
+        close();
     }
 
     @Override
     public void close() {
         if (running.compareAndSet(true, false)) {
+            for (CompletableFuture<?> f : pendingChunkRequests.values()) {
+                f.cancel(true);
+            }
+            pendingChunkRequests.clear();
+            for (CompletableFuture<?> f : pendingResumeResponses.values()) {
+                f.cancel(true);
+            }
+            pendingResumeResponses.clear();
             failAllActiveTransfers("File transfer service closed");
             listeners.clear();
         }
