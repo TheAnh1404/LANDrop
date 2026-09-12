@@ -15,7 +15,7 @@ Từ thư mục gốc `LANDrop`:
 ```bash
 mvn clean install
 ```
-*(Biên dịch và chạy kiểm thử toàn bộ 111 unit & integration tests trên cả `backend` (100 tests) và `frontend` (11 tests)).*
+*(Biên dịch và chạy kiểm thử toàn bộ 124 unit & integration tests trên cả `backend` (113 tests) và `frontend` (11 tests)).*
 
 ---
 
@@ -221,6 +221,90 @@ sequenceDiagram
 
 ---
 
+### 9. Khôi Phục Truyền File Gián Đoạn & Thử Lại Từng Chunk (Phase 8 Guide)
+
+Khi kết nối mạng P2P bị chập chờn hoặc ngắt kết nối đột ngột giữa chừng, LANDrop tự động bảo lưu tiến trình truyền nhận và hỗ trợ khôi phục tiếp tục (Resume) mà không cần truyền lại từ đầu:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor PeerB as Peer B (Receiver)
+    actor PeerA as Peer A (Sender)
+
+    Note over PeerB,PeerA: Đang truyền dở dang (ví dụ Chunk 0..41/100 đã xong)
+    Note over PeerB,PeerA: [SỰ CỐ] Mất kết nối TCP đột ngột!
+    Note over PeerB: Giữ nguyên file tạm document.pdf.landrop.part<br/>Chuyển trạng thái: INTERRUPTED
+    Note over PeerA: Giữ nguyên transfer state<br/>Chuyển trạng thái: INTERRUPTED
+
+    alt Tự Động Kết Nối Lại (Bounded Exponential Backoff)
+        loop Thử lại tối đa 5 lần (1s, 2s, 4s, 8s, 10s)
+            Note over PeerB: Trạng thái: RECONNECTING (Lần 1/5, 2/5...)
+            PeerB-->>PeerA: Thử mở lại TCP Socket tới Peer A
+        end
+    else Hoặc Người Dùng Bấm Nút "Resume" Thủ Công Trên Giao Diện
+        Note over PeerB: Bấm nút [Resume] trong tab Transfers
+    end
+
+    Note over PeerB,PeerA: Kết nối TCP mới được thiết lập thành công!
+    Note over PeerB: Trạng thái: RESUMING<br/>Tạo bitmap BitSet các chunk đã có (chunk 0..41)
+    PeerB->>PeerA: RESUME_REQUEST (transferId, metadata, completedChunksBitmap)
+
+    Note over PeerA: Kiểm tra chuyển đổi hợp lệ:<br/>1. transferId tồn tại<br/>2. Tên file, dung lượng, chunkSize, SHA-256 khớp 100%<br/>3. File nguồn còn nguyên vẹn & SHA-256 không bị sửa đổi
+    PeerA->>PeerB: RESUME_RESPONSE (accepted=true, nextMissingChunk=42)
+
+    loop Tiếp tục kéo các chunk còn thiếu
+        PeerB->>PeerA: CHUNK_REQUEST (transferId, chunkIndex=42)
+        PeerA-->>PeerB: CHUNK_RESPONSE #42 [1B idLen][transferId][4B idx][4B len][chunkData]
+        Note over PeerB: Ghi tiếp vào file tạm tại offset chunk 42
+    end
+
+    Note over PeerB: Thu thập đủ 100/100 chunk -> Xác minh SHA-256 toàn bộ file
+    Note over PeerB: Đổi tên nguyên tử: document.pdf.landrop.part -> document.pdf
+    PeerB->>PeerA: TRANSFER_ACK (transferId, success=true)
+    Note over PeerA,PeerB: Trạng thái: COMPLETED
+```
+
+#### Cấu Trúc Gói Tin Bổ Sung Trong Phase 8:
+1. **`RESUME_REQUEST` (Code 18, JSON)**:
+   ```json
+   {
+     "transferId": "41a996f0-4fa8-4b71-9ce1-8dfb8417c805",
+     "fileName": "document.pdf",
+     "fileSize": 104857600,
+     "chunkSize": 1048576,
+     "totalChunks": 100,
+     "fileSha256": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+     "completedChunksBitmap": "//////8="
+   }
+   ```
+2. **`RESUME_RESPONSE` (Code 19, JSON)**:
+   ```json
+   {
+     "transferId": "41a996f0-4fa8-4b71-9ce1-8dfb8417c805",
+     "accepted": true,
+     "nextMissingChunk": 42,
+     "reason": ""
+   }
+   ```
+
+#### Các Cơ Chế Đảm Bảo Khôi Phục An Toàn & Chống Lỗi:
+* **Không Xóa File Tạm Khi Mất Kết Nối**:
+  * Khi socket đứt gãy, `FileTransferService` lập tức flush kênh ghi file và chuyển sang `INTERRUPTED`. File `.landrop.part` được giữ nguyên vẹn trên đĩa.
+* **Chiến Lược Kết Nối Lại Có Giới Hạn (Bounded Backoff Reconnect)**:
+  * Tối đa `MAX_RECONNECT_ATTEMPTS = 5` lần với thời gian chờ giãn cách lũy tiến: `1s, 2s, 4s, 8s, 10s`.
+  * Nếu sau 5 lần vẫn không kết nối được, tiến trình mới chuyển sang `FAILED` kèm thông báo lỗi rõ ràng.
+* **Bắt Tay Khôi Phục Chặt Chẽ (Two-way Resume Handshake)**:
+  * Bên gửi đối soát nghiêm ngặt: tên file, kích thước file, kích thước chunk, số lượng chunk, và mã băm SHA-256 dự kiến.
+  * Bên gửi băm lại file nguồn trên đĩa để đảm bảo nội dung tệp nguồn không bị chỉnh sửa hay thay thế trong lúc mất kết nối (`SOURCE_FILE_CHANGED`).
+* **Thử Lại Từng Chunk Khi Timeout (Per-Chunk Retry)**:
+  * Mỗi chunk có timeout độc lập (mặc định 5s).
+  * Nếu một chunk bị thất lạc gói hoặc timeout, client tự động thử lại tối đa `MAX_CHUNK_RETRIES = 3` lần cho chính chunk đó mà không làm đứt toàn bộ file transfer.
+* **Giao Diện Trực Quan (Dynamic UI Status)**:
+  * Tab **Transfers** và bong bóng chat hiển thị rõ các trạng thái `Interrupted`, `Reconnecting (Attempt 2/5)`, `Resuming...`, `Retrying chunk 42 (Attempt 2/3)`.
+  * Hỗ trợ 2 nút hành động trực tiếp: **"Resume"** (kết nối lại và gửi yêu cầu tiếp tục) và **"Cancel"** (hủy bỏ hoàn toàn và dọn dẹp file tạm).
+
+---
+
 ## 📁 Cấu Trúc Dự Án (Project Structure)
 
 ```text
@@ -240,7 +324,7 @@ LANDrop/
 │       ├── peer/           # PeerConnection, PeerListener, Handshake
 │       ├── chat/           # ChatService, ChatMessage, ChatCli
 │       ├── discovery/      # DiscoveryServer, DiscoveryClient, PeerRegistry
-│       └── transfer/       # FileTransferService, FileChunk, ChunkRequest/Response, SHA-256 Utils
+│       └── transfer/       # FileTransferService, FileChunk, ChunkRequest/Response, ResumeRequest/Response, SHA-256 Utils
 │
 └── frontend/               # Module Frontend (JavaFX Desktop UI)
     ├── pom.xml
@@ -267,4 +351,8 @@ LANDrop/
 * [x] **Phase 5**: JavaFX Desktop User Interface (Modern Light Theme, Setup Screen, Dashboard, Peer Discovery View, Real-time Chat UI)
 * [x] **Phase 6**: Basic P2P File Transfer (Direct TCP Streaming, 64KB NIO Chunks, Safe Path Resolution, In-Chat Transfer Cards, Transfers History View)
 * [x] **Phase 7**: Chunked P2P File Transfer + SHA-256 Integrity Verification (Sequential 1 MiB Chunk Streaming, CHUNK_REQUEST/RESPONSE, Streaming SHA-256 Verification, Partial Files .part, BitSet De-duplication)
-* [ ] **Phase 8**: Resume & Retry Strategy (Chunk Bitmap Persistence, Re-requesting Missing Chunks - Giai đoạn tiếp theo)
+* [x] **Phase 8**: P2P File Transfer Resume + Retry (Session-level Interruption Handling, Bounded Exponential Backoff Reconnection, Two-way Resume Handshake, BitSet Chunk Bitmap, Per-Chunk Retry & Timeout, UI Controls)
+* [ ] **Phase 9**: Multi-Peer Parallel Swarming File Transfer (Giai đoạn tiếp theo)
+* [ ] **Phase 10**: End-to-End Encryption (TLS / AES-GCM)
+* [ ] **Phase 11**: Persistent Transfer State Database (SQLite)
+
