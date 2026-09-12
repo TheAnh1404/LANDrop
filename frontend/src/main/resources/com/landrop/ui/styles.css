@@ -567,3 +567,36 @@
 .transfer-status-resuming {
     -fx-text-fill: #0284c7;
 }
+
+.transfer-status-discovering_peers {
+    -fx-text-fill: #7c3aed;
+}
+
+.transfer-status-preparing {
+    -fx-text-fill: #7c3aed;
+}
+
+.transfer-status-downloading {
+    -fx-text-fill: #4f46e5;
+}
+
+.transfer-status-cancelled {
+    -fx-text-fill: #64748b;
+}
+
+.peer-chunk-badge-active {
+    -fx-background-color: #ede9fe;
+    -fx-text-fill: #6d28d9;
+    -fx-font-size: 10px;
+    -fx-font-weight: bold;
+    -fx-padding: 2px 6px;
+    -fx-background-radius: 4px;
+}
+
+.peer-chunk-badge-offline {
+    -fx-background-color: #fee2e2;
+    -fx-text-fill: #b91c1c;
+    -fx-font-size: 10px;
+    -fx-padding: 2px 6px;
+    -fx-background-radius: 4px;
+}

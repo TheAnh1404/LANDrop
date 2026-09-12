@@ -9,10 +9,14 @@
       spacing="16.0" VBox.vgrow="ALWAYS" styleClass="page-container">
 
     <!-- 1. Page Header -->
-    <VBox spacing="4.0">
-        <Label text="File Transfers" styleClass="page-title"/>
-        <Label text="Monitor and manage all incoming and outgoing peer-to-peer file transfers" styleClass="page-subtitle"/>
-    </VBox>
+    <HBox alignment="CENTER_LEFT" spacing="12.0">
+        <VBox spacing="4.0" HBox.hgrow="ALWAYS">
+            <Label text="File Transfers" styleClass="page-title"/>
+            <Label text="Monitor and manage all incoming and outgoing peer-to-peer file transfers" styleClass="page-subtitle"/>
+        </VBox>
+        <Button fx:id="startMultiPeerDownloadBtn" text="⚡ Multi-Peer Download" onAction="#handleStartMultiPeerDownload"
+                styleClass="primary-button" style="-fx-font-size: 12px; -fx-padding: 8px 14px; -fx-background-color: #7c3aed;"/>
+    </HBox>
 
     <!-- 2. Transfer Metrics Bar -->
     <HBox spacing="16.0">

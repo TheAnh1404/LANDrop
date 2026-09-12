@@ -13,6 +13,11 @@ import com.landrop.transfer.FileTransfer;
 import com.landrop.transfer.FileTransferDirection;
 import com.landrop.transfer.FileTransferListener;
 import com.landrop.transfer.FileTransferService;
+import com.landrop.transfer.MultiPeerDownload;
+import com.landrop.transfer.MultiPeerDownloadCoordinator;
+import com.landrop.transfer.MultiPeerDownloadListener;
+import com.landrop.transfer.MultiPeerDownloadStatus;
+import com.landrop.transfer.PeerDownloadState;
 import com.landrop.ui.models.DiscoveryStatus;
 import com.landrop.ui.models.P2PStatus;
 import com.landrop.ui.models.UIMessage;
@@ -82,6 +87,10 @@ public class UIStateService {
     private final ObservableList<FileTransfer> transfers = FXCollections.observableArrayList();
     private Consumer<FileTransfer> onFileTransferOfferedCallback;
     private Consumer<FileTransfer> onFileTransferUpdatedCallback;
+
+    private final ObservableList<MultiPeerDownload> multiPeerDownloads = FXCollections.observableArrayList();
+    private final Map<String, MultiPeerDownloadCoordinator> multiPeerCoordinators = new ConcurrentHashMap<>();
+    private Consumer<MultiPeerDownload> onMultiPeerDownloadUpdatedCallback;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Consumer<String> onIncomingConnectionCallback;
@@ -778,6 +787,10 @@ public class UIStateService {
         return transfers;
     }
 
+    public ObservableList<MultiPeerDownload> getMultiPeerDownloads() {
+        return multiPeerDownloads;
+    }
+
     public FileTransferService getFileTransferService() {
         return fileTransferService;
     }
@@ -788,5 +801,155 @@ public class UIStateService {
 
     public void setOnFileTransferUpdatedCallback(Consumer<FileTransfer> callback) {
         this.onFileTransferUpdatedCallback = callback;
+    }
+
+    public void setOnMultiPeerDownloadUpdatedCallback(Consumer<MultiPeerDownload> callback) {
+        this.onMultiPeerDownloadUpdatedCallback = callback;
+    }
+
+    public CompletableFuture<Void> cancelMultiPeerDownload(String transferId) {
+        return CompletableFuture.runAsync(() -> {
+            MultiPeerDownloadCoordinator coord = multiPeerCoordinators.get(transferId);
+            if (coord != null) {
+                coord.cancel();
+            }
+        });
+    }
+
+    public CompletableFuture<MultiPeerDownload> startMultiPeerDownload(String fileName, long fileSize, String fileSha256) {
+        CompletableFuture<MultiPeerDownload> future = new CompletableFuture<>();
+        CompletableFuture.runAsync(() -> {
+            if (fileTransferService == null) {
+                future.completeExceptionally(new IllegalStateException("File transfer service is not active"));
+                return;
+            }
+
+            try {
+                MultiPeerDownloadCoordinator coordinator =
+                        fileTransferService.createMultiPeerDownload(fileName, fileSize, fileSha256);
+                MultiPeerDownload download = coordinator.getDownload();
+                multiPeerCoordinators.put(download.getTransferId(), coordinator);
+
+                Platform.runLater(() -> {
+                    multiPeerDownloads.add(0, download);
+                    if (onMultiPeerDownloadUpdatedCallback != null) {
+                        onMultiPeerDownloadUpdatedCallback.accept(download);
+                    }
+                });
+
+                download.addListener(new MultiPeerDownloadListener() {
+                    @Override
+                    public void onStatusChanged(MultiPeerDownload dl, MultiPeerDownloadStatus oldStatus, MultiPeerDownloadStatus newStatus) {
+                        Platform.runLater(() -> {
+                            if (onMultiPeerDownloadUpdatedCallback != null) {
+                                onMultiPeerDownloadUpdatedCallback.accept(dl);
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onChunkCompleted(MultiPeerDownload dl, int chunkIndex, String peerId, int completed, int total) {
+                        Platform.runLater(() -> {
+                            if (onMultiPeerDownloadUpdatedCallback != null) {
+                                onMultiPeerDownloadUpdatedCallback.accept(dl);
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onProgress(MultiPeerDownload dl, long transferredBytes, long totalBytes, double speedBytesPerSec, String etaString) {
+                        Platform.runLater(() -> {
+                            if (onMultiPeerDownloadUpdatedCallback != null) {
+                                onMultiPeerDownloadUpdatedCallback.accept(dl);
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onPeerDiscovered(MultiPeerDownload dl, PeerDownloadState peer) {
+                        Platform.runLater(() -> {
+                            if (onMultiPeerDownloadUpdatedCallback != null) {
+                                onMultiPeerDownloadUpdatedCallback.accept(dl);
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onPeerFailed(MultiPeerDownload dl, String peerId, String reason) {
+                        Platform.runLater(() -> {
+                            if (onMultiPeerDownloadUpdatedCallback != null) {
+                                onMultiPeerDownloadUpdatedCallback.accept(dl);
+                            }
+                        });
+                    }
+                });
+
+                // Query all discovered peers for file availability
+                java.util.List<PeerInfo> candidatePeers = new java.util.ArrayList<>(discoveredPeers);
+                java.util.List<CompletableFuture<?>> queryFutures = new java.util.ArrayList<>();
+
+                for (PeerInfo peer : candidatePeers) {
+                    if (peer.getPort() == getLocalP2pPort() &&
+                            ("127.0.0.1".equals(peer.getHost()) || "localhost".equalsIgnoreCase(peer.getHost()) || peer.getHost().equals(advertisedHost))) {
+                        continue;
+                    }
+
+                    CompletableFuture<Void> qf = CompletableFuture.runAsync(() -> {
+                        try {
+                            PeerConnection conn = PeerConnection.connectTo(peer.getHost(), peer.getPort(), 2000);
+                            conn.setLocalPeerName(identity.getDisplayName());
+                            conn.start();
+                            conn.initiateHandshake(identity.getDisplayName());
+                            if (conn.awaitReady(3, TimeUnit.SECONDS)) {
+                                var resp = coordinator.queryFileAvailability(conn, 3000).get(4, TimeUnit.SECONDS);
+                                if (resp != null && resp.isAvailable()) {
+                                    PeerDownloadState pds = new PeerDownloadState(peer.getPeerId(), peer.getDisplayName(), null);
+                                    coordinator.addSourcePeer(pds, conn);
+                                } else {
+                                    conn.close();
+                                }
+                            } else {
+                                conn.close();
+                            }
+                        } catch (Exception ignored) {
+                        }
+                    });
+                    queryFutures.add(qf);
+                }
+
+                // If activeConnection exists and is connected, query it too
+                if (activeConnection != null && activeConnection.isConnected()) {
+                    CompletableFuture<Void> qf = CompletableFuture.runAsync(() -> {
+                        try {
+                            var resp = coordinator.queryFileAvailability(activeConnection, 3000).get(4, TimeUnit.SECONDS);
+                            if (resp != null && resp.isAvailable()) {
+                                PeerDownloadState pds = new PeerDownloadState(
+                                        activeConnection.getRemotePeerName(),
+                                        activeConnection.getRemotePeerName(),
+                                        null
+                                );
+                                coordinator.addSourcePeer(pds, activeConnection);
+                            }
+                        } catch (Exception ignored) {
+                        }
+                    });
+                    queryFutures.add(qf);
+                }
+
+                // Await all queries with a timeout
+                try {
+                    CompletableFuture.allOf(queryFutures.toArray(new CompletableFuture[0]))
+                            .get(4, TimeUnit.SECONDS);
+                } catch (Exception ignored) {
+                }
+
+                coordinator.start();
+                future.complete(download);
+
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        });
+        return future;
     }
 }
