@@ -15,7 +15,7 @@ Từ thư mục gốc `LANDrop`:
 ```bash
 mvn clean install
 ```
-*(Biên dịch và chạy kiểm thử toàn bộ 124 unit & integration tests trên cả `backend` (113 tests) và `frontend` (11 tests)).*
+*(Biên dịch và chạy kiểm thử toàn bộ 153 unit & integration tests trên cả `backend` (142 tests) và `frontend` (11 tests)).*
 
 ---
 
@@ -352,7 +352,7 @@ LANDrop/
 * [x] **Phase 6**: Basic P2P File Transfer (Direct TCP Streaming, 64KB NIO Chunks, Safe Path Resolution, In-Chat Transfer Cards, Transfers History View)
 * [x] **Phase 7**: Chunked P2P File Transfer + SHA-256 Integrity Verification (Sequential 1 MiB Chunk Streaming, CHUNK_REQUEST/RESPONSE, Streaming SHA-256 Verification, Partial Files .part, BitSet De-duplication)
 * [x] **Phase 8**: P2P File Transfer Resume + Retry (Session-level Interruption Handling, Bounded Exponential Backoff Reconnection, Two-way Resume Handshake, BitSet Chunk Bitmap, Per-Chunk Retry & Timeout, UI Controls)
-* [ ] **Phase 9**: Multi-Peer Parallel Swarming File Transfer (Giai đoạn tiếp theo)
+* [x] **Phase 9**: Multi-Peer Parallel Swarming File Transfer (Direct TCP multi-source downloads, Bounded Round-Robin Chunk Scheduling, Concurrent positional FileChannel writes, Dynamic late-peer joins, Failover recovery, Aggregated UI metrics)
 * [ ] **Phase 10**: End-to-End Encryption (TLS / AES-GCM)
 * [ ] **Phase 11**: Persistent Transfer State Database (SQLite)
 

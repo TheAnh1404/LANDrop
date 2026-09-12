@@ -1,17 +1,18 @@
 # LANDrop — Backend
 
 ## Phase
-Phase 8 — P2P File Transfer Resume + Retry
+Phase 9 — Multi-Peer Concurrent File Transfer
 
 ## Objective
-Upgrade the chunked P2P file transfer engine with session-level resume and retry capabilities:
-* Interruption detection on network drop without destroying `.landrop.part` files.
-* Controlled P2P reconnection with bounded backoff (`MAX_RECONNECT_ATTEMPTS = 5`).
-* Two-way resume handshake (`RESUME_REQUEST` and `RESUME_RESPONSE`) using Base64-encoded `BitSet` chunk bitmaps.
-* Strict source file & metadata validation (transferId, fileName, fileSize, chunkSize, totalChunks, SHA-256).
-* Resuming sequentially from the first missing chunk without re-transmitting completed chunks.
-* Per-chunk timeout and retry mechanism (`MAX_CHUNK_RETRIES = 3`).
-* Final file size check, streaming SHA-256 integrity verification, and atomic rename.
+Upgrade the chunked P2P file transfer engine with multi-peer parallel swarming capabilities:
+* Receiver concurrently requests different chunks from multiple source peers over direct TCP sockets.
+* File availability discovery via `FILE_QUERY (20)` and `FILE_QUERY_RESPONSE (21)`.
+* Thread-safe chunk state management (`ChunkManager`) with peer tracking and duplicate assignment prevention.
+* Bounded round-robin scheduler (`ChunkScheduler`) respecting per-peer concurrency bounds (`maxActiveChunksPerPeer = 2`).
+* Direct-to-disk concurrent positional writes into `.landrop.part` via Java NIO `FileChannel`.
+* Automatic failover when peers disconnect, releasing in-flight chunks for reassignment without restarting transfer.
+* Streaming SHA-256 integrity verification upon completion, atomic move to final file, and partial file deletion on mismatch.
+* Backward-compatible with single-peer Phase 1–8 file transfers.
 
 ## Protocol Wire Format
 ```text
@@ -25,7 +26,7 @@ Upgrade the chunked P2P file transfer engine with session-level resume and retry
 ```
 
 * **Version**: 1 byte (`CURRENT_VERSION = 1`)
-* **Message Type**: 1 byte (`HELLO=1`, `CHAT_MESSAGE=2`, `PING=3`, `PONG=4`, `FILE_OFFER=5`, `FILE_REQUEST=6`, `CHUNK_REQUEST=7`, `CHUNK_RESPONSE=8`, `TRANSFER_ACK=9`, `FILE_DATA=17`, `RESUME_REQUEST=18`, `RESUME_RESPONSE=19`)
+* **Message Type**: 1 byte (`HELLO=1`, `CHAT_MESSAGE=2`, `PING=3`, `PONG=4`, `FILE_OFFER=5`, `FILE_REQUEST=6`, `CHUNK_REQUEST=7`, `CHUNK_RESPONSE=8`, `TRANSFER_ACK=9`, `FILE_DATA=17`, `RESUME_REQUEST=18`, `RESUME_RESPONSE=19`, `FILE_QUERY=20`, `FILE_QUERY_RESPONSE=21`)
 * **Payload Length**: 4 bytes (int, bounded to `DEFAULT_MAX_PAYLOAD_SIZE = 2 MB`)
 * **Request ID**: 8 bytes (long, monotonic request/response correlation)
 * **Payload**: UTF-8 bytes / JSON strings / binary chunk payloads
@@ -37,31 +38,36 @@ Upgrade the chunked P2P file transfer engine with session-level resume and retry
 +--------------------+--------------------+--------------------+--------------------+--------------------+
 ```
 
-### RESUME_REQUEST (Code 18, JSON)
+### FILE_QUERY (Code 20, JSON)
 ```json
 {
-  "transferId": "47608a73-94c1-4565-b783-feaead260b64",
-  "fileName": "sample.mp4",
-  "fileSize": 104857600,
-  "chunkSize": 1048576,
-  "totalChunks": 100,
-  "fileSha256": "52406a802793990972002ae44bf2d17df7638b2d27c038932367f7126df11e47",
-  "completedChunksBitmap": "//////8="
+  "queryId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "fileName": "ubuntu-24.04-desktop-amd64.iso",
+  "fileSize": 6120341504,
+  "fileSha256": "3a0b...9f",
+  "requesterPeerId": "peer-d",
+  "requesterPeerName": "Peer D"
 }
 ```
 
-### RESUME_RESPONSE (Code 19, JSON)
+### FILE_QUERY_RESPONSE (Code 21, JSON)
 ```json
 {
-  "transferId": "47608a73-94c1-4565-b783-feaead260b64",
-  "accepted": true,
-  "nextMissingChunk": 42,
+  "queryId": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
+  "available": true,
+  "fileName": "ubuntu-24.04-desktop-amd64.iso",
+  "fileSize": 6120341504,
+  "chunkSize": 1048576,
+  "totalChunks": 5837,
+  "fileSha256": "3a0b...9f",
+  "sourcePeerId": "peer-a",
+  "sourcePeerName": "Peer A",
   "reason": ""
 }
 ```
 
 ## Build & Test
-Run all unit and integration tests (113 tests):
+Run all unit and integration tests (142 backend tests):
 
 ```bash
 mvn clean test
@@ -76,9 +82,9 @@ mvn clean test
 * Phase 6: Basic P2P File Transfer — COMPLETED
 * Phase 7: Chunked Transfer & SHA-256 Verification — COMPLETED
 * Phase 8: P2P File Transfer Resume + Retry — COMPLETED
+* Phase 9: Multi-Peer Parallel Swarming File Transfer — COMPLETED
 
 Deferred to Future Phases:
-* Phase 9: Multi-peer parallel swarming transfer
 * Phase 10: End-to-end encryption (TLS / AES-GCM)
 * Phase 11: Persistent transfer database (SQLite)
 
