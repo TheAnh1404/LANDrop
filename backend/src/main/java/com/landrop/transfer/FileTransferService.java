@@ -10,6 +10,8 @@ import com.landrop.transfer.messages.ChunkRequestMessage;
 import com.landrop.transfer.messages.ChunkResponseMessage;
 import com.landrop.transfer.messages.FileDataChunk;
 import com.landrop.transfer.messages.FileOfferMessage;
+import com.landrop.transfer.messages.FileQueryMessage;
+import com.landrop.transfer.messages.FileQueryResponseMessage;
 import com.landrop.transfer.messages.FileRequestMessage;
 import com.landrop.transfer.messages.ResumeRequestMessage;
 import com.landrop.transfer.messages.ResumeResponseMessage;
@@ -86,6 +88,8 @@ public class FileTransferService implements AutoCloseable {
     private final Map<String, SenderContext> activeSenders = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<ChunkResponseMessage>> pendingChunkRequests = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<ResumeResponseMessage>> pendingResumeResponses = new ConcurrentHashMap<>();
+    private final Map<String, Path> sharedFilesByHash = new ConcurrentHashMap<>();
+    private final Map<String, MultiPeerDownloadCoordinator> multiPeerDownloads = new ConcurrentHashMap<>();
     private final List<FileTransferListener> listeners = new CopyOnWriteArrayList<>();
 
     private final AtomicBoolean running = new AtomicBoolean(true);
@@ -188,7 +192,9 @@ public class FileTransferService implements AutoCloseable {
         this.downloadDirectory = Objects.requireNonNull(downloadDirectory, "downloadDirectory cannot be null");
         this.configuredChunkSize = chunkSize > 0 ? chunkSize : DEFAULT_CHUNK_SIZE;
 
-        attachConnection(connection);
+        if (connection != null) {
+            attachConnection(connection);
+        }
     }
 
     /**
@@ -209,6 +215,7 @@ public class FileTransferService implements AutoCloseable {
         newConnection.registerHandler(MessageType.TRANSFER_ACK, this::handleTransferAckPacket);
         newConnection.registerHandler(MessageType.RESUME_REQUEST, this::handleResumeRequestPacket);
         newConnection.registerHandler(MessageType.RESUME_RESPONSE, this::handleResumeResponsePacket);
+        newConnection.registerHandler(MessageType.FILE_QUERY, this::handleFileQueryPacket);
         newConnection.registerHandler(MessageType.FILE_DATA, this::handleLegacyFileDataPacket);
 
         // Listen for disconnect to interrupt active transfers cleanly
@@ -318,6 +325,7 @@ public class FileTransferService implements AutoCloseable {
                 sha256,
                 new AtomicBoolean(false)
         ));
+        shareFile(file.toPath());
 
         FileOfferMessage offer = new FileOfferMessage(
                 transferId,
@@ -891,21 +899,25 @@ public class FileTransferService implements AutoCloseable {
                 FileTransfer transfer = transfers.get(transferId);
                 SenderContext senderCtx = activeSenders.get(transferId);
 
-                if (transfer == null || senderCtx == null || senderCtx.cancelled().get()) {
+                if (senderCtx == null || senderCtx.cancelled().get()) {
                     return;
                 }
 
                 int chunkIndex = msg.getChunkIndex();
                 if (chunkIndex < 0 || chunkIndex >= senderCtx.totalChunks()) {
-                    failTransfer(transfer, "Invalid chunk index requested: " + chunkIndex +
-                            " (total: " + senderCtx.totalChunks() + ")");
+                    if (transfer != null) {
+                        failTransfer(transfer, "Invalid chunk index requested: " + chunkIndex +
+                                " (total: " + senderCtx.totalChunks() + ")");
+                    }
                     return;
                 }
 
                 // File consistency check (Section 22)
                 Path sourcePath = senderCtx.sourcePath();
                 if (!Files.exists(sourcePath) || Files.size(sourcePath) != senderCtx.fileSize()) {
-                    failTransfer(transfer, "Source file modified or missing during transfer: " + sourcePath);
+                    if (transfer != null) {
+                        failTransfer(transfer, "Source file modified or missing during transfer: " + sourcePath);
+                    }
                     return;
                 }
 
@@ -932,18 +944,20 @@ public class FileTransferService implements AutoCloseable {
                 long reqId = connection.getRequestIdGenerator().nextId();
                 connection.send(Packet.of(MessageType.CHUNK_RESPONSE, reqId, chunkPayload));
 
-                // Update sender progress
-                long sentBytes = offset + length;
-                transfer.setTransferredBytes(sentBytes);
-                transfer.setCurrentChunk(chunkIndex + 1);
-                transfer.markChunkCompleted(chunkIndex);
+                // Update sender progress if transfer is tracked
+                if (transfer != null) {
+                    long sentBytes = offset + length;
+                    transfer.setTransferredBytes(sentBytes);
+                    transfer.setCurrentChunk(chunkIndex + 1);
+                    transfer.markChunkCompleted(chunkIndex);
 
-                long now = System.currentTimeMillis();
-                long elapsed = now - transfer.getStartTimeMs();
-                double speed = elapsed > 0 ? (sentBytes * 1000.0) / elapsed : 0.0;
-                transfer.setSpeedBytesPerSec(speed);
+                    long now = System.currentTimeMillis();
+                    long elapsed = now - transfer.getStartTimeMs();
+                    double speed = elapsed > 0 ? (sentBytes * 1000.0) / elapsed : 0.0;
+                    transfer.setSpeedBytesPerSec(speed);
 
-                notifyProgress(transfer, sentBytes, senderCtx.fileSize(), speed);
+                    notifyProgress(transfer, sentBytes, senderCtx.fileSize(), speed);
+                }
 
             } catch (Exception e) {
                 notifyError(e);
@@ -1081,6 +1095,86 @@ public class FileTransferService implements AutoCloseable {
     }
 
     /**
+     * Handles incoming FILE_QUERY from a peer querying file availability for multi-peer download.
+     */
+    private void handleFileQueryPacket(Packet packet) {
+        Thread.ofVirtual().name("handle-file-query").start(() -> {
+            try {
+                FileQueryMessage query = FileQueryMessage.fromBytes(packet.getPayload());
+                query.validate();
+
+                String key = query.getFileSha256().toLowerCase() + ":" + query.getFileSize();
+                Path localPath = sharedFilesByHash.get(key);
+
+                if (localPath == null || !Files.exists(localPath)) {
+                    for (FileTransfer tx : transfers.values()) {
+                        if (query.getFileSha256().equalsIgnoreCase(tx.getFileSha256()) &&
+                                query.getFileSize() == tx.getFileSize() &&
+                                tx.getLocalPath() != null && Files.exists(tx.getLocalPath())) {
+                            localPath = tx.getLocalPath();
+                            break;
+                        }
+                    }
+                }
+
+                long reqId = connection.getRequestIdGenerator().nextId();
+
+                if (localPath != null && Files.exists(localPath) && Files.size(localPath) == query.getFileSize()) {
+                    int chunkSize = configuredChunkSize;
+                    int totalChunks = FileChunk.calculateTotalChunks(query.getFileSize(), chunkSize);
+
+                    // Register in activeSenders so CHUNK_REQUEST with queryId can be served
+                    activeSenders.put(query.getQueryId(), new SenderContext(
+                            localPath,
+                            query.getFileSize(),
+                            Files.getLastModifiedTime(localPath).toMillis(),
+                            chunkSize,
+                            totalChunks,
+                            query.getFileSha256(),
+                            new AtomicBoolean(false)
+                    ));
+
+                    FileTransfer transfer = new FileTransfer(
+                            query.getQueryId(),
+                            localPath.getFileName().toString(),
+                            query.getFileSize(),
+                            FileTransferDirection.OUTGOING,
+                            connection.getRemotePeerName(),
+                            connection.getRemotePeerName(),
+                            localPath,
+                            chunkSize,
+                            totalChunks,
+                            query.getFileSha256()
+                    );
+                    transfer.setStatus(FileTransferStatus.TRANSFERRING);
+                    transfers.put(query.getQueryId(), transfer);
+
+                    FileQueryResponseMessage resp = FileQueryResponseMessage.available(
+                            query.getQueryId(),
+                            localPath.getFileName().toString(),
+                            query.getFileSize(),
+                            chunkSize,
+                            totalChunks,
+                            query.getFileSha256(),
+                            localPeerId,
+                            localPeerName
+                    );
+
+                    connection.send(Packet.of(MessageType.FILE_QUERY_RESPONSE, reqId, resp.toBytes()));
+                } else {
+                    FileQueryResponseMessage resp = FileQueryResponseMessage.unavailable(
+                            query.getQueryId(),
+                            FileQueryResponseMessage.REASON_FILE_NOT_FOUND
+                    );
+                    connection.send(Packet.of(MessageType.FILE_QUERY_RESPONSE, reqId, resp.toBytes()));
+                }
+            } catch (Exception e) {
+                System.err.println("[FILE_QUERY] Error handling query: " + e.getMessage());
+            }
+        });
+    }
+
+    /**
      * Verifies file integrity, moves partial file to destination, and completes incoming transfer.
      */
     private void finalizeAndVerifyIncomingTransfer(FileTransfer transfer, ReceiverContext ctx) {
@@ -1124,6 +1218,7 @@ public class FileTransferService implements AutoCloseable {
             transfer.setHashVerified(true);
             transfer.setLocalPath(ctx.finalDestPath());
             transfer.setStatus(FileTransferStatus.COMPLETED);
+            shareFile(ctx.finalDestPath());
 
             // 5. Send TRANSFER_ACK success
             TransferAckMessage ack = TransferAckMessage.success(transfer.getTransferId(), ctx.totalSize());
@@ -1286,6 +1381,96 @@ public class FileTransferService implements AutoCloseable {
         }
     }
 
+    /**
+     * Publishes a local file to make it available for FILE_QUERY and multi-peer download requests.
+     */
+    public void shareFile(Path file) {
+        if (file != null && Files.exists(file) && Files.isRegularFile(file)) {
+            try {
+                String hash = FileTransferUtils.calculateSha256(file);
+                long size = Files.size(file);
+                sharedFilesByHash.put(hash.toLowerCase() + ":" + size, file);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    public void shareFile(File file) {
+        if (file != null) {
+            shareFile(file.toPath());
+        }
+    }
+
+    public void unshareFile(String fileSha256, long fileSize) {
+        if (fileSha256 != null) {
+            sharedFilesByHash.remove(fileSha256.toLowerCase() + ":" + fileSize);
+        }
+    }
+
+    /**
+     * Directly maps a transferId to a local file for chunk serving.
+     * Useful for explicit multi-peer sessions and integration testing.
+     */
+    public void registerActiveTransfer(String transferId, Path sourceFile, int chunkSize) {
+        if (transferId != null && sourceFile != null && Files.exists(sourceFile)) {
+            try {
+                long size = Files.size(sourceFile);
+                int cs = chunkSize > 0 ? chunkSize : configuredChunkSize;
+                int totalChunks = FileChunk.calculateTotalChunks(size, cs);
+                String sha256 = FileTransferUtils.calculateSha256(sourceFile);
+                activeSenders.put(transferId, new SenderContext(
+                        sourceFile,
+                        size,
+                        Files.getLastModifiedTime(sourceFile).toMillis(),
+                        cs,
+                        totalChunks,
+                        sha256,
+                        new AtomicBoolean(false)
+                ));
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    public Map<String, Path> getSharedFiles() {
+        return Collections.unmodifiableMap(sharedFilesByHash);
+    }
+
+    /**
+     * Creates a new MultiPeerDownloadCoordinator targeting the specified file.
+     *
+     * @param fileName target filename
+     * @param fileSize expected total size in bytes
+     * @param expectedSha256 expected SHA-256 integrity hash
+     * @return configured MultiPeerDownloadCoordinator
+     */
+    public MultiPeerDownloadCoordinator createMultiPeerDownload(
+            String fileName,
+            long fileSize,
+            String expectedSha256) {
+        String transferId = UUID.randomUUID().toString();
+        Path destPath = downloadDirectory.resolve(fileName);
+        MultiPeerDownload download = new MultiPeerDownload(
+                transferId,
+                fileName,
+                fileSize,
+                configuredChunkSize,
+                expectedSha256,
+                destPath
+        );
+        MultiPeerDownloadCoordinator coordinator = new MultiPeerDownloadCoordinator(download);
+        multiPeerDownloads.put(transferId, coordinator);
+        return coordinator;
+    }
+
+    public MultiPeerDownloadCoordinator getMultiPeerDownload(String transferId) {
+        return multiPeerDownloads.get(transferId);
+    }
+
+    public List<MultiPeerDownloadCoordinator> getMultiPeerDownloads() {
+        return new ArrayList<>(multiPeerDownloads.values());
+    }
+
     public Path getDownloadDirectory() {
         return downloadDirectory;
     }
@@ -1394,7 +1579,9 @@ public class FileTransferService implements AutoCloseable {
     }
 
     private void notifyError(Exception error) {
-        // Log internal error
+        if (error != null) {
+            System.err.println("[FILE-TRANSFER] Internal error: " + error.getMessage());
+        }
     }
 
     public void shutdown() {

@@ -248,6 +248,17 @@ public final class FileTransferUtils {
     }
 
     /**
+     * Case-insensitively checks if two SHA-256 hex strings match.
+     *
+     * @param hash1 first hash
+     * @param hash2 second hash
+     * @return true if both hashes are non-null and equal ignoring case
+     */
+    public static boolean hashesMatch(String hash1, String hash2) {
+        return hash1 != null && hash1.equalsIgnoreCase(hash2);
+    }
+
+    /**
      * Shortens a 64-character hash for concise UI presentation (e.g. "ba7816bf8f...").
      *
      * @param hash full hash string
