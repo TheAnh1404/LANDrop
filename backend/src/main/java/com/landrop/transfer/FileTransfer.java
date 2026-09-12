@@ -2,11 +2,13 @@ package com.landrop.transfer;
 
 import java.nio.file.Path;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Thread-safe model representing an active, pending, or completed P2P file transfer.
+ * Extended in Phase 7 to support chunk tracking and SHA-256 integrity verification.
  */
 public class FileTransfer {
 
@@ -17,11 +19,18 @@ public class FileTransfer {
     private final String remotePeerId;
     private final String remotePeerName;
     private final long startTimeMs;
+    private final int chunkSize;
+    private final int totalChunks;
 
     private final AtomicLong transferredBytes = new AtomicLong(0);
+    private final AtomicInteger completedChunks = new AtomicInteger(0);
     private final AtomicReference<FileTransferStatus> status;
 
     private volatile Path localPath;
+    private volatile int currentChunk = 0;
+    private volatile String fileSha256 = "";
+    private volatile String verifiedSha256 = "";
+    private volatile boolean hashVerified = false;
     private volatile long endTimeMs = 0;
     private volatile double speedBytesPerSec = 0.0;
     private volatile String errorMessage = "";
@@ -34,6 +43,21 @@ public class FileTransfer {
             String remotePeerId,
             String remotePeerName,
             Path localPath) {
+        this(transferId, fileName, fileSize, direction, remotePeerId, remotePeerName, localPath,
+                1024 * 1024, FileChunk.calculateTotalChunks(fileSize, 1024 * 1024), "");
+    }
+
+    public FileTransfer(
+            String transferId,
+            String fileName,
+            long fileSize,
+            FileTransferDirection direction,
+            String remotePeerId,
+            String remotePeerName,
+            Path localPath,
+            int chunkSize,
+            int totalChunks,
+            String fileSha256) {
 
         this.transferId = Objects.requireNonNull(transferId, "transferId cannot be null");
         this.fileName = FileTransferUtils.sanitizeFilename(fileName);
@@ -43,6 +67,9 @@ public class FileTransfer {
         this.remotePeerName = remotePeerName != null && !remotePeerName.isBlank() ? remotePeerName : "Peer";
         this.localPath = localPath;
         this.startTimeMs = System.currentTimeMillis();
+        this.chunkSize = chunkSize > 0 ? chunkSize : 1024 * 1024;
+        this.totalChunks = totalChunks >= 0 ? totalChunks : FileChunk.calculateTotalChunks(this.fileSize, this.chunkSize);
+        this.fileSha256 = fileSha256 != null ? fileSha256.trim().toLowerCase() : "";
         this.status = new AtomicReference<>(FileTransferStatus.PENDING);
     }
 
@@ -180,6 +207,74 @@ public class FileTransfer {
 
     public boolean isTransferring() {
         return status.get() == FileTransferStatus.TRANSFERRING;
+    }
+
+    public boolean isVerifying() {
+        return status.get() == FileTransferStatus.VERIFYING;
+    }
+
+    public int getChunkSize() {
+        return chunkSize;
+    }
+
+    public int getTotalChunks() {
+        return totalChunks;
+    }
+
+    public int getCompletedChunks() {
+        return completedChunks.get();
+    }
+
+    public void setCompletedChunks(int count) {
+        this.completedChunks.set(Math.min(totalChunks, Math.max(0, count)));
+    }
+
+    public int incrementCompletedChunks() {
+        return this.completedChunks.incrementAndGet();
+    }
+
+    public int getCurrentChunk() {
+        return currentChunk;
+    }
+
+    public void setCurrentChunk(int currentChunk) {
+        this.currentChunk = currentChunk;
+    }
+
+    public String getFileSha256() {
+        return fileSha256;
+    }
+
+    public void setFileSha256(String fileSha256) {
+        this.fileSha256 = fileSha256 != null ? fileSha256.trim().toLowerCase() : "";
+    }
+
+    public String getVerifiedSha256() {
+        return verifiedSha256;
+    }
+
+    public void setVerifiedSha256(String verifiedSha256) {
+        this.verifiedSha256 = verifiedSha256 != null ? verifiedSha256.trim().toLowerCase() : "";
+    }
+
+    public boolean isHashVerified() {
+        return hashVerified;
+    }
+
+    public void setHashVerified(boolean hashVerified) {
+        this.hashVerified = hashVerified;
+    }
+
+    public String getShortenedSha256() {
+        String hash = !verifiedSha256.isBlank() ? verifiedSha256 : fileSha256;
+        return FileTransferUtils.shortenHash(hash);
+    }
+
+    public String getChunkProgressText() {
+        if (totalChunks <= 0) {
+            return "0 / 0 chunks";
+        }
+        return "Chunk " + Math.min(totalChunks, completedChunks.get()) + " / " + totalChunks;
     }
 
     @Override

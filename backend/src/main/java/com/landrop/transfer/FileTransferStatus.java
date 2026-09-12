@@ -8,6 +8,7 @@ public enum FileTransferStatus {
     ACCEPTED("Accepted"),
     REJECTED("Rejected"),
     TRANSFERRING("Transferring"),
+    VERIFYING("Verifying"),
     COMPLETED("Completed"),
     FAILED("Failed"),
     CANCELLED("Cancelled");

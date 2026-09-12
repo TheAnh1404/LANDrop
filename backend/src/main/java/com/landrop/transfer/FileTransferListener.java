@@ -30,6 +30,13 @@ public interface FileTransferListener {
     default void onTransferProgress(FileTransfer transfer, long transferredBytes, long totalBytes, double speedBytesPerSec) {}
 
     /**
+     * Called when all chunks have been received and SHA-256 integrity verification begins.
+     *
+     * @param transfer the transfer entering verification
+     */
+    default void onTransferVerifying(FileTransfer transfer) {}
+
+    /**
      * Called when the file transfer successfully completes and destination is verified.
      *
      * @param transfer the completed transfer

@@ -2,10 +2,14 @@ package com.landrop.transfer;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.text.DecimalFormat;
+import java.util.HexFormat;
 import java.util.Objects;
 
 /**
@@ -177,5 +181,85 @@ public final class FileTransferUtils {
         }
         double mbPerSec = kbPerSec / 1024.0;
         return ONE_DECIMAL_FORMAT.format(mbPerSec) + " MB/s";
+    }
+
+    /**
+     * Calculates the SHA-256 hash of a file using streaming I/O.
+     * Memory usage remains constant regardless of file size.
+     *
+     * @param path path to the file
+     * @return 64-character lowercase hex SHA-256 string
+     * @throws IOException if file reading fails
+     */
+    public static String calculateSha256(Path path) throws IOException {
+        Objects.requireNonNull(path, "path cannot be null");
+        try (InputStream in = Files.newInputStream(path)) {
+            return calculateSha256(in);
+        }
+    }
+
+    /**
+     * Calculates the SHA-256 hash of data from an InputStream.
+     *
+     * @param in the source InputStream
+     * @return 64-character lowercase hex SHA-256 string
+     * @throws IOException if stream reading fails
+     */
+    public static String calculateSha256(InputStream in) throws IOException {
+        Objects.requireNonNull(in, "InputStream cannot be null");
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] buffer = new byte[64 * 1024]; // 64 KB buffer
+            int bytesRead;
+            while ((bytesRead = in.read(buffer)) != -1) {
+                digest.update(buffer, 0, bytesRead);
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 algorithm not available", e);
+        }
+    }
+
+    /**
+     * Calculates the SHA-256 hash of a byte array.
+     *
+     * @param data input bytes
+     * @return 64-character lowercase hex SHA-256 string
+     */
+    public static String calculateSha256(byte[] data) {
+        Objects.requireNonNull(data, "data cannot be null");
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            digest.update(data);
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 algorithm not available", e);
+        }
+    }
+
+    /**
+     * Validates whether the given string is a valid 64-character hexadecimal SHA-256 hash.
+     *
+     * @param hash the hash string to validate
+     * @return true if valid SHA-256 hex string, false otherwise
+     */
+    public static boolean isValidSha256(String hash) {
+        return hash != null && hash.matches("^[a-fA-F0-9]{64}$");
+    }
+
+    /**
+     * Shortens a 64-character hash for concise UI presentation (e.g. "ba7816bf8f...").
+     *
+     * @param hash full hash string
+     * @return shortened hash
+     */
+    public static String shortenHash(String hash) {
+        if (hash == null || hash.isBlank()) {
+            return "";
+        }
+        if (hash.length() <= 12) {
+            return hash;
+        }
+        return hash.substring(0, 10) + "...";
     }
 }

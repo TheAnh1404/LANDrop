@@ -206,7 +206,7 @@ class FileTransferIntegrationTest {
     @Test
     @DisplayName("End-to-end: Multi-chunk file transfer (200 KB) with integrity verification")
     void testTransferMultiChunkFile(@TempDir Path tempDir) throws Exception {
-        int fileSize = 200 * 1024; // 200 KB -> 4 chunks (64KB each)
+        int fileSize = 200 * 1024; // 200 KB -> 4 chunks with 64 KB chunkSize
         byte[] data = new byte[fileSize];
         new Random(42).nextBytes(data);
 
@@ -216,8 +216,9 @@ class FileTransferIntegrationTest {
         Path downloadDir = tempDir.resolve("downloads");
         Files.createDirectories(downloadDir);
 
-        FileTransferService serviceA = new FileTransferService(clientConnection, "peer-a", "Peer A");
-        FileTransferService serviceB = new FileTransferService(serverConnection, "peer-b", "Peer B", downloadDir);
+        int chunkSize = 64 * 1024; // 64 KB chunks
+        FileTransferService serviceA = new FileTransferService(clientConnection, "peer-a", "Peer A", tempDir, chunkSize);
+        FileTransferService serviceB = new FileTransferService(serverConnection, "peer-b", "Peer B", downloadDir, chunkSize);
 
         CountDownLatch offerLatch = new CountDownLatch(1);
         CountDownLatch completeLatchA = new CountDownLatch(1);
@@ -247,16 +248,37 @@ class FileTransferIntegrationTest {
         FileTransfer outgoing = serviceA.offerFile(largeFile.toFile());
         assertTrue(offerLatch.await(5, TimeUnit.SECONDS));
 
-        serviceB.acceptTransfer(incomingRef.get().getTransferId());
+        assertEquals(4, outgoing.getTotalChunks());
+        assertEquals(chunkSize, outgoing.getChunkSize());
+        assertNotNull(outgoing.getFileSha256());
+
+        FileTransfer incoming = incomingRef.get();
+        assertEquals(4, incoming.getTotalChunks());
+        assertEquals(chunkSize, incoming.getChunkSize());
+        assertEquals(outgoing.getFileSha256(), incoming.getFileSha256());
+
+        serviceB.acceptTransfer(incoming.getTransferId());
 
         assertTrue(completeLatchB.await(10, TimeUnit.SECONDS));
         assertTrue(completeLatchA.await(10, TimeUnit.SECONDS));
 
-        Path dest = incomingRef.get().getLocalPath();
+        Path dest = incoming.getLocalPath();
         assertNotNull(dest);
         assertTrue(Files.exists(dest));
         assertEquals(fileSize, Files.size(dest));
         assertArrayEquals(data, Files.readAllBytes(dest));
+
+        // Verify SHA-256 matches original file exactly
+        String expectedHash = FileTransferUtils.calculateSha256(largeFile);
+        assertEquals(expectedHash, FileTransferUtils.calculateSha256(dest));
+        assertEquals(expectedHash, incoming.getVerifiedSha256());
+        assertTrue(incoming.isHashVerified());
+        assertTrue(outgoing.isHashVerified());
+        assertEquals(4, incoming.getCompletedChunks());
+
+        // Verify partial file was cleaned up / renamed
+        Path partFile = dest.resolveSibling(dest.getFileName().toString() + ".landrop.part");
+        assertFalse(Files.exists(partFile));
     }
 
     @Test
@@ -300,9 +322,9 @@ class FileTransferIntegrationTest {
     }
 
     @Test
-    @DisplayName("End-to-end: Chat messages can be sent and received during active file streaming")
+    @DisplayName("End-to-end: Chat messages can be sent and received during active chunked file streaming")
     void testChatConcurrentWithFileTransfer(@TempDir Path tempDir) throws Exception {
-        int fileSize = 500 * 1024; // 500 KB
+        int fileSize = 500 * 1024; // 500 KB -> 8 chunks with 64 KB chunkSize
         byte[] data = new byte[fileSize];
         new Random(99).nextBytes(data);
 
@@ -312,8 +334,9 @@ class FileTransferIntegrationTest {
         Path downloadDir = tempDir.resolve("downloads");
         Files.createDirectories(downloadDir);
 
-        FileTransferService transferServiceA = new FileTransferService(clientConnection, "peer-a", "Peer A");
-        FileTransferService transferServiceB = new FileTransferService(serverConnection, "peer-b", "Peer B", downloadDir);
+        int chunkSize = 64 * 1024;
+        FileTransferService transferServiceA = new FileTransferService(clientConnection, "peer-a", "Peer A", tempDir, chunkSize);
+        FileTransferService transferServiceB = new FileTransferService(serverConnection, "peer-b", "Peer B", downloadDir, chunkSize);
 
         ChatService chatA = new ChatService(clientConnection, "Peer A");
         ChatService chatB = new ChatService(serverConnection, "Peer B");
@@ -350,7 +373,7 @@ class FileTransferIntegrationTest {
         assertTrue(offerLatch.await(5, TimeUnit.SECONDS));
         transferServiceB.acceptTransfer(incomingRef.get().getTransferId());
 
-        // 2. Concurrently send a chat message while file transfer is active
+        // 2. Concurrently send a chat message while file transfer is streaming
         chatA.sendMessage("Concurrent chat message during transfer!");
 
         // 3. Verify chat is received without delay
@@ -361,5 +384,80 @@ class FileTransferIntegrationTest {
         assertTrue(transferCompleteLatch.await(10, TimeUnit.SECONDS), "File transfer should complete successfully");
         assertEquals(fileSize, Files.size(incomingRef.get().getLocalPath()));
         assertArrayEquals(data, Files.readAllBytes(incomingRef.get().getLocalPath()));
+    }
+
+    @Test
+    @DisplayName("End-to-end: SHA-256 mismatch triggers transfer failure and removes partial file")
+    void testSha256MismatchFailsTransfer(@TempDir Path tempDir) throws Exception {
+        Path sourceFile = tempDir.resolve("mismatch_src.txt");
+        Files.writeString(sourceFile, "Real File Content");
+
+        Path downloadDir = tempDir.resolve("downloads");
+        Files.createDirectories(downloadDir);
+
+        FileTransferService serviceB = new FileTransferService(serverConnection, "peer-b", "Peer B", downloadDir, 64 * 1024);
+
+        CountDownLatch offerLatch = new CountDownLatch(1);
+        CountDownLatch failLatchB = new CountDownLatch(1);
+        AtomicReference<FileTransfer> incomingRef = new AtomicReference<>();
+        AtomicReference<String> failReasonRef = new AtomicReference<>();
+
+        serviceB.addListener(new FileTransferListener() {
+            @Override
+            public void onTransferOffered(FileTransfer transfer) {
+                incomingRef.set(transfer);
+                offerLatch.countDown();
+            }
+
+            @Override
+            public void onTransferFailed(FileTransfer transfer, String reason) {
+                failReasonRef.set(reason);
+                failLatchB.countDown();
+            }
+        });
+
+        // Manually send FILE_OFFER with a FAKE hash from clientConnection
+        String fakeSha256 = "0000000000000000000000000000000000000000000000000000000000000000";
+        String transferId = "corrupt-transfer-id";
+        com.landrop.transfer.messages.FileOfferMessage corruptOffer = new com.landrop.transfer.messages.FileOfferMessage(
+                transferId,
+                "corrupt.txt",
+                sourceFile.toFile().length(),
+                "peer-a",
+                "Peer A",
+                64 * 1024,
+                1,
+                fakeSha256
+        );
+
+        // Register custom handler on clientConnection to respond with actual file bytes
+        clientConnection.registerHandler(com.landrop.protocol.MessageType.CHUNK_REQUEST, packet -> {
+            try {
+                byte[] fileBytes = Files.readAllBytes(sourceFile);
+                byte[] chunkResp = com.landrop.transfer.messages.ChunkResponseMessage.encode(transferId, 0, fileBytes);
+                clientConnection.send(com.landrop.protocol.Packet.of(com.landrop.protocol.MessageType.CHUNK_RESPONSE, 100L, chunkResp));
+            } catch (Exception ignored) {
+            }
+        });
+
+        byte[] offerJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsBytes(corruptOffer);
+        clientConnection.send(com.landrop.protocol.Packet.of(com.landrop.protocol.MessageType.FILE_OFFER, 1L, offerJson));
+
+        assertTrue(offerLatch.await(5, TimeUnit.SECONDS));
+        serviceB.acceptTransfer(transferId);
+
+        // Wait for failure
+        assertTrue(failLatchB.await(5, TimeUnit.SECONDS), "Peer B should detect SHA-256 mismatch and fail");
+        FileTransfer incoming = incomingRef.get();
+        assertEquals(FileTransferStatus.FAILED, incoming.getStatus());
+        assertFalse(incoming.isHashVerified());
+        assertNotNull(failReasonRef.get());
+        assertTrue(failReasonRef.get().contains("SHA-256"));
+
+        // Verify partial file was deleted
+        Path dest = downloadDir.resolve("corrupt.txt");
+        assertFalse(Files.exists(dest));
+        Path part = downloadDir.resolve("corrupt.txt.landrop.part");
+        assertFalse(Files.exists(part));
     }
 }

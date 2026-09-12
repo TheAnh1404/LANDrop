@@ -15,13 +15,13 @@ import java.util.Objects;
  */
 public class PacketDecoder {
 
-    /** Default maximum payload size: 1 MB (1,048,576 bytes). */
-    public static final int DEFAULT_MAX_PAYLOAD_SIZE = 1024 * 1024;
+    /** Default maximum payload size: 2 MB (2,097,152 bytes) to accommodate 1 MiB chunks plus headers. */
+    public static final int DEFAULT_MAX_PAYLOAD_SIZE = 2 * 1024 * 1024;
 
     private final int maxPayloadSize;
 
     /**
-     * Constructs a PacketDecoder with the default maximum payload limit (1 MB).
+     * Constructs a PacketDecoder with the default maximum payload limit (2 MB).
      */
     public PacketDecoder() {
         this(DEFAULT_MAX_PAYLOAD_SIZE);
