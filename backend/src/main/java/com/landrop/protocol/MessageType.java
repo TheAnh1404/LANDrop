@@ -23,7 +23,8 @@ public enum MessageType {
     PEER_LIST((byte) 13),
     HEARTBEAT((byte) 14),
     HEARTBEAT_ACK((byte) 15),
-    UNREGISTER((byte) 16);
+    UNREGISTER((byte) 16),
+    FILE_DATA((byte) 17);
 
     private final byte code;
 
