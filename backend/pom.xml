@@ -43,6 +43,13 @@
 
     <build>
         <plugins>
+            <!-- Exec Maven Plugin for running DiscoveryServer and CLI utilities -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>exec-maven-plugin</artifactId>
+                <version>3.2.0</version>
+            </plugin>
+
             <!-- Maven Compiler Plugin configured for Java 21 -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

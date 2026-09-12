@@ -71,12 +71,12 @@ public class Main {
     }
 
     private static void handleDiscovery(String[] args) {
-        int port = 8000;
+        int port = 8888;
         if (args.length > 1) {
             try {
                 port = Integer.parseInt(args[1].trim());
             } catch (NumberFormatException e) {
-                System.err.println("Invalid discovery port: " + args[1] + ". Using default 8000.");
+                System.err.println("Invalid discovery port: " + args[1] + ". Using default 8888.");
             }
         }
         com.landrop.discovery.DiscoveryServer.main(new String[]{String.valueOf(port)});

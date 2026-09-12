@@ -21,7 +21,7 @@ import java.util.concurrent.TimeUnit;
  */
 public class DiscoveryServer implements AutoCloseable {
 
-    public static final int DEFAULT_PORT = 8000;
+    public static final int DEFAULT_PORT = 8888;
     public static final long DEFAULT_CLEANUP_INTERVAL_SEC = 3L;
 
     private final int configuredPort;
