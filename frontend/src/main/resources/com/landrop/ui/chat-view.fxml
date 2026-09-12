@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+<?import javafx.scene.shape.Circle?>
+
+<VBox xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.landrop.ui.controllers.ChatController"
+      spacing="0.0" VBox.vgrow="ALWAYS" styleClass="page-container" style="-fx-padding: 16px 24px 20px 24px;">
+
+    <!-- Chat Container Card -->
+    <VBox styleClass="chat-container" VBox.vgrow="ALWAYS">
+        <!-- Header -->
+        <HBox alignment="CENTER_LEFT" styleClass="chat-header">
+            <VBox spacing="2.0">
+                <Label fx:id="remotePeerNameLabel" text="No Active Peer" styleClass="card-title"/>
+                <HBox alignment="CENTER_LEFT" spacing="6.0">
+                    <Circle fx:id="connectionDot" radius="4.0" fill="#94a3b8"/>
+                    <Label fx:id="connectionStatusLabel" text="Disconnected" styleClass="page-subtitle" style="-fx-font-size: 11px;"/>
+                </HBox>
+            </VBox>
+
+            <Region HBox.hgrow="ALWAYS"/>
+
+            <HBox spacing="10.0" alignment="CENTER_RIGHT">
+                <Button fx:id="pingButton" text="Ping" styleClass="secondary-button" onAction="#onPingClicked"/>
+                <Button fx:id="disconnectButton" text="Disconnect" styleClass="danger-button" onAction="#onDisconnectClicked"/>
+            </HBox>
+        </HBox>
+
+        <!-- Messages Area -->
+        <StackPane VBox.vgrow="ALWAYS">
+            <ScrollPane fx:id="chatScrollPane" fitToWidth="true" styleClass="chat-messages-scroll" VBox.vgrow="ALWAYS">
+                <VBox fx:id="messagesContainer" styleClass="chat-messages-container"/>
+            </ScrollPane>
+
+            <!-- Empty Messages Placeholder -->
+            <VBox fx:id="emptyMessagesContainer" styleClass="empty-state-box" alignment="CENTER" maxWidth="400.0" maxHeight="150.0">
+                <Label text="No messages yet." styleClass="empty-state-title"/>
+                <Label text="Send a message below to start the conversation." styleClass="empty-state-desc"/>
+            </VBox>
+
+            <!-- Disconnected Placeholder -->
+            <VBox fx:id="disconnectedOverlay" styleClass="empty-state-box" alignment="CENTER"
+                  style="-fx-background-color: rgba(248, 250, 252, 0.95); -fx-border-color: transparent;">
+                <Label text="No Active P2P Connection" styleClass="page-title" style="-fx-font-size: 18px;"/>
+                <Label text="Connect to a peer from the Peers tab to start chatting." styleClass="page-subtitle"/>
+                <Button text="View Online Peers →" styleClass="primary-button" onAction="#onGoToPeersClicked" style="-fx-margin-top: 10px;"/>
+            </VBox>
+        </StackPane>
+
+        <!-- Input Bar -->
+        <HBox alignment="CENTER_LEFT" styleClass="chat-input-bar">
+            <!-- Optional future file transfer slot (disabled in Phase 5) -->
+            <Button fx:id="attachFileButton" text="+" styleClass="secondary-button" disable="true"
+                    style="-fx-font-size: 14px; -fx-padding: 6px 12px;"/>
+
+            <TextField fx:id="messageInput" promptText="Type a message... (Press Enter to send)"
+                       styleClass="text-input-field" HBox.hgrow="ALWAYS" onAction="#onSendMessage"/>
+
+            <Button fx:id="sendButton" text="Send" styleClass="primary-button" onAction="#onSendMessage"/>
+        </HBox>
+    </VBox>
+</VBox>

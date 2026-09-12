@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<StackPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="com.landrop.ui.controllers.SetupController"
+           prefWidth="1200.0" prefHeight="760.0" minWidth="1000.0" minHeight="650.0"
+           style="-fx-background-color: #f8fafc;">
+
+    <VBox alignment="CENTER" spacing="20.0" maxWidth="480.0">
+        <!-- Logo and Intro -->
+        <VBox alignment="CENTER" spacing="6.0">
+            <HBox alignment="CENTER" spacing="8.0">
+                <Label text="LANDrop" styleClass="app-title" style="-fx-font-size: 28px;"/>
+                <Label text="v1.0" styleClass="app-version-badge"/>
+            </HBox>
+            <Label text="Fast peer-to-peer communication over your local network"
+                   style="-fx-text-fill: #64748b; -fx-font-size: 13px;"/>
+        </VBox>
+
+        <!-- Setup Card -->
+        <VBox styleClass="card" spacing="16.0">
+            <Label text="Peer Configuration" styleClass="card-title"/>
+            
+            <VBox styleClass="form-group">
+                <Label text="Display Name" styleClass="form-label"/>
+                <TextField fx:id="displayNameField" promptText="e.g. Peer A" styleClass="text-input-field"/>
+            </VBox>
+
+            <HBox spacing="12.0">
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
+                    <Label text="Local P2P Port" styleClass="form-label"/>
+                    <TextField fx:id="localPortField" promptText="5001" styleClass="text-input-field"/>
+                </VBox>
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
+                    <Label text="Advertised Host" styleClass="form-label"/>
+                    <TextField fx:id="advertisedHostField" promptText="127.0.0.1" styleClass="text-input-field"/>
+                </VBox>
+            </HBox>
+
+            <HBox spacing="12.0">
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
+                    <Label text="Discovery Host" styleClass="form-label"/>
+                    <TextField fx:id="discoveryHostField" promptText="localhost" styleClass="text-input-field"/>
+                </VBox>
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
+                    <Label text="Discovery Port" styleClass="form-label"/>
+                    <TextField fx:id="discoveryPortField" promptText="8888" styleClass="text-input-field"/>
+                </VBox>
+            </HBox>
+
+            <Label fx:id="statusLabel" text="" wrapText="true"
+                   style="-fx-font-size: 12px; -fx-text-fill: #ef4444;" />
+
+            <Button fx:id="connectButton" text="Connect &amp; Join Network"
+                    maxWidth="Infinity" styleClass="primary-button" onAction="#onConnectClicked"/>
+        </VBox>
+    </VBox>
+</StackPane>

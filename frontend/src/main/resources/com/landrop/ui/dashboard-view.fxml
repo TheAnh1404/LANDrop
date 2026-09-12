@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<ScrollPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.landrop.ui.controllers.DashboardController"
+            fitToWidth="true" style="-fx-background-color: transparent; -fx-background: transparent;">
+
+    <VBox spacing="24.0" styleClass="page-container">
+        <!-- Welcome Section -->
+        <VBox styleClass="page-header" spacing="6.0">
+            <Label text="Welcome to LANDrop" styleClass="page-title"/>
+            <Label text="Fast peer-to-peer communication over your local network." styleClass="page-subtitle"/>
+        </VBox>
+
+        <!-- Stat Cards Row -->
+        <HBox spacing="16.0">
+            <VBox styleClass="stat-card" HBox.hgrow="ALWAYS">
+                <Label text="ONLINE PEERS" styleClass="stat-title"/>
+                <Label fx:id="onlinePeersLabel" text="0" styleClass="stat-number"/>
+                <Label text="Available on local discovery" styleClass="stat-desc"/>
+            </VBox>
+
+            <VBox styleClass="stat-card" HBox.hgrow="ALWAYS">
+                <Label text="P2P CONNECTIONS" styleClass="stat-title"/>
+                <Label fx:id="p2pConnectionsLabel" text="0" styleClass="stat-number"/>
+                <Label text="Active direct TCP sessions" styleClass="stat-desc"/>
+            </VBox>
+
+            <VBox styleClass="stat-card" HBox.hgrow="ALWAYS">
+                <Label text="MESSAGES" styleClass="stat-title"/>
+                <Label fx:id="messagesLabel" text="0" styleClass="stat-number"/>
+                <Label text="Exchanged this session" styleClass="stat-desc"/>
+            </VBox>
+        </HBox>
+
+        <!-- Recent Discovered Peers Section -->
+        <VBox spacing="12.0">
+            <HBox alignment="CENTER_LEFT">
+                <VBox spacing="2.0">
+                    <Label text="Discovered Peers" styleClass="card-title" style="-fx-font-size: 16px;"/>
+                    <Label text="Peers registered on the local discovery server" styleClass="page-subtitle"/>
+                </VBox>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button fx:id="viewAllPeersButton" text="View All in Peers →" styleClass="secondary-button" onAction="#onViewAllPeersClicked"/>
+            </HBox>
+
+            <!-- Peer List Container -->
+            <VBox fx:id="recentPeersContainer" spacing="10.0"/>
+
+            <!-- Empty State -->
+            <VBox fx:id="emptyStateContainer" styleClass="empty-state-box">
+                <Label text="No recent peers online." styleClass="empty-state-title"/>
+                <Label text="When other LANDrop instances connect to discovery, they will appear here." styleClass="empty-state-desc"/>
+            </VBox>
+        </VBox>
+    </VBox>
+</ScrollPane>

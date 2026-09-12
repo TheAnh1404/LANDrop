@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<ScrollPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.landrop.ui.controllers.PeersController"
+            fitToWidth="true" style="-fx-background-color: transparent; -fx-background: transparent;">
+
+    <VBox spacing="20.0" styleClass="page-container">
+        <!-- Header -->
+        <HBox alignment="CENTER_LEFT">
+            <VBox spacing="2.0">
+                <Label text="PEERS" styleClass="page-title"/>
+                <Label fx:id="peersSubtitleLabel" text="0 peers online" styleClass="page-subtitle"/>
+            </VBox>
+            <Region HBox.hgrow="ALWAYS"/>
+            <Button fx:id="refreshButton" text="⟳ Refresh" styleClass="secondary-button" onAction="#onRefreshClicked"/>
+        </HBox>
+
+        <!-- Peers List -->
+        <VBox fx:id="peersContainer" spacing="12.0"/>
+
+        <!-- Empty State -->
+        <VBox fx:id="emptyStateContainer" styleClass="empty-state-box">
+            <Label text="No other peers online." styleClass="empty-state-title"/>
+            <Label text="Ensure other peers are running and registered with the discovery server, then click Refresh."
+                   styleClass="empty-state-desc"/>
+            <Button text="Scan for Peers" styleClass="secondary-button" onAction="#onRefreshClicked" style="-fx-margin-top: 8px;"/>
+        </VBox>
+    </VBox>
+</ScrollPane>

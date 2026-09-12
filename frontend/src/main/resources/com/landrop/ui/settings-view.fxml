@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<ScrollPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.landrop.ui.controllers.SettingsController"
+            fitToWidth="true" style="-fx-background-color: transparent; -fx-background: transparent;">
+
+    <VBox spacing="20.0" styleClass="page-container" maxWidth="750.0">
+        <!-- Header -->
+        <VBox styleClass="page-header" spacing="4.0">
+            <Label text="Settings" styleClass="page-title"/>
+            <Label text="Local peer identity and networking configurations (read-only for Phase 5)" styleClass="page-subtitle"/>
+        </VBox>
+
+        <!-- Identity Card -->
+        <VBox styleClass="card" spacing="14.0">
+            <Label text="Peer Identity" styleClass="card-title"/>
+            
+            <VBox styleClass="form-group">
+                <Label text="Peer ID (UUID)" styleClass="form-label"/>
+                <TextField fx:id="peerIdField" editable="false" styleClass="form-readonly-value"/>
+            </VBox>
+
+            <VBox styleClass="form-group">
+                <Label text="Display Name" styleClass="form-label"/>
+                <TextField fx:id="displayNameField" editable="false" styleClass="form-readonly-value"/>
+            </VBox>
+        </VBox>
+
+        <!-- Network Card -->
+        <VBox styleClass="card" spacing="14.0">
+            <Label text="Network Parameters" styleClass="card-title"/>
+
+            <HBox spacing="16.0">
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
+                    <Label text="Local P2P Listening Port" styleClass="form-label"/>
+                    <TextField fx:id="localPortField" editable="false" styleClass="form-readonly-value"/>
+                </VBox>
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
+                    <Label text="Advertised Host Address" styleClass="form-label"/>
+                    <TextField fx:id="advertisedHostField" editable="false" styleClass="form-readonly-value"/>
+                </VBox>
+            </HBox>
+
+            <HBox spacing="16.0">
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
+                    <Label text="Discovery Server Host" styleClass="form-label"/>
+                    <TextField fx:id="discoveryHostField" editable="false" styleClass="form-readonly-value"/>
+                </VBox>
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
+                    <Label text="Discovery Server Port" styleClass="form-label"/>
+                    <TextField fx:id="discoveryPortField" editable="false" styleClass="form-readonly-value"/>
+                </VBox>
+            </HBox>
+
+            <HBox spacing="16.0">
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
+                    <Label text="Protocol Version" styleClass="form-label"/>
+                    <TextField fx:id="protocolVersionField" editable="false" styleClass="form-readonly-value"/>
+                </VBox>
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
+                    <Label text="Presence Heartbeat Interval" styleClass="form-label"/>
+                    <TextField fx:id="heartbeatIntervalField" editable="false" styleClass="form-readonly-value"/>
+                </VBox>
+            </HBox>
+        </VBox>
+    </VBox>
+</ScrollPane>
