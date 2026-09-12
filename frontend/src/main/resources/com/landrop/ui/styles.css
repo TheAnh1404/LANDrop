@@ -555,3 +555,15 @@
 .transfer-status-verifying {
     -fx-text-fill: #d97706;
 }
+
+.transfer-status-interrupted {
+    -fx-text-fill: #d97706;
+}
+
+.transfer-status-reconnecting {
+    -fx-text-fill: #0284c7;
+}
+
+.transfer-status-resuming {
+    -fx-text-fill: #0284c7;
+}

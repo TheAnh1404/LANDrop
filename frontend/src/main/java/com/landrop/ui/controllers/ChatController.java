@@ -231,6 +231,55 @@ public class ChatController {
 
             card.getChildren().addAll(progressBar, progressRow);
 
+        } else if (transfer.getStatus() == com.landrop.transfer.FileTransferStatus.INTERRUPTED) {
+            ProgressBar progressBar = new ProgressBar(transfer.getProgress());
+            progressBar.setMaxWidth(Double.MAX_VALUE);
+            progressBar.getStyleClass().add("transfer-progress-bar");
+
+            Label statusLabel = new Label("Connection lost • Resuming... (" + transfer.getChunkProgressText() + ")");
+            statusLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #d97706; -fx-font-weight: bold;");
+
+            Button resumeBtn = new Button("Resume");
+            resumeBtn.getStyleClass().add("primary-button");
+            resumeBtn.setStyle("-fx-font-size: 10px; -fx-padding: 2px 8px;");
+            resumeBtn.setOnAction(e -> stateService.resumeTransfer(transfer.getTransferId()));
+
+            Button cancelBtn = new Button("Cancel");
+            cancelBtn.getStyleClass().add("secondary-button");
+            cancelBtn.setStyle("-fx-font-size: 10px; -fx-padding: 2px 8px;");
+            cancelBtn.setOnAction(e -> stateService.cancelTransfer(transfer.getTransferId()));
+
+            Region spacer = new Region();
+            HBox.setHgrow(spacer, Priority.ALWAYS);
+            HBox progressRow = new HBox(10.0, statusLabel, spacer, resumeBtn, cancelBtn);
+            progressRow.setAlignment(Pos.CENTER_LEFT);
+
+            card.getChildren().addAll(progressBar, progressRow);
+
+        } else if (transfer.getStatus() == com.landrop.transfer.FileTransferStatus.RECONNECTING ||
+                   transfer.getStatus() == com.landrop.transfer.FileTransferStatus.RESUMING) {
+            ProgressBar progressBar = new ProgressBar(-1.0);
+            progressBar.setMaxWidth(Double.MAX_VALUE);
+            progressBar.getStyleClass().add("transfer-progress-bar");
+
+            String statusText = transfer.getStatus() == com.landrop.transfer.FileTransferStatus.RECONNECTING
+                    ? "Reconnecting... (Attempt " + transfer.getReconnectAttempt() + " / " + transfer.getMaxReconnectAttempts() + ")"
+                    : "Resuming transfer... " + transfer.getChunkProgressText();
+            Label statusLabel = new Label(statusText);
+            statusLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #0284c7; -fx-font-weight: bold;");
+
+            Button cancelBtn = new Button("Cancel");
+            cancelBtn.getStyleClass().add("secondary-button");
+            cancelBtn.setStyle("-fx-font-size: 10px; -fx-padding: 2px 8px;");
+            cancelBtn.setOnAction(e -> stateService.cancelTransfer(transfer.getTransferId()));
+
+            Region spacer = new Region();
+            HBox.setHgrow(spacer, Priority.ALWAYS);
+            HBox progressRow = new HBox(10.0, statusLabel, spacer, cancelBtn);
+            progressRow.setAlignment(Pos.CENTER_LEFT);
+
+            card.getChildren().addAll(progressBar, progressRow);
+
         } else if (transfer.getStatus() == com.landrop.transfer.FileTransferStatus.VERIFYING) {
             ProgressBar progressBar = new ProgressBar(-1.0);
             progressBar.setMaxWidth(Double.MAX_VALUE);

@@ -119,7 +119,10 @@ public class TransfersController {
         HBox.setHgrow(progressBox, Priority.ALWAYS);
         progressBox.setAlignment(Pos.CENTER_LEFT);
 
-        ProgressBar bar = new ProgressBar(transfer.getStatus() == FileTransferStatus.VERIFYING ? -1.0 : transfer.getProgress());
+        boolean isIndeterminate = transfer.getStatus() == FileTransferStatus.VERIFYING ||
+                transfer.getStatus() == FileTransferStatus.RECONNECTING ||
+                transfer.getStatus() == FileTransferStatus.RESUMING;
+        ProgressBar bar = new ProgressBar(isIndeterminate ? -1.0 : transfer.getProgress());
         bar.setMaxWidth(Double.MAX_VALUE);
         bar.getStyleClass().add("transfer-progress-bar");
 
@@ -127,7 +130,15 @@ public class TransfersController {
         if (transfer.getStatus() == FileTransferStatus.VERIFYING) {
             progressText = "Verifying SHA-256 integrity...";
         } else if (transfer.getStatus() == FileTransferStatus.COMPLETED) {
-            progressText = "Integrity verified • SHA-256: " + transfer.getShortenedSha256();
+            progressText = "✓ Transfer completed • Integrity verified • SHA-256: " + transfer.getShortenedSha256();
+        } else if (transfer.getStatus() == FileTransferStatus.INTERRUPTED) {
+            progressText = "Connection lost • Resuming... (" + transfer.getChunkProgressText() + ")";
+        } else if (transfer.getStatus() == FileTransferStatus.RECONNECTING) {
+            progressText = "Reconnecting... (Attempt " + transfer.getReconnectAttempt() + " / " + transfer.getMaxReconnectAttempts() + ") • " + transfer.getChunkProgressText();
+        } else if (transfer.getStatus() == FileTransferStatus.RESUMING) {
+            progressText = "Resuming transfer • " + transfer.getChunkProgressText();
+        } else if (transfer.getStatus() == FileTransferStatus.FAILED) {
+            progressText = "✗ Transfer failed: " + (!transfer.getErrorMessage().isBlank() ? transfer.getErrorMessage() : "Unknown error");
         } else {
             progressText = String.format("%d%%  •  %s / %s  •  %s",
                     transfer.getProgressPercent(),
@@ -176,7 +187,21 @@ public class TransfersController {
 
             actionBox.getChildren().addAll(acceptBtn, rejectBtn);
 
-        } else if (transfer.getStatus() == FileTransferStatus.TRANSFERRING || transfer.getStatus() == FileTransferStatus.ACCEPTED) {
+        } else if (transfer.getStatus() == FileTransferStatus.INTERRUPTED) {
+            Button resumeBtn = new Button("Resume");
+            resumeBtn.getStyleClass().add("primary-button");
+            resumeBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4px 10px;");
+            resumeBtn.setOnAction(e -> stateService.resumeTransfer(transfer.getTransferId()));
+
+            Button cancelBtn = new Button("Cancel");
+            cancelBtn.getStyleClass().add("secondary-button");
+            cancelBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4px 10px;");
+            cancelBtn.setOnAction(e -> stateService.cancelTransfer(transfer.getTransferId()));
+
+            actionBox.getChildren().addAll(resumeBtn, cancelBtn);
+
+        } else if (transfer.getStatus() == FileTransferStatus.TRANSFERRING || transfer.getStatus() == FileTransferStatus.ACCEPTED
+                || transfer.getStatus() == FileTransferStatus.RECONNECTING || transfer.getStatus() == FileTransferStatus.RESUMING) {
             Button cancelBtn = new Button("Cancel");
             cancelBtn.getStyleClass().add("secondary-button");
             cancelBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4px 10px;");

@@ -10,6 +10,7 @@ import com.landrop.peer.PeerConnection;
 import com.landrop.peer.PeerIdentity;
 import com.landrop.peer.PeerListener;
 import com.landrop.transfer.FileTransfer;
+import com.landrop.transfer.FileTransferDirection;
 import com.landrop.transfer.FileTransferListener;
 import com.landrop.transfer.FileTransferService;
 import com.landrop.ui.models.DiscoveryStatus;
@@ -259,97 +260,146 @@ public class UIStateService {
             }
         }
 
-        if (this.fileTransferService != null) {
-            try {
-                this.fileTransferService.close();
-            } catch (Exception ignored) {
-            }
-            this.fileTransferService = null;
-        }
-
         this.activeConnection = connection;
         this.activeChatService = new ChatService(connection, identity.getDisplayName());
 
         try {
-            this.fileTransferService = new FileTransferService(
-                    connection,
-                    identity != null ? identity.getPeerId() : java.util.UUID.randomUUID().toString(),
-                    identity != null ? identity.getDisplayName() : "Peer"
-            );
+            if (this.fileTransferService == null) {
+                this.fileTransferService = new FileTransferService(
+                        connection,
+                        identity != null ? identity.getPeerId() : java.util.UUID.randomUUID().toString(),
+                        identity != null ? identity.getDisplayName() : "Peer"
+                );
 
-            this.fileTransferService.addListener(new FileTransferListener() {
-                @Override
-                public void onTransferOffered(FileTransfer transfer) {
-                    Platform.runLater(() -> {
-                        if (!transfers.contains(transfer)) {
-                            transfers.add(0, transfer);
-                        }
-                        if (onFileTransferOfferedCallback != null) {
-                            onFileTransferOfferedCallback.accept(transfer);
-                        }
-                        if (onFileTransferUpdatedCallback != null) {
-                            onFileTransferUpdatedCallback.accept(transfer);
-                        }
-                    });
-                }
+                this.fileTransferService.addListener(new FileTransferListener() {
+                    @Override
+                    public void onTransferOffered(FileTransfer transfer) {
+                        Platform.runLater(() -> {
+                            if (!transfers.contains(transfer)) {
+                                transfers.add(0, transfer);
+                            }
+                            if (onFileTransferOfferedCallback != null) {
+                                onFileTransferOfferedCallback.accept(transfer);
+                            }
+                            if (onFileTransferUpdatedCallback != null) {
+                                onFileTransferUpdatedCallback.accept(transfer);
+                            }
+                        });
+                    }
 
-                @Override
-                public void onTransferStarted(FileTransfer transfer) {
-                    Platform.runLater(() -> {
-                        if (!transfers.contains(transfer)) {
-                            transfers.add(0, transfer);
-                        }
-                        if (onFileTransferUpdatedCallback != null) {
-                            onFileTransferUpdatedCallback.accept(transfer);
-                        }
-                    });
-                }
+                    @Override
+                    public void onTransferStarted(FileTransfer transfer) {
+                        Platform.runLater(() -> {
+                            if (!transfers.contains(transfer)) {
+                                transfers.add(0, transfer);
+                            }
+                            if (onFileTransferUpdatedCallback != null) {
+                                onFileTransferUpdatedCallback.accept(transfer);
+                            }
+                        });
+                    }
 
-                @Override
-                public void onTransferProgress(FileTransfer transfer, long transferredBytes, long totalBytes, double speedBytesPerSec) {
-                    Platform.runLater(() -> {
-                        if (onFileTransferUpdatedCallback != null) {
-                            onFileTransferUpdatedCallback.accept(transfer);
-                        }
-                    });
-                }
+                    @Override
+                    public void onTransferProgress(FileTransfer transfer, long transferredBytes, long totalBytes, double speedBytesPerSec) {
+                        Platform.runLater(() -> {
+                            if (onFileTransferUpdatedCallback != null) {
+                                onFileTransferUpdatedCallback.accept(transfer);
+                            }
+                        });
+                    }
 
-                @Override
-                public void onTransferVerifying(FileTransfer transfer) {
-                    Platform.runLater(() -> {
-                        if (onFileTransferUpdatedCallback != null) {
-                            onFileTransferUpdatedCallback.accept(transfer);
-                        }
-                    });
-                }
+                    @Override
+                    public void onTransferVerifying(FileTransfer transfer) {
+                        Platform.runLater(() -> {
+                            if (onFileTransferUpdatedCallback != null) {
+                                onFileTransferUpdatedCallback.accept(transfer);
+                            }
+                        });
+                    }
 
-                @Override
-                public void onTransferCompleted(FileTransfer transfer) {
-                    Platform.runLater(() -> {
-                        if (onFileTransferUpdatedCallback != null) {
-                            onFileTransferUpdatedCallback.accept(transfer);
-                        }
-                    });
-                }
+                    @Override
+                    public void onTransferInterrupted(FileTransfer transfer, String reason) {
+                        Platform.runLater(() -> {
+                            if (onFileTransferUpdatedCallback != null) {
+                                onFileTransferUpdatedCallback.accept(transfer);
+                            }
+                        });
+                    }
 
-                @Override
-                public void onTransferRejected(FileTransfer transfer, String reason) {
-                    Platform.runLater(() -> {
-                        if (onFileTransferUpdatedCallback != null) {
-                            onFileTransferUpdatedCallback.accept(transfer);
-                        }
-                    });
-                }
+                    @Override
+                    public void onTransferReconnecting(FileTransfer transfer, int attempt, int maxAttempts) {
+                        Platform.runLater(() -> {
+                            if (onFileTransferUpdatedCallback != null) {
+                                onFileTransferUpdatedCallback.accept(transfer);
+                            }
+                        });
+                    }
 
-                @Override
-                public void onTransferFailed(FileTransfer transfer, String reason) {
-                    Platform.runLater(() -> {
-                        if (onFileTransferUpdatedCallback != null) {
-                            onFileTransferUpdatedCallback.accept(transfer);
-                        }
-                    });
+                    @Override
+                    public void onTransferResuming(FileTransfer transfer, int fromChunk, int totalChunks) {
+                        Platform.runLater(() -> {
+                            if (onFileTransferUpdatedCallback != null) {
+                                onFileTransferUpdatedCallback.accept(transfer);
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onTransferChunkRetrying(FileTransfer transfer, int chunkIndex, int attempt, int maxAttempts) {
+                        Platform.runLater(() -> {
+                            if (onFileTransferUpdatedCallback != null) {
+                                onFileTransferUpdatedCallback.accept(transfer);
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onTransferCompleted(FileTransfer transfer) {
+                        Platform.runLater(() -> {
+                            if (onFileTransferUpdatedCallback != null) {
+                                onFileTransferUpdatedCallback.accept(transfer);
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onTransferRejected(FileTransfer transfer, String reason) {
+                        Platform.runLater(() -> {
+                            if (onFileTransferUpdatedCallback != null) {
+                                onFileTransferUpdatedCallback.accept(transfer);
+                            }
+                        });
+                    }
+
+                    @Override
+                    public void onTransferFailed(FileTransfer transfer, String reason) {
+                        Platform.runLater(() -> {
+                            if (onFileTransferUpdatedCallback != null) {
+                                onFileTransferUpdatedCallback.accept(transfer);
+                            }
+                        });
+                    }
+                });
+            } else {
+                this.fileTransferService.attachConnection(connection);
+            }
+
+            if (remoteAddress != null && remoteAddress.contains(":")) {
+                try {
+                    String[] parts = remoteAddress.split(":");
+                    this.fileTransferService.setRemoteEndpoint(parts[0], Integer.parseInt(parts[1]));
+                } catch (Exception ignored) {
                 }
-            });
+            }
+
+            // Check if any transfer was interrupted and can resume
+            for (FileTransfer transfer : transfers) {
+                if (transfer.isInterrupted() && transfer.getDirection() == FileTransferDirection.INCOMING) {
+                    this.fileTransferService.resumeTransfer(transfer.getTransferId());
+                    break;
+                }
+            }
+
         } catch (Exception e) {
             System.err.println("[FileTransfer] Failed to initialize FileTransferService: " + e.getMessage());
         }
@@ -712,6 +762,14 @@ public class UIStateService {
         return CompletableFuture.runAsync(() -> {
             if (fileTransferService != null) {
                 fileTransferService.cancelTransfer(transferId);
+            }
+        });
+    }
+
+    public CompletableFuture<Void> resumeTransfer(String transferId) {
+        return CompletableFuture.runAsync(() -> {
+            if (fileTransferService != null) {
+                fileTransferService.resumeTransfer(transferId);
             }
         });
     }
