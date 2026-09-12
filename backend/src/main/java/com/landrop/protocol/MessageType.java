@@ -24,7 +24,9 @@ public enum MessageType {
     HEARTBEAT((byte) 14),
     HEARTBEAT_ACK((byte) 15),
     UNREGISTER((byte) 16),
-    FILE_DATA((byte) 17);
+    FILE_DATA((byte) 17),
+    RESUME_REQUEST((byte) 18),
+    RESUME_RESPONSE((byte) 19);
 
     private final byte code;
 
