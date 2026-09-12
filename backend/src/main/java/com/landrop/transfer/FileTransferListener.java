@@ -52,6 +52,42 @@ public interface FileTransferListener {
     default void onTransferRejected(FileTransfer transfer, String reason) {}
 
     /**
+     * Called when an active transfer is interrupted by network disconnection or socket error.
+     *
+     * @param transfer the interrupted transfer
+     * @param reason explanation of interruption
+     */
+    default void onTransferInterrupted(FileTransfer transfer, String reason) {}
+
+    /**
+     * Called when the service attempts to reconnect to the remote peer.
+     *
+     * @param transfer the transfer being reconnected
+     * @param attempt current attempt number (1-based)
+     * @param maxAttempts maximum allowed reconnect attempts
+     */
+    default void onTransferReconnecting(FileTransfer transfer, int attempt, int maxAttempts) {}
+
+    /**
+     * Called when reconnection succeeds and resume handshake begins.
+     *
+     * @param transfer the transfer resuming
+     * @param fromChunk the first missing chunk index resuming from
+     * @param totalChunks total number of chunks
+     */
+    default void onTransferResuming(FileTransfer transfer, int fromChunk, int totalChunks) {}
+
+    /**
+     * Called when an individual chunk request times out or fails and is retried.
+     *
+     * @param transfer the active transfer
+     * @param chunkIndex the index of the chunk being retried
+     * @param attempt current retry attempt (1-based)
+     * @param maxAttempts maximum chunk retries
+     */
+    default void onTransferChunkRetrying(FileTransfer transfer, int chunkIndex, int attempt, int maxAttempts) {}
+
+    /**
      * Called when the transfer fails due to network, disk I/O, or protocol errors.
      *
      * @param transfer the failed transfer

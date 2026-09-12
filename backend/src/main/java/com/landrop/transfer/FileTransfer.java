@@ -1,6 +1,9 @@
 package com.landrop.transfer;
 
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.BitSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -34,6 +37,13 @@ public class FileTransfer {
     private volatile long endTimeMs = 0;
     private volatile double speedBytesPerSec = 0.0;
     private volatile String errorMessage = "";
+
+    private final BitSet completedChunksBitSet = new BitSet();
+    private volatile int reconnectAttempt = 0;
+    private volatile int maxReconnectAttempts = 5;
+    private volatile int chunkRetryIndex = -1;
+    private volatile int chunkRetryAttempt = 0;
+    private volatile int maxChunkRetries = 3;
 
     public FileTransfer(
             String transferId,
@@ -213,6 +223,100 @@ public class FileTransfer {
         return status.get() == FileTransferStatus.VERIFYING;
     }
 
+    public boolean isInterrupted() {
+        return status.get() == FileTransferStatus.INTERRUPTED;
+    }
+
+    public boolean isReconnecting() {
+        return status.get() == FileTransferStatus.RECONNECTING;
+    }
+
+    public boolean isResuming() {
+        return status.get() == FileTransferStatus.RESUMING;
+    }
+
+    public synchronized void markChunkCompleted(int chunkIndex) {
+        if (chunkIndex >= 0) {
+            completedChunksBitSet.set(chunkIndex);
+            this.completedChunks.set(completedChunksBitSet.cardinality());
+        }
+    }
+
+    public synchronized boolean isChunkCompleted(int chunkIndex) {
+        return chunkIndex >= 0 && completedChunksBitSet.get(chunkIndex);
+    }
+
+    public synchronized int getCompletedChunkCount() {
+        return completedChunksBitSet.cardinality();
+    }
+
+    public synchronized int getFirstMissingChunk() {
+        int nextClear = completedChunksBitSet.nextClearBit(0);
+        return nextClear < totalChunks ? nextClear : -1;
+    }
+
+    public synchronized List<Integer> getMissingChunks() {
+        List<Integer> missing = new ArrayList<>();
+        for (int i = 0; i < totalChunks; i++) {
+            if (!completedChunksBitSet.get(i)) {
+                missing.add(i);
+            }
+        }
+        return missing;
+    }
+
+    public synchronized BitSet getCompletedChunksBitSet() {
+        return (BitSet) completedChunksBitSet.clone();
+    }
+
+    public synchronized void setCompletedChunksBitSet(BitSet bitSet) {
+        completedChunksBitSet.clear();
+        if (bitSet != null) {
+            completedChunksBitSet.or(bitSet);
+        }
+        this.completedChunks.set(completedChunksBitSet.cardinality());
+    }
+
+    public int getReconnectAttempt() {
+        return reconnectAttempt;
+    }
+
+    public void setReconnectAttempt(int reconnectAttempt) {
+        this.reconnectAttempt = reconnectAttempt;
+    }
+
+    public int getMaxReconnectAttempts() {
+        return maxReconnectAttempts;
+    }
+
+    public void setMaxReconnectAttempts(int maxReconnectAttempts) {
+        this.maxReconnectAttempts = maxReconnectAttempts;
+    }
+
+    public int getChunkRetryIndex() {
+        return chunkRetryIndex;
+    }
+
+    public void setChunkRetryIndex(int chunkRetryIndex) {
+        this.chunkRetryIndex = chunkRetryIndex;
+    }
+
+    public int getChunkRetryAttempt() {
+        return chunkRetryAttempt;
+    }
+
+    public void setChunkRetryAttempt(int chunkRetryAttempt) {
+        this.chunkRetryAttempt = chunkRetryAttempt;
+    }
+
+    public int getMaxChunkRetries() {
+        return maxChunkRetries;
+    }
+
+    public void setMaxChunkRetries(int maxChunkRetries) {
+        this.maxChunkRetries = maxChunkRetries;
+    }
+
     public int getChunkSize() {
         return chunkSize;
     }
@@ -271,6 +375,17 @@ public class FileTransfer {
     }
 
     public String getChunkProgressText() {
+        if (isReconnecting()) {
+            return "Reconnecting... (Attempt " + reconnectAttempt + " / " + maxReconnectAttempts + ")";
+        }
+        if (isResuming()) {
+            int missing = getFirstMissingChunk();
+            int from = missing >= 0 ? missing : 0;
+            return "Resuming from chunk " + from + " / " + totalChunks;
+        }
+        if (chunkRetryAttempt > 0 && chunkRetryIndex >= 0) {
+            return "Retrying chunk " + chunkRetryIndex + "... (" + chunkRetryAttempt + " / " + maxChunkRetries + ")";
+        }
         if (totalChunks <= 0) {
             return "0 / 0 chunks";
         }
