@@ -26,7 +26,9 @@ public enum MessageType {
     UNREGISTER((byte) 16),
     FILE_DATA((byte) 17),
     RESUME_REQUEST((byte) 18),
-    RESUME_RESPONSE((byte) 19);
+    RESUME_RESPONSE((byte) 19),
+    FILE_QUERY((byte) 20),
+    FILE_QUERY_RESPONSE((byte) 21);
 
     private final byte code;
 
