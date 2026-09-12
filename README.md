@@ -22,11 +22,11 @@ mvn clean install
 ### 3. Nguyên Tắc Phân Bổ Cổng (Port Allocation)
 Để tránh xung đột cổng `Address already in use`, hãy chạy các thành phần theo cấu hình cổng riêng biệt:
 
-| Thành phần | Vai trò | Cổng sử dụng | Lệnh / Script |
-| :--- | :--- | :---: | :--- |
-| **Discovery Server** | Đăng ký & phân giải peer nội mạng | **`8888`** | `./start-discovery.sh` |
-| **Peer A** | Desktop UI Client 1 | **`5001`** | `./start-peerA.sh` |
-| **Peer B** | Desktop UI Client 2 | **`5002`** | `./start-peerB.sh` |
+| Thành phần | Vai trò | Cổng sử dụng | Script macOS / Linux | Script Windows |
+| :--- | :--- | :---: | :--- | :--- |
+| **Discovery Server** | Đăng ký & phân giải peer nội mạng | **`8888`** | `./start-discovery.sh` | `start-discovery.bat` |
+| **Peer A** | Desktop UI Client 1 | **`5001`** | `./start-peerA.sh` | `start-peerA.bat` |
+| **Peer B** | Desktop UI Client 2 | **`5002`** | `./start-peerB.sh` | `start-peerB.bat` |
 
 > [!IMPORTANT]
 > * **Discovery Server** chỉ cần bật **1 cửa sổ duy nhất** trên cổng `8888`.
@@ -36,115 +36,178 @@ mvn clean install
 
 ### 4. Cách Chạy Nhanh Bằng Script Tiện Ích (Khuyên dùng)
 
-Mở **3 cửa sổ Terminal riêng biệt** tại thư mục gốc `/Users/theanhmac/Project/LANDrop`:
+#### 🍎 4.1. Hướng Dẫn Trên macOS / Linux
 
-#### Terminal 1: Khởi động Discovery Server
-```bash
-cd /Users/theanhmac/Project/LANDrop
-./start-discovery.sh
-```
-> Server sẽ lắng nghe tại cổng `8888`:
-> ```text
-> Starting LANDrop Discovery Server on port 8888...
-> =================================
-> LANDrop - Discovery Server
-> =================================
-> Discovery server started.
-> Waiting for peers...
+Mở **3 cửa sổ Terminal riêng biệt** tại thư mục gốc `LANDrop`:
+
+* **Terminal 1 (Discovery Server)**:
+  ```bash
+  cd /Users/theanhmac/Project/LANDrop
+  ./start-discovery.sh
+  ```
+* **Terminal 2 (Peer A - Port 5001)**:
+  ```bash
+  ./start-peerA.sh
+  ```
+  *(Cửa sổ giao diện của Peer A sẽ xuất hiện)*
+* **Terminal 3 (Peer B - Port 5002)**:
+  ```bash
+  ./start-peerB.sh
+  ```
+  *(Cửa sổ giao diện của Peer B sẽ xuất hiện)*
+
+> [!TIP]
+> Nếu chạy lần đầu báo lỗi `Permission denied`, hãy cấp quyền thực thi cho các file script:
+> ```bash
+> chmod +x start-discovery.sh start-peerA.sh start-peerB.sh
 > ```
-
-#### Terminal 2: Khởi động Peer A (Port 5001)
-```bash
-cd /Users/theanhmac/Project/LANDrop
-./start-peerA.sh
-```
-1. Cửa sổ **LANDrop Setup** mở lên với cấu hình mặc định:
-   - **Display Name**: `Peer A`
-   - **Local P2P Port**: `5001`
-   - **Discovery Server**: `localhost:8888`
-2. Bấm nút **"Connect & Join Network"** $\rightarrow$ Hệ thống đăng ký vào Discovery và mở Dashboard chính.
-
-#### Terminal 3: Khởi động Peer B (Port 5002)
-```bash
-cd /Users/theanhmac/Project/LANDrop
-./start-peerB.sh
-```
-1. Cửa sổ **LANDrop Setup** mở lên với cấu hình mặc định:
-   - **Display Name**: `Peer B`
-   - **Local P2P Port**: `5002`
-   - **Discovery Server**: `localhost:8888`
-2. Bấm nút **"Connect & Join Network"** $\rightarrow$ Mở Dashboard chính của Peer B.
-
-#### Bắt đầu Chat P2P giữa Peer A và Peer B:
-1. Trên cửa sổ **Peer B**, bấm vào menu **Peers** ở thanh điều hướng bên trái.
-2. Danh sách sẽ hiển thị **Peer A** (trạng thái Online tại `127.0.0.1:5001`).
-3. Bấm nút **"Connect"** màu tím bên cạnh Peer A.
-4. Màn hình sẽ tự động chuyển sang tab **Messages** $\rightarrow$ Bạn có thể gửi tin nhắn qua lại tức thì hai chiều giữa 2 cửa sổ!
 
 ---
 
-### 5. Cách Chạy Trực Tiếp Bằng Lệnh Maven
+#### 🪟 4.2. Hướng Dẫn Trên Windows
 
-#### A. Khi đang đứng tại thư mục gốc `LANDrop`:
-* **Discovery Server**:
+Bạn có thể chạy bằng một trong hai cách cực kỳ thuận tiện sau:
+
+##### Cách 1: Nhấp đúp chuột (Double-Click) trong File Explorer
+Vào thư mục dự án `LANDrop`, nhấp đúp lần lượt 3 tệp sau:
+1. Nhấp đúp **`start-discovery.bat`** $\rightarrow$ Cửa sổ Discovery Server màu đen mở lên lắng nghe tại cổng `8888`.
+2. Nhấp đúp **`start-peerA.bat`** $\rightarrow$ Cửa sổ giao diện Peer A (Port 5001) mở lên.
+3. Nhấp đúp **`start-peerB.bat`** $\rightarrow$ Cửa sổ giao diện Peer B (Port 5002) mở lên.
+
+##### Cách 2: Chạy từ Command Prompt (CMD) hoặc PowerShell
+Mở **3 cửa sổ CMD / PowerShell riêng biệt** tại thư mục `LANDrop`:
+* **Cửa sổ 1 (Discovery Server)**:
+  ```cmd
+  start-discovery.bat
+  ```
+* **Cửa sổ 2 (Peer A - Port 5001)**:
+  ```cmd
+  start-peerA.bat
+  ```
+* **Cửa sổ 3 (Peer B - Port 5002)**:
+  ```cmd
+  start-peerB.bat
+  ```
+
+---
+
+#### 🤝 Bắt Đầu Kết Nối & Trò Chuyện P2P Giữa Peer A và Peer B:
+1. Trên cửa sổ **Peer A** và **Peer B**, bấm nút **"Connect & Join Network"** ở màn hình Setup để đăng ký vào Discovery Server.
+2. Trên cửa sổ **Peer B**, bấm vào menu **Peers** ở thanh điều hướng bên trái.
+3. Danh sách sẽ hiển thị **Peer A** (trạng thái Online tại `127.0.0.1:5001`).
+4. Bấm nút **"Connect"** màu tím bên cạnh Peer A.
+5. Màn hình sẽ tự động chuyển sang tab **Messages** $\rightarrow$ Bạn có thể gửi tin nhắn chat và truyền nhận file trực tiếp hai chiều giữa 2 cửa sổ!
+
+---
+
+### 5. Cách Chạy Trực Tiếp Bằng Lệnh Maven (Manual CLI)
+
+Nếu không muốn dùng file script, bạn có thể gõ lệnh Maven trực tiếp từ thư mục gốc `LANDrop`:
+
+#### 🍎 5.1. Dành cho macOS / Linux (Bash / Zsh)
+* **Cửa sổ 1 (Discovery Server)**:
   ```bash
   mvn -pl backend exec:java -Dexec.mainClass="com.landrop.discovery.DiscoveryServer"
   ```
-* **Peer A (Port 5001)**:
+* **Cửa sổ 2 (Peer A)**:
   ```bash
+  mvn -pl frontend javafx:run -Djavafx.args="--peer-port=5001 --display-name='Peer A'"
+  ```
+* **Cửa sổ 3 (Peer B)**:
+  ```bash
+  mvn -pl frontend javafx:run -Djavafx.args="--peer-port=5002 --display-name='Peer B'"
+  ```
+
+#### 🪟 5.2. Dành cho Windows Command Prompt (`cmd.exe`)
+* **Cửa sổ 1 (Discovery Server)**:
+  ```cmd
+  mvn -pl backend exec:java -Dexec.mainClass="com.landrop.discovery.DiscoveryServer"
+  ```
+* **Cửa sổ 2 (Peer A)**:
+  ```cmd
   mvn -pl frontend javafx:run -Djavafx.args="--peer-port=5001 --display-name=PeerA"
   ```
-* **Peer B (Port 5002)**:
-  ```bash
+* **Cửa sổ 3 (Peer B)**:
+  ```cmd
   mvn -pl frontend javafx:run -Djavafx.args="--peer-port=5002 --display-name=PeerB"
   ```
 
-#### B. Khi đang đứng bên trong thư mục con:
-* **Từ thư mục `backend/`**:
-  ```bash
-  cd backend
-  mvn exec:java -Dexec.mainClass="com.landrop.discovery.DiscoveryServer"
+#### 🪟 5.3. Dành cho Windows PowerShell
+Trong PowerShell, hãy bọc đối số trong cặp ngoặc kép để tránh bị phân tách ký tự:
+* **Cửa sổ 1 (Discovery Server)**:
+  ```powershell
+  mvn -pl backend exec:java "-Dexec.mainClass=com.landrop.discovery.DiscoveryServer"
   ```
-* **Từ thư mục `frontend/`**:
-  ```bash
-  cd frontend
-  # Lưu ý: KHÔNG dùng cờ -pl frontend khi đã ở bên trong thư mục frontend/
-  mvn javafx:run -Djavafx.args="--peer-port=5001 --display-name=PeerA"
+* **Cửa sổ 2 (Peer A)**:
+  ```powershell
+  mvn -pl frontend javafx:run "-Djavafx.args=--peer-port=5001 --display-name=PeerA"
+  ```
+* **Cửa sổ 3 (Peer B)**:
+  ```powershell
+  mvn -pl frontend javafx:run "-Djavafx.args=--peer-port=5002 --display-name=PeerB"
   ```
 
 ---
 
-### 6. Cách Chạy Chế Độ Dòng Lệnh CLI (Terminal Chat)
-Nếu muốn chạy chat P2P không cần giao diện đồ họa:
+### 6. Cách Chạy Chế Độ Dòng Lệnh CLI (Terminal Chat Không Cần UI)
+Nếu muốn chạy chat P2P dạng dòng lệnh nhẹ nhàng trong Terminal/Console:
 
 * **Peer 1 (Server mode - Alice, Port 5001)**:
-  ```bash
-  mvn -pl backend exec:java -Dexec.mainClass="com.landrop.chat.ChatCli" -Dexec.args="server 5001 Alice"
-  ```
+  * macOS / Linux:
+    ```bash
+    mvn -pl backend exec:java -Dexec.mainClass="com.landrop.chat.ChatCli" -Dexec.args="server 5001 Alice"
+    ```
+  * Windows (CMD / PowerShell):
+    ```cmd
+    mvn -pl backend exec:java -Dexec.mainClass="com.landrop.chat.ChatCli" -Dexec.args="server 5001 Alice"
+    ```
 * **Peer 2 (Client mode - Bob, kết nối tới Alice)**:
-  ```bash
-  mvn -pl backend exec:java -Dexec.mainClass="com.landrop.chat.ChatCli" -Dexec.args="client localhost 5001 Bob"
-  ```
+  * macOS / Linux:
+    ```bash
+    mvn -pl backend exec:java -Dexec.mainClass="com.landrop.chat.ChatCli" -Dexec.args="client localhost 5001 Bob"
+    ```
+  * Windows (CMD / PowerShell):
+    ```cmd
+    mvn -pl backend exec:java -Dexec.mainClass="com.landrop.chat.ChatCli" -Dexec.args="client localhost 5001 Bob"
+    ```
 
 ---
 
 ### 7. Xử Lý Các Sự Cố Thường Gặp (Troubleshooting)
 
-#### Lỗi 1: `Address already in use`
+#### Lỗi 1: `Address already in use` hoặc `Port already bound`
 * **Nguyên nhân**: Cổng `5001`, `5002` hoặc `8888` đang bị một tiến trình Java cũ chiếm giữ.
-* **Cách khắc phục**: Chạy lệnh sau trong Terminal để giải phóng toàn bộ các cổng này:
+* **Cách khắc phục trên macOS / Linux**:
   ```bash
   kill -9 $(lsof -t -i:5001 -i:5002 -i:8888) 2>/dev/null
   ```
+* **Cách khắc phục trên Windows**:
+  * **Dùng PowerShell**:
+    ```powershell
+    Get-NetTCPConnection -LocalPort 5001, 5002, 8888 -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }
+    ```
+  * **Dùng Command Prompt (CMD)**:
+    Tìm PID tiến trình chiếm cổng (ví dụ cổng 8888):
+    ```cmd
+    netstat -ano | findstr :8888
+    ```
+    Sau đó tắt tiến trình bằng PID tìm được ở cột cuối cùng:
+    ```cmd
+    taskkill /F /PID <PID>
+    ```
 
-#### Lỗi 2: `Could not find the selected project in the reactor: frontend`
-* **Nguyên nhân**: Terminal đang đứng bên trong thư mục `frontend/` nhưng lại gõ lệnh có cờ `-pl frontend`. Cờ `-pl` chỉ hoạt động từ thư mục gốc.
+#### Lỗi 2: Cảnh báo tường lửa Windows (Windows Defender Firewall)
+* **Hiện tượng**: Khi khởi động Discovery Server hoặc Peer trên Windows, xuất hiện thông báo *Windows Defender Firewall has blocked some features of this app*.
+* **Cách khắc phục**: Nhấp chọn ô **Private networks (Mạng riêng tư)** và nhấn **Allow access** (Cho phép truy cập) để Java có quyền lắng nghe các kết nối TCP trong mạng cục bộ.
+
+#### Lỗi 3: `Could not find the selected project in the reactor: frontend`
+* **Nguyên nhân**: Terminal đang đứng bên trong thư mục `frontend/` nhưng lại gõ lệnh có cờ `-pl frontend`. Cờ `-pl` chỉ dùng khi đang ở thư mục gốc `LANDrop`.
 * **Cách khắc phục**:
-  * Nếu đang ở trong `frontend/`: bỏ `-pl frontend`, chỉ cần gõ `mvn javafx:run ...`.
-  * Hoặc gõ `cd ..` để trở về thư mục gốc `LANDrop` rồi chạy lệnh.
+  * Nếu đang ở trong thư mục `frontend/`: chỉ cần gõ `mvn javafx:run ...`.
+  * Hoặc gõ `cd ..` để quay về thư mục gốc `LANDrop` rồi chạy lệnh.
 
-#### Lỗi 3: `No plugin found for prefix 'javafx'`
-* **Cách khắc phục**: Plugin JavaFX đã được cấu hình trong `<pluginManagement>` của root `pom.xml`. Hãy đảm bảo bạn đã chạy `mvn clean install` từ thư mục gốc một lần để cập nhật.
+#### Lỗi 4: `No plugin found for prefix 'javafx'`
+* **Cách khắc phục**: Đảm bảo bạn đã chạy `mvn clean install` một lần từ thư mục gốc để tải và cài đặt đầy đủ các plugin cần thiết.
 
 ---
 
@@ -305,15 +368,65 @@ sequenceDiagram
 
 ---
 
+### 10. Tải File Đa Nguồn Song Song (Phase 9 — Multi-Peer Swarm Guide)
+
+LANDrop cho phép một Peer nhận tải các đoạn khác nhau của cùng một tệp từ **nhiều Peer nguồn cùng lúc** (Swarm Transfer) qua các kết nối TCP trực tiếp độc lập:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Receiver as Peer nhận (Receiver)
+    participant PeerA as Nguồn A (Peer A)
+    participant PeerB as Nguồn B (Peer B)
+
+    Note over Receiver: Người dùng bấm "⚡ Multi-Peer Download"
+    Receiver->>PeerA: FILE_QUERY (fileName, fileSize, sha256)
+    Receiver->>PeerB: FILE_QUERY (fileName, fileSize, sha256)
+    PeerA-->>Receiver: FILE_QUERY_RESPONSE (available=true)
+    PeerB-->>Receiver: FILE_QUERY_RESPONSE (available=true)
+
+    Note over Receiver: Khởi tạo FileChannel .landrop.part & Bộ lập lịch Bounded Round-Robin
+    par Tải đồng thời các chunk
+        Receiver->>PeerA: CHUNK_REQUEST (chunk 0, 2, 4...)
+        PeerA-->>Receiver: CHUNK_RESPONSE (ghi positional write vào file tạm)
+    and
+        Receiver->>PeerB: CHUNK_REQUEST (chunk 1, 3, 5...)
+        PeerB-->>Receiver: CHUNK_RESPONSE (ghi positional write vào file tạm)
+    end
+
+    Note over Receiver: Hoàn thành tất cả các chunk -> Kiểm tra SHA-256 -> Đổi tên tệp nguyên tử
+```
+
+#### Hướng dẫn kích hoạt từ giao diện Desktop:
+1. Vào tab **Transfers** ở thanh menu bên trái.
+2. Bấm nút **"⚡ Multi-Peer Download"** ở thanh tiêu đề góc trên bên phải.
+3. Điền các thông số tệp cần tải:
+   - **File Name**: Tên tệp muốn lưu (ví dụ: `ubuntu-24.04.iso`).
+   - **File Size (bytes)**: Dung lượng tệp chính xác (ví dụ: `104857600`).
+   - **Expected SHA-256**: Mã hash SHA-256 kiểm tra tính toàn vẹn (64 ký tự hex).
+4. Nhấn **"Start Download"**:
+   - Ứng dụng tự động phát gói `FILE_QUERY` đến các Peer đang trực tuyến.
+   - Các Peer có tệp sẽ gửi phản hồi xác nhận và tham gia Swarm.
+   - Hàng tải đa nguồn xuất hiện với biểu đồ tốc độ gộp, thời gian còn lại (ETA) và số lượng chunk đóng góp của từng Peer (ví dụ: `Peer A: 8 chunks (8 MB)`, `Peer B: 8 chunks (8 MB)`).
+   - Tự động chuyển giao chunk (Failover) nếu một Peer trong Swarm bị ngắt kết nối giữa chừng.
+
+---
+
 ## 📁 Cấu Trúc Dự Án (Project Structure)
 
 ```text
 LANDrop/
 ├── pom.xml                 # Root Maven Aggregator POM
-├── README.md               # Tài liệu hướng dẫn dự án
-├── start-discovery.sh      # Script bật Discovery Server (Port 8888)
-├── start-peerA.sh          # Script bật Peer A UI (Port 5001)
-├── start-peerB.sh          # Script bật Peer B UI (Port 5002)
+├── README.md               # Tài liệu hướng dẫn dự án (Mac & Windows)
+├── docs/
+│   └── PHASE-9.md          # Đặc tả chi tiết kiến trúc Phase 9 Multi-Peer
+│
+├── start-discovery.sh      # Script bật Discovery Server cho macOS/Linux (Port 8888)
+├── start-peerA.sh          # Script bật Peer A UI cho macOS/Linux (Port 5001)
+├── start-peerB.sh          # Script bật Peer B UI cho macOS/Linux (Port 5002)
+├── start-discovery.bat     # Script bật Discovery Server cho Windows (Port 8888)
+├── start-peerA.bat         # Script bật Peer A UI cho Windows (Port 5001)
+├── start-peerB.bat         # Script bật Peer B UI cho Windows (Port 5002)
 │
 ├── backend/                # Module Backend (P2P Core & Networking Engine)
 │   ├── pom.xml
@@ -324,7 +437,7 @@ LANDrop/
 │       ├── peer/           # PeerConnection, PeerListener, Handshake
 │       ├── chat/           # ChatService, ChatMessage, ChatCli
 │       ├── discovery/      # DiscoveryServer, DiscoveryClient, PeerRegistry
-│       └── transfer/       # FileTransferService, FileChunk, ChunkRequest/Response, ResumeRequest/Response, SHA-256 Utils
+│       └── transfer/       # FileTransferService, ChunkManager, ChunkScheduler, MultiPeerDownloadCoordinator
 │
 └── frontend/               # Module Frontend (JavaFX Desktop UI)
     ├── pom.xml
