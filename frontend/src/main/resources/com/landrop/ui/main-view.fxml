@@ -50,6 +50,9 @@
                     <Button fx:id="chatNavBtn" text="💬  Chat" maxWidth="Infinity"
                             styleClass="sidebar-btn" onAction="#onChatNavClicked"/>
 
+                    <Button fx:id="transfersNavBtn" text="📁  Transfers" maxWidth="Infinity"
+                            styleClass="sidebar-btn" onAction="#onTransfersNavClicked"/>
+
                     <Region VBox.vgrow="ALWAYS"/>
 
                     <Separator style="-fx-padding: 6px 0;"/>

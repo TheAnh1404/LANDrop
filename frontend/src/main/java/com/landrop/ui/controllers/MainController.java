@@ -43,6 +43,9 @@ public class MainController {
     private Button chatNavBtn;
 
     @FXML
+    private Button transfersNavBtn;
+
+    @FXML
     private Button settingsNavBtn;
 
     @FXML
@@ -69,6 +72,7 @@ public class MainController {
     private DashboardController dashboardController;
     private PeersController peersController;
     private ChatController chatController;
+    private TransfersController transfersController;
     private SettingsController settingsController;
 
     public void init(UIStateService stateService, MainApp mainApp) throws IOException {
@@ -79,6 +83,7 @@ public class MainController {
         navButtonMap.put(NavigationTab.DASHBOARD, dashboardNavBtn);
         navButtonMap.put(NavigationTab.PEERS, peersNavBtn);
         navButtonMap.put(NavigationTab.CHAT, chatNavBtn);
+        navButtonMap.put(NavigationTab.TRANSFERS, transfersNavBtn);
         navButtonMap.put(NavigationTab.SETTINGS, settingsNavBtn);
 
         // Load and initialize sub-views
@@ -118,7 +123,14 @@ public class MainController {
         chatController.init(stateService, this);
         viewCache.put(NavigationTab.CHAT, chatNode);
 
-        // 4. Settings View
+        // 4. Transfers View
+        FXMLLoader transfersLoader = new FXMLLoader(getClass().getResource("/com/landrop/ui/transfers-view.fxml"));
+        Node transfersNode = transfersLoader.load();
+        this.transfersController = transfersLoader.getController();
+        transfersController.init(stateService, this);
+        viewCache.put(NavigationTab.TRANSFERS, transfersNode);
+
+        // 5. Settings View
         FXMLLoader settingsLoader = new FXMLLoader(getClass().getResource("/com/landrop/ui/settings-view.fxml"));
         Node settingsNode = settingsLoader.load();
         this.settingsController = settingsLoader.getController();
@@ -204,6 +216,11 @@ public class MainController {
     @FXML
     private void onChatNavClicked() {
         navigateTo(NavigationTab.CHAT);
+    }
+
+    @FXML
+    private void onTransfersNavClicked() {
+        navigateTo(NavigationTab.TRANSFERS);
     }
 
     @FXML

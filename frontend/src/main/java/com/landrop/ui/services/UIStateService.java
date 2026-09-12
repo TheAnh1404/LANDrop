@@ -9,6 +9,9 @@ import com.landrop.peer.ConnectionListener;
 import com.landrop.peer.PeerConnection;
 import com.landrop.peer.PeerIdentity;
 import com.landrop.peer.PeerListener;
+import com.landrop.transfer.FileTransfer;
+import com.landrop.transfer.FileTransferListener;
+import com.landrop.transfer.FileTransferService;
 import com.landrop.ui.models.DiscoveryStatus;
 import com.landrop.ui.models.P2PStatus;
 import com.landrop.ui.models.UIMessage;
@@ -73,6 +76,11 @@ public class UIStateService {
     private volatile DiscoveryClient discoveryClient;
     private volatile PeerConnection activeConnection;
     private volatile ChatService activeChatService;
+    private volatile FileTransferService fileTransferService;
+
+    private final ObservableList<FileTransfer> transfers = FXCollections.observableArrayList();
+    private Consumer<FileTransfer> onFileTransferOfferedCallback;
+    private Consumer<FileTransfer> onFileTransferUpdatedCallback;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Consumer<String> onIncomingConnectionCallback;
@@ -251,8 +259,91 @@ public class UIStateService {
             }
         }
 
+        if (this.fileTransferService != null) {
+            try {
+                this.fileTransferService.close();
+            } catch (Exception ignored) {
+            }
+            this.fileTransferService = null;
+        }
+
         this.activeConnection = connection;
         this.activeChatService = new ChatService(connection, identity.getDisplayName());
+
+        try {
+            this.fileTransferService = new FileTransferService(
+                    connection,
+                    identity != null ? identity.getPeerId() : java.util.UUID.randomUUID().toString(),
+                    identity != null ? identity.getDisplayName() : "Peer"
+            );
+
+            this.fileTransferService.addListener(new FileTransferListener() {
+                @Override
+                public void onTransferOffered(FileTransfer transfer) {
+                    Platform.runLater(() -> {
+                        if (!transfers.contains(transfer)) {
+                            transfers.add(0, transfer);
+                        }
+                        if (onFileTransferOfferedCallback != null) {
+                            onFileTransferOfferedCallback.accept(transfer);
+                        }
+                        if (onFileTransferUpdatedCallback != null) {
+                            onFileTransferUpdatedCallback.accept(transfer);
+                        }
+                    });
+                }
+
+                @Override
+                public void onTransferStarted(FileTransfer transfer) {
+                    Platform.runLater(() -> {
+                        if (!transfers.contains(transfer)) {
+                            transfers.add(0, transfer);
+                        }
+                        if (onFileTransferUpdatedCallback != null) {
+                            onFileTransferUpdatedCallback.accept(transfer);
+                        }
+                    });
+                }
+
+                @Override
+                public void onTransferProgress(FileTransfer transfer, long transferredBytes, long totalBytes, double speedBytesPerSec) {
+                    Platform.runLater(() -> {
+                        if (onFileTransferUpdatedCallback != null) {
+                            onFileTransferUpdatedCallback.accept(transfer);
+                        }
+                    });
+                }
+
+                @Override
+                public void onTransferCompleted(FileTransfer transfer) {
+                    Platform.runLater(() -> {
+                        if (onFileTransferUpdatedCallback != null) {
+                            onFileTransferUpdatedCallback.accept(transfer);
+                        }
+                    });
+                }
+
+                @Override
+                public void onTransferRejected(FileTransfer transfer, String reason) {
+                    Platform.runLater(() -> {
+                        if (onFileTransferUpdatedCallback != null) {
+                            onFileTransferUpdatedCallback.accept(transfer);
+                        }
+                    });
+                }
+
+                @Override
+                public void onTransferFailed(FileTransfer transfer, String reason) {
+                    Platform.runLater(() -> {
+                        if (onFileTransferUpdatedCallback != null) {
+                            onFileTransferUpdatedCallback.accept(transfer);
+                        }
+                    });
+                }
+            });
+        } catch (Exception e) {
+            System.err.println("[FileTransfer] Failed to initialize FileTransferService: " + e.getMessage());
+        }
 
         // Wire chat events
         activeChatService.addListener(new ChatListener() {
@@ -424,6 +515,14 @@ public class UIStateService {
             }
         }
 
+        if (fileTransferService != null) {
+            try {
+                fileTransferService.close();
+            } catch (Exception ignored) {
+            }
+            fileTransferService = null;
+        }
+
         Platform.runLater(() -> {
             p2pStatus.set(P2PStatus.DISCONNECTED);
             p2pConnectionsCount.set(0);
@@ -547,5 +646,80 @@ public class UIStateService {
 
     public boolean isP2pConnected() {
         return p2pStatus.get() == P2PStatus.CONNECTED;
+    }
+
+    public CompletableFuture<FileTransfer> offerFile(java.io.File file) {
+        CompletableFuture<FileTransfer> future = new CompletableFuture<>();
+        CompletableFuture.runAsync(() -> {
+            if (fileTransferService == null || !isP2pConnected()) {
+                future.completeExceptionally(new IllegalStateException("No active P2P connection to transfer files"));
+                return;
+            }
+            try {
+                FileTransfer transfer = fileTransferService.offerFile(file);
+                Platform.runLater(() -> {
+                    if (!transfers.contains(transfer)) {
+                        transfers.add(0, transfer);
+                    }
+                    if (onFileTransferUpdatedCallback != null) {
+                        onFileTransferUpdatedCallback.accept(transfer);
+                    }
+                    future.complete(transfer);
+                });
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        });
+        return future;
+    }
+
+    public CompletableFuture<Void> acceptTransfer(String transferId) {
+        return CompletableFuture.runAsync(() -> {
+            if (fileTransferService == null) {
+                throw new IllegalStateException("File transfer service is not active");
+            }
+            try {
+                fileTransferService.acceptTransfer(transferId);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to accept transfer: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    public CompletableFuture<Void> rejectTransfer(String transferId, String reason) {
+        return CompletableFuture.runAsync(() -> {
+            if (fileTransferService == null) {
+                throw new IllegalStateException("File transfer service is not active");
+            }
+            try {
+                fileTransferService.rejectTransfer(transferId, reason);
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to reject transfer: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    public CompletableFuture<Void> cancelTransfer(String transferId) {
+        return CompletableFuture.runAsync(() -> {
+            if (fileTransferService != null) {
+                fileTransferService.cancelTransfer(transferId);
+            }
+        });
+    }
+
+    public ObservableList<FileTransfer> getTransfers() {
+        return transfers;
+    }
+
+    public FileTransferService getFileTransferService() {
+        return fileTransferService;
+    }
+
+    public void setOnFileTransferOfferedCallback(Consumer<FileTransfer> callback) {
+        this.onFileTransferOfferedCallback = callback;
+    }
+
+    public void setOnFileTransferUpdatedCallback(Consumer<FileTransfer> callback) {
+        this.onFileTransferUpdatedCallback = callback;
     }
 }

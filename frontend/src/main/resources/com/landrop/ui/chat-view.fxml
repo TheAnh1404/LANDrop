@@ -52,9 +52,10 @@
 
         <!-- Input Bar -->
         <HBox alignment="CENTER_LEFT" styleClass="chat-input-bar">
-            <!-- Optional future file transfer slot (disabled in Phase 5) -->
-            <Button fx:id="attachFileButton" text="+" styleClass="secondary-button" disable="true"
-                    style="-fx-font-size: 14px; -fx-padding: 6px 12px;"/>
+            <!-- File transfer attachment button -->
+            <Button fx:id="attachFileButton" text="📎" styleClass="secondary-button" disable="true"
+                    onAction="#onAttachFileClicked"
+                    style="-fx-font-size: 15px; -fx-padding: 6px 12px;"/>
 
             <TextField fx:id="messageInput" promptText="Type a message... (Press Enter to send)"
                        styleClass="text-input-field" HBox.hgrow="ALWAYS" onAction="#onSendMessage"/>

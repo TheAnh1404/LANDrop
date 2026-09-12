@@ -84,6 +84,19 @@ public class FXMLLoaderTest {
     }
 
     @Test
+    void testLoadTransfersView() throws IOException {
+        FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/transfers-view.fxml"));
+        Node root = loader.load();
+        assertNotNull(root);
+
+        TransfersController controller = loader.getController();
+        assertNotNull(controller);
+
+        UIStateService stateService = new UIStateService();
+        assertDoesNotThrow(() -> controller.init(stateService, new MainController()));
+    }
+
+    @Test
     void testLoadSettingsView() throws IOException {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/settings-view.fxml"));
         Node root = loader.load();

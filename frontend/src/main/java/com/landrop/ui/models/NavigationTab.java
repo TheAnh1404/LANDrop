@@ -7,6 +7,7 @@ public enum NavigationTab {
     DASHBOARD("Dashboard"),
     PEERS("Peers"),
     CHAT("Chat"),
+    TRANSFERS("Transfers"),
     SETTINGS("Settings");
 
     private final String title;

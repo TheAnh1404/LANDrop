@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.landrop.ui.controllers.TransfersController"
+      spacing="16.0" VBox.vgrow="ALWAYS" styleClass="page-container">
+
+    <!-- 1. Page Header -->
+    <VBox spacing="4.0">
+        <Label text="File Transfers" styleClass="page-title"/>
+        <Label text="Monitor and manage all incoming and outgoing peer-to-peer file transfers" styleClass="page-subtitle"/>
+    </VBox>
+
+    <!-- 2. Transfer Metrics Bar -->
+    <HBox spacing="16.0">
+        <VBox styleClass="metric-card" HBox.hgrow="ALWAYS">
+            <Label text="TOTAL TRANSFERS" styleClass="metric-label"/>
+            <Label fx:id="totalTransfersLabel" text="0" styleClass="metric-value"/>
+        </VBox>
+
+        <VBox styleClass="metric-card" HBox.hgrow="ALWAYS">
+            <Label text="ACTIVE TRANSFERS" styleClass="metric-label"/>
+            <Label fx:id="activeTransfersLabel" text="0" styleClass="metric-value" style="-fx-text-fill: #4f46e5;"/>
+        </VBox>
+
+        <VBox styleClass="metric-card" HBox.hgrow="ALWAYS">
+            <Label text="COMPLETED" styleClass="metric-label"/>
+            <Label fx:id="completedTransfersLabel" text="0" styleClass="metric-value" style="-fx-text-fill: #10b981;"/>
+        </VBox>
+    </HBox>
+
+    <!-- 3. Transfers List Container -->
+    <StackPane VBox.vgrow="ALWAYS">
+        <ScrollPane fx:id="transfersScrollPane" fitToWidth="true" styleClass="chat-messages-scroll" VBox.vgrow="ALWAYS">
+            <VBox fx:id="transfersContainer" spacing="10.0">
+                <padding>
+                    <Insets top="8.0" right="8.0" bottom="8.0" left="8.0"/>
+                </padding>
+            </VBox>
+        </ScrollPane>
+
+        <!-- Empty State Placeholder -->
+        <VBox fx:id="emptyTransfersContainer" styleClass="empty-state-box" alignment="CENTER" maxWidth="450.0" maxHeight="180.0">
+            <Label text="No File Transfers Yet" styleClass="empty-state-title"/>
+            <Label text="When you send or receive files from connected peers, they will appear here with live progress."
+                   styleClass="empty-state-desc" wrapText="true" textAlignment="CENTER"/>
+        </VBox>
+    </StackPane>
+</VBox>

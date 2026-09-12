@@ -494,3 +494,60 @@
 .scroll-bar .thumb:hover {
     -fx-background-color: #94a3b8;
 }
+
+/* --------------------------------------------------------------------------
+   File Transfer Card Styles
+   -------------------------------------------------------------------------- */
+.transfer-card-bubble {
+    -fx-background-color: #ffffff;
+    -fx-border-color: #e2e8f0;
+    -fx-border-width: 1px;
+    -fx-border-radius: 10px;
+    -fx-background-radius: 10px;
+    -fx-padding: 12px 16px;
+    -fx-spacing: 8px;
+    -fx-min-width: 320px;
+    -fx-max-width: 500px;
+}
+
+.transfer-card-bubble-local {
+    -fx-background-color: #f8fafc;
+    -fx-border-color: #c7d2fe;
+}
+
+.transfer-file-name {
+    -fx-font-size: 13px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #1e293b;
+}
+
+.transfer-file-meta {
+    -fx-font-size: 11px;
+    -fx-text-fill: #64748b;
+}
+
+.transfer-progress-bar {
+    -fx-pref-height: 8px;
+    -fx-accent: #4f46e5;
+}
+
+.transfer-status-label {
+    -fx-font-size: 11px;
+    -fx-font-weight: 600;
+}
+
+.transfer-status-completed {
+    -fx-text-fill: #10b981;
+}
+
+.transfer-status-failed {
+    -fx-text-fill: #ef4444;
+}
+
+.transfer-status-pending {
+    -fx-text-fill: #f59e0b;
+}
+
+.transfer-status-transferring {
+    -fx-text-fill: #4f46e5;
+}
