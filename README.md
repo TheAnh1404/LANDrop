@@ -15,7 +15,7 @@ Từ thư mục gốc `LANDrop`:
 ```bash
 mvn clean install
 ```
-*(Biên dịch và chạy kiểm thử toàn bộ 70 unit & integration tests trên cả `backend` và `frontend`).*
+*(Biên dịch và chạy kiểm thử toàn bộ 92 unit & integration tests trên cả `backend` (82 tests) và `frontend` (10 tests)).*
 
 ---
 
@@ -148,6 +148,53 @@ Nếu muốn chạy chat P2P không cần giao diện đồ họa:
 
 ---
 
+### 8. Chuyển File P2P Trực Tiếp (Phase 6 - P2P File Transfer Guide)
+
+LANDrop hỗ trợ gửi file trực tiếp giữa 2 peer qua kết nối TCP riêng biệt mà không thông qua bất kỳ server trung gian hay cloud nào:
+
+```mermaid
+sequenceDiagram
+    autonumber
+    actor PeerA as Peer A (Sender)
+    actor PeerB as Peer B (Receiver)
+
+    Note over PeerA,PeerB: Direct TCP PeerConnection (Port 5001 <-> Port 5002)
+    PeerA->>PeerB: FILE_OFFER (transferId, fileName, fileSize, senderInfo)
+    Note over PeerB: Hiển thị thẻ xác nhận (Accept / Reject)
+    PeerB-->>PeerA: FILE_REQUEST (transferId, accepted=true)
+    
+    loop Streaming từng chunk 64 KB (NIO FileChannel)
+        PeerA->>PeerB: FILE_DATA [1B idLen][transferId][8B offset][chunkBytes]
+        Note over PeerA,PeerB: Cập nhật Progress Bar & Speed (KB/s, MB/s)
+    end
+
+    PeerB-->>PeerA: TRANSFER_ACK (transferId, success=true, transferredBytes)
+    Note over PeerB: Lưu vào ~/Downloads/LANDrop/ (Nút "Open File")
+```
+
+#### Các bước chuyển file trên giao diện Desktop UI:
+1. Đảm bảo **Peer A** và **Peer B** đã kết nối với nhau (đang ở màn hình **Messages**).
+2. Tại khung chat, bấm nút kẹp giấy **📎** ở cạnh ô nhập tin nhắn.
+3. Chọn file bất kỳ từ máy tính (hỗ trợ mọi định dạng, file rỗng 0-byte, file dung lượng lớn nhiều GB).
+4. Phía người gửi: xuất hiện thẻ file đang ở trạng thái *"Waiting for receiver to accept..."*.
+5. Phía người nhận: xuất hiện thẻ file với 2 nút tương tác **"Accept"** và **"Reject"**.
+   - Bấm **"Reject"**: Huỷ chuyển, thông báo từ chối cho người gửi.
+   - Bấm **"Accept"**: Bắt đầu truyền dữ liệu trực tiếp tức thì qua kênh TCP!
+6. Thanh tiến trình (Progress Bar), phần trăm (%), dung lượng đã truyền (`transferred / total`), tốc độ truyền (`KB/s` hoặc `MB/s`), và nút **"Cancel"** được cập nhật trực quan thời gian thực.
+7. **Trò chuyện song song không gián đoạn**: Trong lúc file đang truyền, bạn vẫn có thể gõ tin nhắn chat văn bản và `/ping` bình thường mà không bị block.
+8. Khi hoàn tất:
+   - File được lưu an toàn tại: `~/Downloads/LANDrop/<fileName>`.
+   - Bấm nút **"Open File"** để mở trực tiếp file hoặc thư mục đích.
+9. Quản lý lịch sử truyền file: Bấm vào tab **Transfers** (📁) ở thanh điều hướng bên trái để theo dõi tổng số file, file đang truyền, file đã hoàn tất và kích thước/tốc độ của từng file.
+
+#### Cơ chế An toàn & Độ tin cậy (Security & Reliability):
+* **Chống Path Traversal**: Tên file được chuẩn hóa bỏ các ký tự độc hại, thư mục cha (`../`), và kiểm tra containment nghiêm ngặt trong thư mục lưu trữ.
+* **Tự động xử lý trùng tên**: Nếu file đã tồn tại ở máy nhận, hệ thống tự động đổi tên dạng `document (1).pdf`, `document (2).pdf` thay vì ghi đè.
+* **Bộ đệm an toàn (64 KB Chunks)**: Sử dụng Java NIO `FileChannel` đọc/ghi tuần tự, không bao giờ nạp toàn bộ file vào RAM, tránh hiện tượng `OutOfMemoryError`.
+* **Phân tách luồng không block**: Tiến trình gửi/nhận chạy trên Virtual Thread độc lập; luồng đọc gói tin TCP được điều phối không làm chậm các gói `CHAT_MESSAGE`.
+
+---
+
 ## 📁 Cấu Trúc Dự Án (Project Structure)
 
 ```text
@@ -166,19 +213,20 @@ LANDrop/
 │       ├── protocol/       # Binary TCP Packet, Framing, Encoder, Decoder (V1)
 │       ├── peer/           # PeerConnection, PeerListener, Handshake
 │       ├── chat/           # ChatService, ChatMessage, ChatCli
-│       └── discovery/      # DiscoveryServer, DiscoveryClient, PeerRegistry
+│       ├── discovery/      # DiscoveryServer, DiscoveryClient, PeerRegistry
+│       └── transfer/       # FileTransferService, FileDataChunk, Messages, Utils
 │
 └── frontend/               # Module Frontend (JavaFX Desktop UI)
     ├── pom.xml
     └── src/main/
         ├── java/com/landrop/ui/
         │   ├── MainApp.java           # JavaFX Application Entry Point
-        │   ├── controllers/           # Setup, Main, Dashboard, Peers, Chat, Settings
+        │   ├── controllers/           # Setup, Main, Dashboard, Peers, Chat, Transfers, Settings
         │   ├── models/                # UI Data models & Observable properties
         │   ├── services/              # UIStateService (Bridge Network & JavaFX Thread)
         │   └── utils/                 # AlertUtils, UI Helpers
         └── resources/com/landrop/ui/
-            ├── *.fxml                 # Giao diện FXML (Setup, Main, Peers, Chat...)
+            ├── *.fxml                 # Giao diện FXML (Setup, Main, Peers, Chat, Transfers...)
             └── styles.css             # Theme màu sáng hiện đại (Indigo/Slate)
 ```
 
@@ -191,4 +239,5 @@ LANDrop/
 * [x] **Phase 3**: Real-time Bidirectional Chat (ChatService, Async Reader, ChatCli, `/ping`, `/help`, `/quit`)
 * [x] **Phase 4**: Centralized Discovery Server (PeerRegistry, Heartbeat, Timeout Eviction, DiscoveryClient)
 * [x] **Phase 5**: JavaFX Desktop User Interface (Modern Light Theme, Setup Screen, Dashboard, Peer Discovery View, Real-time Chat UI)
-* [ ] **Phase 6**: File Transfer & Chunking Protocol (Giai đoạn tiếp theo)
+* [x] **Phase 6**: Basic P2P File Transfer (Direct TCP Streaming, 64KB NIO Chunks, Safe Path Resolution, In-Chat Transfer Cards, Transfers History View)
+* [ ] **Phase 7**: Advanced Transfer Features (Chunk-level Checksums, Resume/Retry, Multi-peer Sharing - Giai đoạn tiếp theo)

@@ -1,10 +1,10 @@
 # LANDrop — Backend
 
 ## Phase
-Phase 2 — Custom TCP Protocol
+Phase 6 — Basic P2P File Transfer & Protocol Streaming Engine
 
 ## Objective
-The objective of Phase 2 is to replace raw String communication with a robust, structured binary packet protocol with headers, message typing, payload length validation, request ID correlation, and protection against TCP fragmentation and memory exhaustion.
+Provide high-throughput, low-latency, non-blocking direct P2P file streaming over existing TCP `PeerConnection` using Java NIO 64 KB chunking, atomic control packet handshakes (OFFER / REQUEST / ACK), and isolated binary payload framing (`FILE_DATA`).
 
 ## Protocol Wire Format
 ```text
@@ -18,66 +18,29 @@ The objective of Phase 2 is to replace raw String communication with a robust, s
 ```
 
 * **Version**: 1 byte (`CURRENT_VERSION = 1`)
-* **Message Type**: 1 byte (`HELLO`, `CHAT_MESSAGE`, `PING`, `PONG`, etc.)
+* **Message Type**: 1 byte (`HELLO`, `CHAT_MESSAGE`, `PING`, `PONG`, `FILE_OFFER=5`, `FILE_REQUEST=6`, `TRANSFER_ACK=9`, `FILE_DATA=17`)
 * **Payload Length**: 4 bytes (int, unsigned range bounded to `MAX_PAYLOAD_SIZE = 1 MB`)
 * **Request ID**: 8 bytes (long, monotonic request/response correlation)
-* **Payload**: UTF-8 bytes / raw binary data
+* **Payload**: UTF-8 bytes / JSON strings / binary chunk payloads
 
-## Requirements
-* Java 21 (JDK 21)
-* Apache Maven 3.9+
+### Binary FILE_DATA Payload Structure
+```text
++-------------------+--------------------+--------------------+--------------------+
+| transferIdLen (1B)| transferId (UTF-8) | chunkOffset (8B)   | chunkData (bytes)  |
++-------------------+--------------------+--------------------+--------------------+
+```
 
 ## Build & Test
-Run all unit and integration tests:
+Run all unit and integration tests (82 tests):
 
 ```bash
 mvn clean test
 ```
 
-Package the executable JAR:
-
-```bash
-mvn clean package
-```
-
-The output JAR is at `target/landrop-0.1.0-SNAPSHOT.jar`.
-
-## Run Server
-Start the peer in server mode on port 5002:
-
-```bash
-mvn exec:java -Dexec.mainClass="com.landrop.network.Main" -Dexec.args="server 5002"
-```
-
-Or run via packaged JAR:
-
-```bash
-java -jar target/landrop-0.1.0-SNAPSHOT.jar server 5002
-```
-
-## Run Client
-Connect to the peer server and execute the protocol flow (HELLO -> CHAT_MESSAGE -> PING/PONG):
-
-```bash
-mvn exec:java -Dexec.mainClass="com.landrop.network.Main" -Dexec.args="client localhost 5002"
-```
-
-Or with a custom chat message:
-
-```bash
-mvn exec:java -Dexec.mainClass="com.landrop.network.Main" -Dexec.args="client localhost 5002 'Xin chào LANDrop!'"
-```
-
-## Current Limitations (Phase 2)
-Phase 2 establishes the custom TCP binary packet protocol. It does **NOT** yet contain:
-* peer discovery
-* chat UI / JavaFX
-* file sharing & chunking
-* SHA-256 integrity verification
-* resume / retry
-* multi-peer download
-* SQLite
-* encryption
-
-## Next Phase
-**Phase 3 — File Chunking & Transfer Protocol**
+## Current Limitations & Roadmap
+Current Phase 6 delivers basic reliable streaming and safety protections (path traversal sanitization, auto duplicate renaming, non-blocking virtual threads, zero-byte file support).
+The following advanced features are planned for future phases:
+* SHA-256 integrity verification per chunk
+* Resume / retry interrupted transfers
+* Multi-peer parallel download
+* End-to-end encryption
