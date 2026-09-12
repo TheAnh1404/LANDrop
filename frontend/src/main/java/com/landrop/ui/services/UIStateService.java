@@ -315,6 +315,15 @@ public class UIStateService {
                 }
 
                 @Override
+                public void onTransferVerifying(FileTransfer transfer) {
+                    Platform.runLater(() -> {
+                        if (onFileTransferUpdatedCallback != null) {
+                            onFileTransferUpdatedCallback.accept(transfer);
+                        }
+                    });
+                }
+
+                @Override
                 public void onTransferCompleted(FileTransfer transfer) {
                     Platform.runLater(() -> {
                         if (onFileTransferUpdatedCallback != null) {

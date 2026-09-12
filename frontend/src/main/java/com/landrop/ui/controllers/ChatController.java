@@ -210,11 +210,13 @@ public class ChatController {
             progressBar.setMaxWidth(Double.MAX_VALUE);
             progressBar.getStyleClass().add("transfer-progress-bar");
 
-            Label progressDetail = new Label(String.format("%d%%   %s / %s   (%s)",
+            String detailStr = String.format("%d%%   %s / %s   (%s)   %s",
                     transfer.getProgressPercent(),
                     transfer.getFormattedTransferred(),
                     transfer.getFormattedSize(),
-                    transfer.getFormattedSpeed()));
+                    transfer.getChunkProgressText(),
+                    transfer.getFormattedSpeed());
+            Label progressDetail = new Label(detailStr);
             progressDetail.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748b;");
 
             Button cancelBtn = new Button("Cancel");
@@ -228,6 +230,16 @@ public class ChatController {
             progressRow.setAlignment(Pos.CENTER_LEFT);
 
             card.getChildren().addAll(progressBar, progressRow);
+
+        } else if (transfer.getStatus() == com.landrop.transfer.FileTransferStatus.VERIFYING) {
+            ProgressBar progressBar = new ProgressBar(-1.0);
+            progressBar.setMaxWidth(Double.MAX_VALUE);
+            progressBar.getStyleClass().add("transfer-progress-bar");
+
+            Label verifyLabel = new Label("Verifying SHA-256 integrity...");
+            verifyLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #d97706; -fx-font-weight: bold;");
+
+            card.getChildren().addAll(progressBar, verifyLabel);
 
         } else if (transfer.getStatus() == com.landrop.transfer.FileTransferStatus.PENDING) {
             if (transfer.getDirection() == com.landrop.transfer.FileTransferDirection.INCOMING) {
@@ -261,19 +273,26 @@ public class ChatController {
                 card.getChildren().add(waitingLabel);
             }
         } else if (transfer.getStatus() == com.landrop.transfer.FileTransferStatus.COMPLETED) {
-            HBox completedBox = new HBox(8.0);
-            completedBox.setAlignment(Pos.CENTER_LEFT);
+            VBox completedBox = new VBox(4.0);
+            HBox topRow = new HBox(8.0);
+            topRow.setAlignment(Pos.CENTER_LEFT);
             Label checkLabel = new Label("✓ Transfer completed");
             checkLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #10b981; -fx-font-weight: bold;");
-            completedBox.getChildren().add(checkLabel);
+            topRow.getChildren().add(checkLabel);
 
             if (transfer.getLocalPath() != null) {
                 Button openBtn = new Button("Open File");
                 openBtn.getStyleClass().add("secondary-button");
                 openBtn.setStyle("-fx-font-size: 10px; -fx-padding: 2px 8px;");
                 openBtn.setOnAction(e -> openFileSafely(transfer.getLocalPath()));
-                completedBox.getChildren().add(openBtn);
+                topRow.getChildren().add(openBtn);
             }
+
+            String hashInfo = "Integrity verified • SHA-256: " + transfer.getShortenedSha256();
+            Label hashLabel = new Label(hashInfo);
+            hashLabel.setStyle("-fx-font-size: 10px; -fx-text-fill: #64748b; -fx-font-family: monospace;");
+
+            completedBox.getChildren().addAll(topRow, hashLabel);
             card.getChildren().add(completedBox);
         } else if (transfer.getStatus() == com.landrop.transfer.FileTransferStatus.FAILED ||
                 transfer.getStatus() == com.landrop.transfer.FileTransferStatus.REJECTED ||

@@ -119,16 +119,24 @@ public class TransfersController {
         HBox.setHgrow(progressBox, Priority.ALWAYS);
         progressBox.setAlignment(Pos.CENTER_LEFT);
 
-        ProgressBar bar = new ProgressBar(transfer.getProgress());
+        ProgressBar bar = new ProgressBar(transfer.getStatus() == FileTransferStatus.VERIFYING ? -1.0 : transfer.getProgress());
         bar.setMaxWidth(Double.MAX_VALUE);
         bar.getStyleClass().add("transfer-progress-bar");
 
-        String progressText = String.format("%d%%  •  %s / %s",
-                transfer.getProgressPercent(),
-                transfer.getFormattedTransferred(),
-                transfer.getFormattedSize());
-        if (transfer.getStatus() == FileTransferStatus.TRANSFERRING && transfer.getSpeedBytesPerSec() > 0) {
-            progressText += "  •  " + transfer.getFormattedSpeed();
+        String progressText;
+        if (transfer.getStatus() == FileTransferStatus.VERIFYING) {
+            progressText = "Verifying SHA-256 integrity...";
+        } else if (transfer.getStatus() == FileTransferStatus.COMPLETED) {
+            progressText = "Integrity verified • SHA-256: " + transfer.getShortenedSha256();
+        } else {
+            progressText = String.format("%d%%  •  %s / %s  •  %s",
+                    transfer.getProgressPercent(),
+                    transfer.getFormattedTransferred(),
+                    transfer.getFormattedSize(),
+                    transfer.getChunkProgressText());
+            if (transfer.getStatus() == FileTransferStatus.TRANSFERRING && transfer.getSpeedBytesPerSec() > 0) {
+                progressText += "  •  " + transfer.getFormattedSpeed();
+            }
         }
 
         Label progressLabel = new Label(progressText);

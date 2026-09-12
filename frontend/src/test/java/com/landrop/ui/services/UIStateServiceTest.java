@@ -158,4 +158,74 @@ public class UIStateServiceTest {
             discoveryServer.stop();
         }
     }
+
+    @Test
+    void testP2PFileTransferFlow() throws Exception {
+        DiscoveryServer discoveryServer = new DiscoveryServer(0);
+        discoveryServer.startAsync();
+        assertTrue(discoveryServer.awaitReady(5, TimeUnit.SECONDS));
+        int discPort = discoveryServer.getPort();
+
+        UIStateService peerA = new UIStateService();
+        UIStateService peerB = new UIStateService();
+
+        java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory("landrop_ui_test_");
+        java.nio.file.Path sampleFile = tempDir.resolve("sample.txt");
+        java.nio.file.Files.writeString(sampleFile, "LANDrop Phase 7 UI File Transfer Verification");
+
+        try {
+            peerA.connectAndRegister("Peer A", 0, "127.0.0.1", discPort, "127.0.0.1").get(5, TimeUnit.SECONDS);
+            peerB.connectAndRegister("Peer B", 0, "127.0.0.1", discPort, "127.0.0.1").get(5, TimeUnit.SECONDS);
+
+            peerA.refreshPeerList().get(5, TimeUnit.SECONDS);
+            PeerInfo peerBInfo = peerA.getDiscoveredPeers().getFirst();
+
+            peerA.connectToPeer(peerBInfo).get(5, TimeUnit.SECONDS);
+            Thread.sleep(500);
+
+            CountDownLatch offerLatch = new CountDownLatch(1);
+            CountDownLatch completeLatchB = new CountDownLatch(1);
+            java.util.concurrent.atomic.AtomicReference<com.landrop.transfer.FileTransfer> offeredTransferRef = new java.util.concurrent.atomic.AtomicReference<>();
+
+            peerB.setOnFileTransferOfferedCallback(transfer -> {
+                offeredTransferRef.set(transfer);
+                offerLatch.countDown();
+            });
+
+            peerB.setOnFileTransferUpdatedCallback(transfer -> {
+                if (transfer.getStatus() == com.landrop.transfer.FileTransferStatus.COMPLETED) {
+                    completeLatchB.countDown();
+                }
+            });
+
+            // Peer A offers file
+            com.landrop.transfer.FileTransfer outgoing = peerA.offerFile(sampleFile.toFile()).get(5, TimeUnit.SECONDS);
+            assertNotNull(outgoing);
+
+            assertTrue(offerLatch.await(5, TimeUnit.SECONDS));
+            com.landrop.transfer.FileTransfer offered = offeredTransferRef.get();
+            assertNotNull(offered);
+            assertEquals("sample.txt", offered.getFileName());
+            assertNotNull(offered.getFileSha256());
+
+            // Peer B accepts
+            peerB.acceptTransfer(offered.getTransferId()).get(5, TimeUnit.SECONDS);
+
+            assertTrue(completeLatchB.await(10, TimeUnit.SECONDS));
+            assertEquals(com.landrop.transfer.FileTransferStatus.COMPLETED, offered.getStatus());
+            assertTrue(offered.isHashVerified());
+
+        } finally {
+            peerA.shutdown();
+            peerB.shutdown();
+            discoveryServer.stop();
+            try {
+                java.nio.file.Files.walk(tempDir)
+                        .sorted(java.util.Comparator.reverseOrder())
+                        .map(java.nio.file.Path::toFile)
+                        .forEach(java.io.File::delete);
+            } catch (Exception ignored) {
+            }
+        }
+    }
 }

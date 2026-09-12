@@ -551,3 +551,7 @@
 .transfer-status-transferring {
     -fx-text-fill: #4f46e5;
 }
+
+.transfer-status-verifying {
+    -fx-text-fill: #d97706;
+}
