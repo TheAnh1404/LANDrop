@@ -1,0 +1,35 @@
+{
+  "users": [
+    {"id":"user-avery","displayName":"Avery Chen","email":"avery@example.test","avatarUrl":null,"createdAt":"2026-08-01T09:00:00Z","updatedAt":"2026-08-01T09:00:00Z"},
+    {"id":"user-jules","displayName":"Jules Rivera","email":"jules@example.test","avatarUrl":null,"createdAt":"2026-08-01T09:01:00Z","updatedAt":"2026-08-01T09:01:00Z"},
+    {"id":"user-sam","displayName":"Sam Patel","email":null,"avatarUrl":null,"createdAt":"2026-08-01T09:02:00Z","updatedAt":"2026-08-01T09:02:00Z"}
+  ],
+  "workspaces": [
+    {"id":"workspace-demo","name":"LANDrop Demo","ownerId":"user-avery","description":"Fictional development data for the Phase 14 contract.","createdAt":"2026-08-01T10:00:00Z","updatedAt":"2026-08-01T10:00:00Z"}
+  ],
+  "members": [
+    {"id":"member-avery","workspaceId":"workspace-demo","userId":"user-avery","role":"OWNER","createdAt":"2026-08-01T10:00:00Z","updatedAt":"2026-08-01T10:00:00Z"},
+    {"id":"member-jules","workspaceId":"workspace-demo","userId":"user-jules","role":"ADMIN","createdAt":"2026-08-01T10:01:00Z","updatedAt":"2026-08-01T10:01:00Z"},
+    {"id":"member-sam","workspaceId":"workspace-demo","userId":"user-sam","role":"MEMBER","createdAt":"2026-08-01T10:02:00Z","updatedAt":"2026-08-01T10:02:00Z"}
+  ],
+  "channels": [
+    {"id":"channel-general","workspaceId":"workspace-demo","name":"general","description":"Shared conversation.","createdAt":"2026-08-01T10:05:00Z","updatedAt":"2026-08-01T10:05:00Z"},
+    {"id":"channel-design","workspaceId":"workspace-demo","name":"design","description":"Design references.","createdAt":"2026-08-01T10:06:00Z","updatedAt":"2026-08-01T10:06:00Z"},
+    {"id":"channel-empty","workspaceId":"workspace-demo","name":"new-channel","description":null,"createdAt":"2026-08-01T10:07:00Z","updatedAt":"2026-08-01T10:07:00Z"}
+  ],
+  "messages": [
+    {"id":"message-welcome","channelId":"channel-general","senderId":"user-avery","content":"Welcome to the LANDrop development workspace.","type":"TEXT","replyToId":null,"fileId":null,"createdAt":"2026-08-01T11:00:00Z","updatedAt":"2026-08-01T11:00:00Z"},
+    {"id":"message-reply","channelId":"channel-general","senderId":"user-jules","content":"The shared guide is ready for review.","type":"TEXT","replyToId":"message-welcome","fileId":null,"createdAt":"2026-08-01T11:01:00Z","updatedAt":"2026-08-01T11:01:00Z"},
+    {"id":"message-file","channelId":"channel-general","senderId":"user-sam","content":"Reference guide metadata.","type":"FILE","replyToId":null,"fileId":"file-guide","createdAt":"2026-08-01T11:02:00Z","updatedAt":"2026-08-01T11:02:00Z"},
+    {"id":"message-sketch","channelId":"channel-design","senderId":"user-jules","content":"","type":"FILE","replyToId":null,"fileId":"file-sketch","createdAt":"2026-08-01T11:03:00Z","updatedAt":"2026-08-01T11:03:00Z"}
+  ],
+  "folders": [
+    {"id":"folder-shared","workspaceId":"workspace-demo","parentId":null,"name":"Shared","createdById":"user-avery","createdAt":"2026-08-01T10:10:00Z","updatedAt":"2026-08-01T10:10:00Z"},
+    {"id":"folder-design","workspaceId":"workspace-demo","parentId":"folder-shared","name":"Design","createdById":"user-jules","createdAt":"2026-08-01T10:11:00Z","updatedAt":"2026-08-01T10:11:00Z"}
+  ],
+  "files": [
+    {"id":"file-guide","workspaceId":"workspace-demo","folderId":"folder-shared","uploadedById":"user-sam","name":"reference-guide.pdf","mimeType":"application/pdf","sizeBytes":"4096","sha256":null,"createdAt":"2026-08-01T10:20:00Z","updatedAt":"2026-08-01T10:20:00Z"},
+    {"id":"file-sketch","workspaceId":"workspace-demo","folderId":"folder-design","uploadedById":"user-jules","name":"layout-sketch.png","mimeType":"image/png","sizeBytes":"8192","sha256":null,"createdAt":"2026-08-01T10:21:00Z","updatedAt":"2026-08-01T10:21:00Z"},
+    {"id":"file-notes","workspaceId":"workspace-demo","folderId":null,"uploadedById":"user-avery","name":"notes.txt","mimeType":"text/plain","sizeBytes":"128","sha256":null,"createdAt":"2026-08-01T10:22:00Z","updatedAt":"2026-08-01T10:22:00Z"}
+  ]
+}
