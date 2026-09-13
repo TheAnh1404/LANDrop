@@ -1,5 +1,6 @@
 package com.landrop.database.seed;
 
+import com.landrop.auth.security.PasswordHasher;
 import com.landrop.database.DatabaseManager;
 import com.landrop.database.model.*;
 import com.landrop.database.repository.*;
@@ -50,13 +51,16 @@ public final class DatabaseSeeder {
         userRepository.deleteAll();
 
         // 2. Deterministic Users
-        AppLogger.info(TAG,"Seeding Users...");
+        AppLogger.info(TAG,"Seeding Users with default password 'Password123!'...");
+        String defaultPasswordHash = PasswordHasher.hash("Password123!");
+
         User alice = userRepository.create(new User(
             UUID.fromString("11111111-1111-4111-8111-111111111111"),
             "alice@landrop.local",
             "alice",
             "Alice Vance",
             "https://avatars.landrop.local/alice.png",
+            defaultPasswordHash,
             Instant.now(),
             Instant.now()
         ));
@@ -67,6 +71,7 @@ public final class DatabaseSeeder {
             "bob",
             "Bob Chen",
             "https://avatars.landrop.local/bob.png",
+            defaultPasswordHash,
             Instant.now(),
             Instant.now()
         ));
@@ -77,6 +82,7 @@ public final class DatabaseSeeder {
             "charlie",
             "Charlie Kim",
             "https://avatars.landrop.local/charlie.png",
+            defaultPasswordHash,
             Instant.now(),
             Instant.now()
         ));
@@ -87,6 +93,7 @@ public final class DatabaseSeeder {
             "dana",
             "Dana Scully",
             "https://avatars.landrop.local/dana.png",
+            defaultPasswordHash,
             Instant.now(),
             Instant.now()
         ));

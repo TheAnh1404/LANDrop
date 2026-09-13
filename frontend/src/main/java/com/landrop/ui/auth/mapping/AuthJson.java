@@ -59,10 +59,13 @@ public final class AuthJson {
         if (json == null) throw new IllegalArgumentException("Authentication response is required");
         try {
             JsonNode root = JSON.readTree(json);
-            if (root == null || !root.isObject() || !root.path("data").isObject()) {
-                throw new IllegalArgumentException("Authentication response must contain an object data field");
+            if (root == null || !root.isObject()) {
+                throw new IllegalArgumentException("Authentication response must be an object");
             }
-            return root.path("data");
+            if (root.has("data") && root.path("data").isObject()) {
+                return root.path("data");
+            }
+            return root;
         } catch (JsonProcessingException e) {
             throw new IllegalArgumentException("Malformed authentication response", e);
         }

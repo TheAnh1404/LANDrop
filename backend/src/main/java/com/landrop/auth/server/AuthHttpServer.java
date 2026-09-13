@@ -12,8 +12,12 @@ import com.landrop.auth.config.AuthConfig;
 import com.landrop.auth.dto.*;
 import com.landrop.auth.exception.AuthException;
 import com.landrop.auth.exception.ValidationException;
+import com.landrop.auth.repository.RefreshTokenRepository;
 import com.landrop.auth.security.JwtClaims;
+import com.landrop.auth.security.JwtService;
 import com.landrop.auth.service.AuthService;
+import com.landrop.database.DatabaseManager;
+import com.landrop.database.repository.UserRepository;
 import com.landrop.util.AppLogger;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -297,5 +301,47 @@ public class AuthHttpServer {
 
         ErrorResponse err = new ErrorResponse(errorName, message != null ? message : errorName, status);
         sendJsonResponse(exchange, status, err);
+    }
+
+    public static void main(String[] args) {
+        try {
+            DatabaseManager dbManager = DatabaseManager.getInstance();
+            if (!dbManager.testConnection()) {
+                System.err.println("Database connection failed. Please verify your DATABASE_URL in .env");
+                System.exit(1);
+            }
+
+            UserRepository userRepository = new UserRepository(dbManager);
+            RefreshTokenRepository refreshTokenRepository = new RefreshTokenRepository(dbManager);
+            JwtService jwtService = new JwtService(
+                AuthConfig.getJwtAccessSecret(),
+                AuthConfig.getJwtRefreshSecret(),
+                AuthConfig.getAccessTokenExpirySeconds(),
+                AuthConfig.getRefreshTokenExpirySeconds()
+            );
+            AuthService authService = new AuthService(userRepository, refreshTokenRepository, jwtService);
+            AuthMiddleware authMiddleware = new AuthMiddleware(jwtService);
+
+            int port = AuthConfig.getAuthPort();
+            AuthHttpServer server = new AuthHttpServer(port, authService, authMiddleware);
+            server.start();
+
+            System.out.println("==================================================");
+            System.out.println("  LANDrop Authentication Server (Phase 15A)");
+            System.out.println("  Listening on http://localhost:" + server.getPort());
+            System.out.println("==================================================");
+
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                System.out.println("Stopping Auth Server...");
+                server.stop(0);
+                try {
+                    dbManager.close();
+                } catch (Exception ignored) {}
+            }));
+        } catch (Exception e) {
+            AppLogger.error(TAG, "Failed to start Auth HTTP Server", e);
+            System.err.println("Fatal: " + e.getMessage());
+            System.exit(1);
+        }
     }
 }
