@@ -59,7 +59,7 @@ public class MultiPeerDownload {
         this.totalChunks = FileChunk.calculateTotalChunks(fileSize, this.chunkSize);
         this.expectedSha256 = Objects.requireNonNull(expectedSha256, "expectedSha256 cannot be null");
         this.destinationPath = Objects.requireNonNull(destinationPath, "destinationPath cannot be null");
-        this.partialFilePath = destinationPath.resolveSibling(fileName + ".landrop.part");
+        this.partialFilePath = destinationPath.resolveSibling(destinationPath.getFileName().toString() + ".landrop.part");
 
         this.chunkManager = new ChunkManager(this.totalChunks);
         this.chunkScheduler = new ChunkScheduler();

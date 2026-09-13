@@ -59,6 +59,8 @@ public class PeerConnection implements AutoCloseable {
 
     private volatile String localPeerName = "Peer";
     private volatile String remotePeerName = "Unknown";
+    private volatile ConnectionPurpose purpose = ConnectionPurpose.CHAT;
+    private volatile ConnectionPurpose remotePurpose = ConnectionPurpose.CHAT;
     private volatile boolean running = false;
 
     private record PingTracker(long startNano, CompletableFuture<Double> future) {}
@@ -123,7 +125,7 @@ public class PeerConnection implements AutoCloseable {
      * @throws IOException if connection fails
      */
     public static PeerConnection connectTo(String host, int port) throws IOException {
-        return connectTo(host, port, 5000);
+        return connectTo(host, port, com.landrop.config.AppConfig.getConnectTimeoutMs());
     }
 
     /**
@@ -233,13 +235,25 @@ public class PeerConnection implements AutoCloseable {
      * Handles incoming HELLO packet.
      */
     private void handleIncomingHello(Packet packet) {
-        String receivedPeerName = extractPeerName(packet.payloadAsString());
+        String raw = packet.payloadAsString();
+        ConnectionPurpose detectedPurpose = ConnectionPurpose.CHAT;
+        String peerName = raw;
+        if (raw != null && raw.startsWith("FILE_TRANSFER|")) {
+            detectedPurpose = ConnectionPurpose.FILE_TRANSFER;
+            peerName = raw.substring("FILE_TRANSFER|".length());
+        } else if (raw != null && raw.startsWith("PURPOSE:FILE_TRANSFER|")) {
+            detectedPurpose = ConnectionPurpose.FILE_TRANSFER;
+            peerName = raw.substring("PURPOSE:FILE_TRANSFER|".length());
+        }
+        this.remotePurpose = detectedPurpose;
+        String receivedPeerName = extractPeerName(peerName);
         this.remotePeerName = receivedPeerName;
 
         // If we have not sent our HELLO response yet, send it back with matching requestId
         if (helloSent.compareAndSet(false, true)) {
             try {
-                Packet helloResp = Packet.text(MessageType.HELLO, packet.getRequestId(), localPeerName);
+                String respPayload = (this.purpose == ConnectionPurpose.FILE_TRANSFER ? "FILE_TRANSFER|" : "") + localPeerName;
+                Packet helloResp = Packet.text(MessageType.HELLO, packet.getRequestId(), respPayload);
                 send(helloResp);
             } catch (IOException e) {
                 notifyError(e);
@@ -248,6 +262,7 @@ public class PeerConnection implements AutoCloseable {
 
         transitionState(ConnectionState.READY);
         readyLatch.countDown();
+        com.landrop.util.AppLogger.debug("P2P", "Handshake completed: remotePeerName=" + receivedPeerName + " purpose=" + detectedPurpose);
     }
 
     /**
@@ -295,16 +310,29 @@ public class PeerConnection implements AutoCloseable {
     }
 
     /**
-     * Initiates the protocol HELLO handshake with the specified local peer name.
+     * Initiates the protocol HELLO handshake with the specified local peer name using the configured purpose.
      *
      * @param localName the name identifying this peer
      * @throws IOException if network transmission fails
      */
     public void initiateHandshake(String localName) throws IOException {
+        initiateHandshake(localName, this.purpose);
+    }
+
+    /**
+     * Initiates the protocol HELLO handshake with the specified local peer name and explicit connection purpose.
+     *
+     * @param localName the name identifying this peer
+     * @param purpose connection purpose (CHAT or FILE_TRANSFER)
+     * @throws IOException if network transmission fails
+     */
+    public void initiateHandshake(String localName, ConnectionPurpose purpose) throws IOException {
+        this.purpose = purpose != null ? purpose : ConnectionPurpose.CHAT;
         this.localPeerName = localName != null && !localName.isBlank() ? localName : "Peer";
         if (helloSent.compareAndSet(false, true)) {
             long reqId = requestIdGenerator.nextId();
-            Packet helloPacket = Packet.text(MessageType.HELLO, reqId, this.localPeerName);
+            String payload = (this.purpose == ConnectionPurpose.FILE_TRANSFER ? "FILE_TRANSFER|" : "") + this.localPeerName;
+            Packet helloPacket = Packet.text(MessageType.HELLO, reqId, payload);
             send(helloPacket);
         }
     }
@@ -403,6 +431,22 @@ public class PeerConnection implements AutoCloseable {
         return remotePeerName;
     }
 
+    public ConnectionPurpose getPurpose() {
+        return purpose;
+    }
+
+    public void setPurpose(ConnectionPurpose purpose) {
+        this.purpose = purpose != null ? purpose : ConnectionPurpose.CHAT;
+    }
+
+    public ConnectionPurpose getRemotePurpose() {
+        return remotePurpose;
+    }
+
+    public void setRemotePurpose(ConnectionPurpose remotePurpose) {
+        this.remotePurpose = remotePurpose != null ? remotePurpose : ConnectionPurpose.CHAT;
+    }
+
     public RequestIdGenerator getRequestIdGenerator() {
         return requestIdGenerator;
     }
@@ -469,6 +513,7 @@ public class PeerConnection implements AutoCloseable {
         }
 
         if (previous != ConnectionState.DISCONNECTED) {
+            com.landrop.util.AppLogger.debug("P2P", "Peer connection disconnected: " + remotePeerName + " (id=" + connectionId + ")");
             notifyDisconnected();
         }
     }

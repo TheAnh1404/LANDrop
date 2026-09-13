@@ -115,7 +115,6 @@ public class MultiPeerDownloadCoordinator implements AutoCloseable {
 
         String peerId = peerState.getPeerId();
         peerConnections.put(peerId, connection);
-        download.registerSourcePeer(peerState);
 
         // Register CHUNK_RESPONSE handler to route responses into pendingChunkResponses
         connection.registerHandler(MessageType.CHUNK_RESPONSE, packet -> {
@@ -131,19 +130,28 @@ public class MultiPeerDownloadCoordinator implements AutoCloseable {
             }
         });
 
-        // If download already in progress, start worker for this newly added peer
-        if (partialFileChannel != null && partialFileChannel.isOpen() && running.get()) {
-            PeerDownloadWorker worker = new PeerDownloadWorker(
-                    download,
-                    peerState,
-                    connection,
-                    partialFileChannel,
-                    pendingChunkResponses,
-                    this::scheduleWork
-            );
-            workers.put(peerId, worker);
-            worker.start();
-            scheduleWork();
+        synchronized (scheduleLock) {
+            // 1. If download already in progress, start worker for this newly added peer FIRST
+            if (partialFileChannel != null && partialFileChannel.isOpen() && running.get()) {
+                PeerDownloadWorker worker = new PeerDownloadWorker(
+                        download,
+                        peerState,
+                        connection,
+                        partialFileChannel,
+                        pendingChunkResponses,
+                        this::scheduleWork
+                );
+                workers.put(peerId, worker);
+                worker.start();
+            }
+
+            // 2. Register source peer only after worker is present in workers map
+            download.registerSourcePeer(peerState);
+
+            // 3. Schedule next assignments with the newly added peer ready
+            if (partialFileChannel != null && partialFileChannel.isOpen() && running.get()) {
+                scheduleWorkInternal();
+            }
         }
     }
 
@@ -185,31 +193,33 @@ public class MultiPeerDownloadCoordinator implements AutoCloseable {
         System.out.println("[MULTI-PEER] Download started transferId=" + download.getTransferId() +
                 " sources=" + connectedPeers.size() + " totalChunks=" + download.getTotalChunks());
 
-        // 2. Start a worker for each connected source peer
-        for (PeerDownloadState peer : connectedPeers) {
-            PeerConnection conn = peerConnections.get(peer.getPeerId());
-            if (conn != null && conn.isConnected()) {
-                PeerDownloadWorker worker = new PeerDownloadWorker(
-                        download,
-                        peer,
-                        conn,
-                        partialFileChannel,
-                        pendingChunkResponses,
-                        this::scheduleWork
-                );
-                workers.put(peer.getPeerId(), worker);
-                worker.start();
+        synchronized (scheduleLock) {
+            // 2. Start a worker for each connected source peer
+            for (PeerDownloadState peer : connectedPeers) {
+                PeerConnection conn = peerConnections.get(peer.getPeerId());
+                if (conn != null && conn.isConnected()) {
+                    PeerDownloadWorker worker = new PeerDownloadWorker(
+                            download,
+                            peer,
+                            conn,
+                            partialFileChannel,
+                            pendingChunkResponses,
+                            this::scheduleWork
+                    );
+                    workers.put(peer.getPeerId(), worker);
+                    worker.start();
+                }
             }
-        }
 
-        // Special case: 0-byte file completes immediately
-        if (download.getFileSize() == 0 || download.getTotalChunks() == 0) {
-            finalizeAndVerify();
-            return;
-        }
+            // Special case: 0-byte file completes immediately
+            if (download.getFileSize() == 0 || download.getTotalChunks() == 0) {
+                finalizeAndVerify();
+                return;
+            }
 
-        // 3. Initial chunk scheduling
-        scheduleWork();
+            // 3. Initial chunk scheduling
+            scheduleWorkInternal();
+        }
     }
 
     /**
@@ -222,30 +232,51 @@ public class MultiPeerDownloadCoordinator implements AutoCloseable {
         }
 
         synchronized (scheduleLock) {
-            ChunkManager chunkManager = download.getChunkManager();
-            ChunkScheduler chunkScheduler = download.getChunkScheduler();
+            scheduleWorkInternal();
+        }
+    }
 
-            // Check if all chunks are completed!
-            if (chunkManager.isComplete()) {
-                finalizeAndVerify();
-                return;
+    private void scheduleWorkInternal() {
+        if (!running.get() || download.isTerminal()) {
+            return;
+        }
+
+        ChunkManager chunkManager = download.getChunkManager();
+        ChunkScheduler chunkScheduler = download.getChunkScheduler();
+
+        // Check if all chunks are completed!
+        if (chunkManager.isComplete()) {
+            finalizeAndVerify();
+            return;
+        }
+
+        // Check if all peers have disconnected
+        List<PeerDownloadState> connected = download.getConnectedSourcePeers();
+        if (connected.isEmpty()) {
+            fail("All source peers disconnected before download completed");
+            return;
+        }
+
+        // Distribute missing chunks across available workers
+        List<ChunkScheduler.ChunkAssignment> assignments =
+                chunkScheduler.scheduleNextAssignments(chunkManager, download.getSourcePeers());
+
+        for (ChunkScheduler.ChunkAssignment assignment : assignments) {
+            PeerDownloadWorker worker = workers.get(assignment.peerId());
+            boolean enqueued = false;
+            if (worker != null) {
+                enqueued = worker.enqueueChunk(assignment.chunkIndex());
+                if (enqueued && com.landrop.util.AppLogger.isDebugEnabled()) {
+                    com.landrop.util.AppLogger.debug("MULTI-PEER", "Assigned chunk " + assignment.chunkIndex() + " to peer " + assignment.peerId());
+                }
             }
 
-            // Check if all peers have disconnected
-            List<PeerDownloadState> connected = download.getConnectedSourcePeers();
-            if (connected.isEmpty()) {
-                fail("All source peers disconnected before download completed");
-                return;
-            }
-
-            // Distribute missing chunks across available workers
-            List<ChunkScheduler.ChunkAssignment> assignments =
-                    chunkScheduler.scheduleNextAssignments(chunkManager, download.getSourcePeers());
-
-            for (ChunkScheduler.ChunkAssignment assignment : assignments) {
-                PeerDownloadWorker worker = workers.get(assignment.peerId());
-                if (worker != null) {
-                    worker.enqueueChunk(assignment.chunkIndex());
+            if (!enqueued) {
+                // Safeguard: rollback assignment so the chunk is not orphaned in REQUESTED state
+                chunkManager.markFailed(assignment.chunkIndex(), assignment.peerId());
+                PeerDownloadState peer = download.getSourcePeer(assignment.peerId());
+                if (peer != null) {
+                    peer.decrementActiveChunks();
                 }
             }
         }

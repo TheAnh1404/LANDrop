@@ -76,10 +76,11 @@ public class PeerDownloadWorker implements AutoCloseable {
         return chunkTimeoutMs;
     }
 
-    public void enqueueChunk(int chunkIndex) {
+    public boolean enqueueChunk(int chunkIndex) {
         if (running.get() && peerState.isConnected()) {
-            chunkQueue.offer(chunkIndex);
+            return chunkQueue.offer(chunkIndex);
         }
+        return false;
     }
 
     public void start() {
@@ -172,6 +173,10 @@ public class PeerDownloadWorker implements AutoCloseable {
                     download.recordBytesReceived(resp.chunkLength());
                     download.notifyChunkCompleted(chunkIndex, peerState.getPeerId(),
                             download.getCompletedChunkCount(), download.getTotalChunks());
+                    if (com.landrop.util.AppLogger.isDebugEnabled()) {
+                        com.landrop.util.AppLogger.debug("WORKER", "Chunk " + chunkIndex + " completed from " +
+                                peerState.getPeerDisplayName() + " (" + download.getCompletedChunkCount() + "/" + download.getTotalChunks() + ")");
+                    }
                 } else {
                     peerState.decrementActiveChunks();
                 }

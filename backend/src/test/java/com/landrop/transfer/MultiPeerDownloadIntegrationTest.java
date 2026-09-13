@@ -396,7 +396,6 @@ public class MultiPeerDownloadIntegrationTest {
 
         coordinator.start();
 
-        // Wait until Peer A downloads 2 chunks
         assertTrue(twoChunksFromA.await(5, TimeUnit.SECONDS));
 
         // Now Peer B joins mid-download!
@@ -467,5 +466,42 @@ public class MultiPeerDownloadIntegrationTest {
         assertEquals(MultiPeerDownloadStatus.FAILED, coordinator.getDownload().getStatus());
         assertTrue(coordinator.getDownload().getErrorMessage().contains("All source peers disconnected") ||
                 coordinator.getDownload().getErrorMessage().contains("disconnected"));
+    }
+
+    @Test
+    @DisplayName("Edge Case: 0-byte file multi-peer download completes immediately with verified SHA-256")
+    void testZeroByteFileMultiPeerDownload(@TempDir Path tempDir) throws Exception {
+        Path emptySourceFile = tempDir.resolve("empty.bin");
+        Files.createFile(emptySourceFile);
+        String expectedHash = FileTransferUtils.calculateSha256(emptySourceFile);
+
+        PeerNode nodeA = createPeer("peer-a", "Peer A", tempDir.resolve("dirA"), 16 * 1024);
+        nodeA.service.shareFile(emptySourceFile);
+
+        Path downloadDir = tempDir.resolve("downloads_empty");
+        FileTransferService receiverService = new FileTransferService(null, "receiver", "Receiver", downloadDir, 16 * 1024);
+        services.add(receiverService);
+
+        PeerConnection connToA = connectPeers(nodeA, "Receiver");
+
+        MultiPeerDownloadCoordinator coordinator =
+                receiverService.createMultiPeerDownload("empty.bin", 0L, expectedHash);
+
+        FileQueryResponseMessage respA = coordinator.queryFileAvailability(connToA, 3000).get(5, TimeUnit.SECONDS);
+        assertTrue(respA.isAvailable());
+
+        PeerDownloadState stateA = new PeerDownloadState("peer-a", "Peer A", null);
+        coordinator.addSourcePeer(stateA, connToA);
+
+        coordinator.start();
+
+        MultiPeerDownload result = coordinator.getCompletionFuture().get(5, TimeUnit.SECONDS);
+        assertEquals(MultiPeerDownloadStatus.COMPLETED, result.getStatus());
+        assertTrue(result.isHashVerified());
+        assertEquals(expectedHash, result.getVerifiedSha256());
+
+        Path finalFile = result.getDestinationPath();
+        assertTrue(Files.exists(finalFile));
+        assertEquals(0L, Files.size(finalFile));
     }
 }
