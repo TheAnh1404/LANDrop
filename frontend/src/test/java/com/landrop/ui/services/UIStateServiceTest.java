@@ -22,8 +22,9 @@ public class UIStateServiceTest {
     static void initJavaFX() {
         try {
             Platform.startup(() -> {});
+            Platform.setImplicitExit(false);
         } catch (IllegalStateException ignored) {
-            // Already started
+            Platform.setImplicitExit(false);
         }
     }
 
@@ -218,6 +219,50 @@ public class UIStateServiceTest {
         } finally {
             peerA.shutdown();
             peerB.shutdown();
+            discoveryServer.stop();
+            try {
+                java.nio.file.Files.walk(tempDir)
+                        .sorted(java.util.Comparator.reverseOrder())
+                        .map(java.nio.file.Path::toFile)
+                        .forEach(java.io.File::delete);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    @Test
+    void testStartupFileTransferServiceLifecycle() throws Exception {
+        DiscoveryServer discoveryServer = new DiscoveryServer(0);
+        discoveryServer.startAsync();
+        assertTrue(discoveryServer.awaitReady(5, TimeUnit.SECONDS));
+        int discPort = discoveryServer.getPort();
+
+        java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory("landrop_lifecycle_test_");
+        java.nio.file.Path sample = tempDir.resolve("auto_shared.txt");
+        java.nio.file.Files.writeString(sample, "Auto scanned on startup");
+
+        UIStateService peer = new UIStateService();
+        peer.setConfiguredDownloadDirectory(tempDir);
+
+        try {
+            // Register with discovery
+            peer.connectAndRegister("Peer Startup", 0, "127.0.0.1", discPort, "127.0.0.1").get(5, TimeUnit.SECONDS);
+
+            // Verify FileTransferService initialized before any 1-to-1 P2P connect
+            assertNotNull(peer.getFileTransferService(), "FileTransferService must be non-null after startup");
+            assertNull(peer.getFileTransferService().getConnection(), "No 1-to-1 connection required at startup");
+            assertEquals(P2PStatus.DISCONNECTED, peer.p2pStatusProperty().get());
+
+            // Give async scan a moment to finish
+            Thread.sleep(300);
+            assertTrue(peer.getFileTransferService().getSharedFiles().size() >= 1, "Startup scan must have indexed shared file");
+
+            // Disconnect P2P should not nullify FileTransferService
+            peer.disconnectP2P();
+            assertNotNull(peer.getFileTransferService(), "FileTransferService must survive disconnectP2P");
+
+        } finally {
+            peer.shutdown();
             discoveryServer.stop();
             try {
                 java.nio.file.Files.walk(tempDir)

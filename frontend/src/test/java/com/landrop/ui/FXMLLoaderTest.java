@@ -20,8 +20,9 @@ public class FXMLLoaderTest {
     static void initJavaFX() {
         try {
             Platform.startup(() -> {});
+            Platform.setImplicitExit(false);
         } catch (IllegalStateException ignored) {
-            // Already started
+            Platform.setImplicitExit(false);
         }
     }
 

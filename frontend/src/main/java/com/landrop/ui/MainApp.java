@@ -96,6 +96,17 @@ public class MainApp extends Application {
         } else if (System.getProperty("auto.connect") != null) {
             this.configuredAutoConnect = Boolean.parseBoolean(stripQuotes(System.getProperty("auto.connect")));
         }
+
+        // 7. Custom Download Directory
+        String customDownloadDir = null;
+        if (named.containsKey("download-dir")) {
+            customDownloadDir = stripQuotes(named.get("download-dir"));
+        } else if (System.getProperty("download.dir") != null) {
+            customDownloadDir = stripQuotes(System.getProperty("download.dir"));
+        }
+        if (customDownloadDir != null && !customDownloadDir.isBlank()) {
+            this.stateService.setConfiguredDownloadDirectory(java.nio.file.Paths.get(customDownloadDir));
+        }
     }
 
     private String stripQuotes(String val) {

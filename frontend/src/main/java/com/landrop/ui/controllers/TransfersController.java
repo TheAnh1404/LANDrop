@@ -407,26 +407,27 @@ public class TransfersController {
 
         dialog.setResultConverter(dialogButton -> {
             if (dialogButton == downloadButtonType) {
+                String name = fileNameField.getText() != null ? fileNameField.getText().trim() : "";
+                long size;
                 try {
-                    String name = fileNameField.getText().trim();
-                    long size = Long.parseLong(fileSizeField.getText().trim());
-                    String hash = sha256Field.getText().trim();
-                    return new MultiPeerDownloadRequest(name, size, hash);
+                    size = Long.parseLong(fileSizeField.getText() != null ? fileSizeField.getText().trim() : "");
                 } catch (Exception ex) {
-                    return null;
+                    size = -1L;
                 }
+                String hash = sha256Field.getText() != null ? sha256Field.getText().trim() : "";
+                return new MultiPeerDownloadRequest(name, size, hash);
             }
             return null;
         });
 
         var result = dialog.showAndWait();
         result.ifPresent(req -> {
-            if (req.name().isBlank() || req.size() <= 0 || req.hash().length() != 64) {
-                AlertUtils.showError("Invalid Input", "Validation Error", "Please provide a valid file name, positive size in bytes, and 64-character SHA-256 hash.");
+            if (req.name().isBlank() || req.size() <= 0 || !com.landrop.transfer.FileTransferUtils.isValidSha256(req.hash())) {
+                AlertUtils.showError("Invalid Input", "Validation Error", "Please provide a valid file name, positive size in bytes, and a 64-character hex SHA-256 hash.");
                 return;
             }
 
-            stateService.startMultiPeerDownload(req.name(), req.size(), req.hash())
+            stateService.startMultiPeerDownload(req.name(), req.size(), req.hash().toLowerCase())
                     .thenAccept(dl -> Platform.runLater(this::renderTransfers))
                     .exceptionally(ex -> {
                         Platform.runLater(() -> AlertUtils.showError("Multi-Peer Error", "Could not start download", ex.getMessage()));
