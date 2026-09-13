@@ -77,7 +77,7 @@ public class DatabaseIntegrationTest {
     void testMigrationSucceeds() throws Exception {
         migrator.migrate();
         List<String> tables = migrator.verifyTablesCreated();
-        assertEquals(7, tables.size(), "Should have exactly 7 Phase 14 tables created.");
+        assertEquals(8, tables.size(), "Should have exactly 8 tables created (Phase 14 & 15).");
         assertTrue(tables.contains("users"));
         assertTrue(tables.contains("workspaces"));
         assertTrue(tables.contains("workspace_members"));
@@ -85,6 +85,7 @@ public class DatabaseIntegrationTest {
         assertTrue(tables.contains("messages"));
         assertTrue(tables.contains("folders"));
         assertTrue(tables.contains("files"));
+        assertTrue(tables.contains("refresh_tokens"));
     }
 
     @Test

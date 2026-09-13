@@ -21,7 +21,10 @@ import java.util.List;
 public final class DatabaseMigrator {
 
     private static final String TAG = "DatabaseMigrator";
-    private static final String MIGRATION_RESOURCE = "/db/migration/V1__init_cloud_database_phase14.sql";
+    private static final List<String> MIGRATION_RESOURCES = List.of(
+        "/db/migration/V1__init_cloud_database_phase14.sql",
+        "/db/migration/V2__auth_sessions_phase15.sql"
+    );
 
     private final DatabaseManager databaseManager;
 
@@ -34,28 +37,30 @@ public final class DatabaseMigrator {
     }
 
     /**
-     * Executes the initial V1 migration against the connected database.
+     * Executes all database migrations (V1, V2) against the connected database.
      */
     public void migrate() throws SQLException, IOException {
-        AppLogger.info(TAG, "Starting Phase 14 cloud database schema migration...");
+        AppLogger.info(TAG, "Starting cloud database schema migration (V1, V2)...");
 
-        String migrationSql = loadMigrationScript(MIGRATION_RESOURCE);
-        List<String> statements = parseSqlStatements(migrationSql);
+        for (String resource : MIGRATION_RESOURCES) {
+            String migrationSql = loadMigrationScript(resource);
+            List<String> statements = parseSqlStatements(migrationSql);
 
-        try (Connection conn = databaseManager.getConnection()) {
-            conn.setAutoCommit(false);
-            try (Statement stmt = conn.createStatement()) {
-                for (String sql : statements) {
-                    if (!sql.isBlank()) {
-                        stmt.execute(sql);
+            try (Connection conn = databaseManager.getConnection()) {
+                conn.setAutoCommit(false);
+                try (Statement stmt = conn.createStatement()) {
+                    for (String sql : statements) {
+                        if (!sql.isBlank()) {
+                            stmt.execute(sql);
+                        }
                     }
+                    conn.commit();
+                    AppLogger.info(TAG, "Applied migration " + resource + " (" + statements.size() + " DDL commands).");
+                } catch (SQLException e) {
+                    conn.rollback();
+                    AppLogger.error(TAG, "Migration " + resource + " failed, transaction rolled back", e);
+                    throw e;
                 }
-                conn.commit();
-                AppLogger.info(TAG, "Schema migration executed and committed successfully (" + statements.size() + " DDL commands).");
-            } catch (SQLException e) {
-                conn.rollback();
-                AppLogger.error(TAG, "Migration failed, transaction rolled back", e);
-                throw e;
             }
         }
 
@@ -63,7 +68,7 @@ public final class DatabaseMigrator {
     }
 
     /**
-     * Verifies that all 7 required Phase 14 tables exist in PostgreSQL.
+     * Verifies that all required Phase 14 & 15 tables exist in PostgreSQL.
      */
     public List<String> verifyTablesCreated() throws SQLException {
         String[] requiredTables = {
@@ -73,7 +78,8 @@ public final class DatabaseMigrator {
             "channels",
             "messages",
             "folders",
-            "files"
+            "files",
+            "refresh_tokens"
         };
 
         List<String> foundTables = new ArrayList<>();
@@ -85,12 +91,20 @@ public final class DatabaseMigrator {
                     if (rs.next() && rs.getBoolean(1)) {
                         foundTables.add(table);
                     } else {
-                        throw new SQLException("Required Phase 14 table missing in public schema: " + table);
+                        throw new SQLException("Required table missing in public schema: " + table);
                     }
                 }
             }
+
+            // Verify password_hash column in users
+            String colCheckSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'password_hash')";
+            try (ResultSet rs = stmt.executeQuery(colCheckSql)) {
+                if (!rs.next() || !rs.getBoolean(1)) {
+                    throw new SQLException("Required column password_hash missing in users table");
+                }
+            }
         }
-        AppLogger.info(TAG, "Verified all " + foundTables.size() + " Phase 14 tables in Neon PostgreSQL: " + foundTables);
+        AppLogger.info(TAG, "Verified all " + foundTables.size() + " tables in Neon PostgreSQL: " + foundTables);
         return foundTables;
     }
 

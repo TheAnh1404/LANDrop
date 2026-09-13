@@ -28,9 +28,9 @@ public class UserRepository {
 
     public User create(User user) throws SQLException {
         String sql = """
-            INSERT INTO users (id, email, username, display_name, avatar_url, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            RETURNING id, email, username, display_name, avatar_url, created_at, updated_at
+            INSERT INTO users (id, email, username, display_name, avatar_url, password_hash, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id, email, username, display_name, avatar_url, password_hash, created_at, updated_at
         """;
 
         try (Connection conn = databaseManager.getConnection();
@@ -43,8 +43,9 @@ public class UserRepository {
             ps.setString(3, user.username());
             ps.setString(4, user.displayName());
             ps.setString(5, user.avatarUrl());
-            ps.setTimestamp(6, Timestamp.from(user.createdAt() != null ? user.createdAt() : now));
-            ps.setTimestamp(7, Timestamp.from(user.updatedAt() != null ? user.updatedAt() : now));
+            ps.setString(6, user.passwordHash());
+            ps.setTimestamp(7, Timestamp.from(user.createdAt() != null ? user.createdAt() : now));
+            ps.setTimestamp(8, Timestamp.from(user.updatedAt() != null ? user.updatedAt() : now));
 
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
@@ -119,6 +120,17 @@ public class UserRepository {
         }
     }
 
+    public boolean updatePasswordHash(UUID id, String passwordHash) throws SQLException {
+        String sql = "UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?";
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, passwordHash);
+            ps.setTimestamp(2, Timestamp.from(Instant.now()));
+            ps.setObject(3, id);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
     public void deleteAll() throws SQLException {
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement("DELETE FROM users")) {
@@ -133,6 +145,7 @@ public class UserRepository {
             rs.getString("username"),
             rs.getString("display_name"),
             rs.getString("avatar_url"),
+            rs.getString("password_hash"),
             rs.getTimestamp("created_at").toInstant(),
             rs.getTimestamp("updated_at").toInstant()
         );
