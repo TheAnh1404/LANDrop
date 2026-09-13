@@ -132,6 +132,9 @@ public class MainApp extends Application {
 
         showSetupView();
         stage.show();
+        stage.toFront();
+        stage.requestFocus();
+        System.out.println("[LANDrop] JavaFX UI initialized successfully. Window: LANDrop (" + configuredDisplayName + ")");
     }
 
     /**
