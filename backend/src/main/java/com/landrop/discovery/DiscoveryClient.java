@@ -90,6 +90,7 @@ public class DiscoveryClient implements AutoCloseable {
     public void connect(int timeoutMs) throws IOException {
         Socket s = new Socket();
         s.connect(new InetSocketAddress(discoveryHost, discoveryPort), timeoutMs);
+        s.setSoTimeout(com.landrop.config.AppConfig.getSocketTimeoutMs());
         this.socket = s;
         this.in = new DataInputStream(new BufferedInputStream(s.getInputStream()));
         this.out = new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));
@@ -262,7 +263,6 @@ public class DiscoveryClient implements AutoCloseable {
 
     @Override
     public void close() {
-        this.connected = false;
         if (heartbeatScheduler != null) {
             heartbeatScheduler.shutdownNow();
         }
@@ -271,6 +271,8 @@ public class DiscoveryClient implements AutoCloseable {
             unregister();
         } catch (Exception ignored) {
         }
+
+        this.connected = false;
 
         if (socket != null && !socket.isClosed()) {
             try {

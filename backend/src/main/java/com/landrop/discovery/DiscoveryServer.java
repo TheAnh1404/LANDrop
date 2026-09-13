@@ -180,12 +180,12 @@ public class DiscoveryServer implements AutoCloseable {
     }
 
     public static void main(String[] args) {
-        int port = DEFAULT_PORT;
+        int port = com.landrop.config.AppConfig.getDiscoveryPort();
         if (args.length > 0) {
             try {
                 port = Integer.parseInt(args[0].trim());
             } catch (NumberFormatException e) {
-                System.err.println("Invalid port number: " + args[0] + ". Using default port " + DEFAULT_PORT);
+                System.err.println("Invalid port number: " + args[0] + ". Using configured port " + port);
             }
         }
 

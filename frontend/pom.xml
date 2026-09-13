@@ -61,6 +61,9 @@
                 <configuration>
                     <mainClass>com.landrop.ui.MainApp</mainClass>
                     <commandlineArgs>${javafx.args}</commandlineArgs>
+                    <options>
+                        <option>--enable-native-access=ALL-UNNAMED</option>
+                    </options>
                 </configuration>
             </plugin>
 
@@ -70,8 +73,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
                 <configuration>
-                    <source>21</source>
-                    <target>21</target>
+                    <release>21</release>
                     <encoding>UTF-8</encoding>
                 </configuration>
             </plugin>
