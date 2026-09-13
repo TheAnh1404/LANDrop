@@ -195,11 +195,13 @@ public class UIStateService {
                     future.complete(null);
                 });
 
-            } catch (Exception e) {
+            } catch (Throwable t) {
+                System.err.println("[LANDrop ERROR] connectAndRegister failed: " + t.getMessage());
+                t.printStackTrace();
                 Platform.runLater(() -> {
                     discoveryStatus.set(DiscoveryStatus.ERROR);
-                    String msg = e.getMessage() != null ? e.getMessage() : e.toString();
-                    future.completeExceptionally(new RuntimeException(msg, e));
+                    String msg = t.getMessage() != null ? t.getMessage() : t.toString();
+                    future.completeExceptionally(t instanceof Exception ? (Exception) t : new RuntimeException(msg, t));
                 });
             }
         });

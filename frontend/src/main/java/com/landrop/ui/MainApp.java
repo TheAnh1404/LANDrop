@@ -28,7 +28,7 @@ public class MainApp extends Application {
     // Parsed configuration
     private String configuredDisplayName = "Peer A";
     private int configuredLocalPort = 5001;
-    private String configuredDiscoveryHost = "localhost";
+    private String configuredDiscoveryHost = "127.0.0.1";
     private int configuredDiscoveryPort = 8888;
     private String configuredAdvertisedHost = "127.0.0.1";
     private boolean configuredAutoConnect = false;
@@ -179,7 +179,12 @@ public class MainApp extends Application {
             Scene scene = new Scene(root, DEFAULT_WIDTH, DEFAULT_HEIGHT);
             applyStylesheets(scene);
             primaryStage.setScene(scene);
-        } catch (IOException e) {
+            primaryStage.show();
+            primaryStage.toFront();
+            primaryStage.requestFocus();
+            System.out.println("[LANDrop] Main dashboard transitioned successfully for " + configuredDisplayName);
+        } catch (Throwable e) {
+            System.err.println("[LANDrop ERROR] Failed to load main view: " + e.getMessage());
             e.printStackTrace();
         }
     }

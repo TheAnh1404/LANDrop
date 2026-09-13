@@ -54,7 +54,7 @@ public class SetupController {
         displayNameField.setText(initialDisplayName != null && !initialDisplayName.isBlank() ? initialDisplayName : "Peer A");
         localPortField.setText(String.valueOf(initialLocalPort > 0 ? initialLocalPort : 5001));
         advertisedHostField.setText(initialAdvertisedHost != null && !initialAdvertisedHost.isBlank() ? initialAdvertisedHost : "127.0.0.1");
-        discoveryHostField.setText(initialDiscoveryHost != null && !initialDiscoveryHost.isBlank() ? initialDiscoveryHost : "localhost");
+        discoveryHostField.setText(initialDiscoveryHost != null && !initialDiscoveryHost.isBlank() ? initialDiscoveryHost : "127.0.0.1");
         discoveryPortField.setText(String.valueOf(initialDiscoveryPort > 0 ? initialDiscoveryPort : 8888));
 
         if (autoConnect) {
