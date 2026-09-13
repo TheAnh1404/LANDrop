@@ -1,5 +1,8 @@
 package com.landrop.ui.cloud.api;
 
+import com.landrop.ui.auth.api.AuthenticatedApiTransport;
+import com.landrop.ui.auth.services.AuthStateService;
+
 import java.net.URI;
 
 /** Opt-in persistent metadata client. Construction never starts LAN or cloud I/O. */
@@ -23,6 +26,9 @@ public final class CloudApi {
 
     public static CloudApi mock() { return new CloudApi(new MockApiTransport()); }
     public static CloudApi http(URI apiBaseUri) { return new CloudApi(new HttpApiTransport(apiBaseUri)); }
+    public static CloudApi authenticatedHttp(URI apiBaseUri, AuthStateService authState) {
+        return new CloudApi(new AuthenticatedApiTransport(new HttpApiTransport(apiBaseUri), authState));
+    }
 
     public UsersApi users() { return users; }
     public WorkspacesApi workspaces() { return workspaces; }

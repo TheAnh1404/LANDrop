@@ -47,8 +47,15 @@ public final class HttpApiTransport implements ApiTransport {
 
     @Override
     public CompletableFuture<String> get(String path, Map<String, String> query) {
+        return get(path, query, Map.of());
+    }
+
+    @Override
+    public CompletableFuture<String> get(String path, Map<String, String> query,
+                                         Map<String, String> headers) {
         Objects.requireNonNull(path, "path");
         Objects.requireNonNull(query, "query");
+        Objects.requireNonNull(headers, "headers");
         URI relative = URI.create(path);
         if (path.isBlank() || relative.isAbsolute() || path.startsWith("/")
                 || relative.getRawQuery() != null || relative.getRawFragment() != null
@@ -59,8 +66,10 @@ public final class HttpApiTransport implements ApiTransport {
                 .sorted(Map.Entry.comparingByKey())
                 .map(entry -> ApiPaths.encode(entry.getKey()) + "=" + ApiPaths.encode(entry.getValue()))
                 .collect(Collectors.joining("&"));
-        HttpRequest request = HttpRequest.newBuilder(URI.create(baseUri.toASCIIString() + path + suffix))
-                .header("Accept", "application/json").timeout(timeout).GET().build();
+        var requestBuilder = HttpRequest.newBuilder(URI.create(baseUri.toASCIIString() + path + suffix))
+                .header("Accept", "application/json").timeout(timeout);
+        headers.forEach(requestBuilder::header);
+        HttpRequest request = requestBuilder.GET().build();
         return client.sendAsync(request, HttpResponse.BodyHandlers.ofString())
                 .handle((response, error) -> {
                     if (error != null) {

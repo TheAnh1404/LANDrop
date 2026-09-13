@@ -10,6 +10,27 @@
     -fx-text-fill: #0f172a;
 }
 
+.auth-page {
+    -fx-background-color: #f8fafc;
+    -fx-padding: 32px;
+}
+
+.auth-container {
+    -fx-padding: 24px;
+}
+
+.auth-error {
+    -fx-min-height: 18px;
+    -fx-font-size: 12px;
+    -fx-text-fill: #dc2626;
+}
+
+.auth-container .hyperlink {
+    -fx-border-color: transparent;
+    -fx-padding: 2px;
+    -fx-text-fill: #4f46e5;
+}
+
 /* --------------------------------------------------------------------------
    Top Bar
    -------------------------------------------------------------------------- */

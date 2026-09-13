@@ -34,6 +34,9 @@ public class MainController {
     private Label topPeerIdentityBadge;
 
     @FXML
+    private Button logoutButton;
+
+    @FXML
     private Button dashboardNavBtn;
 
     @FXML
@@ -226,5 +229,14 @@ public class MainController {
     @FXML
     private void onSettingsNavClicked() {
         navigateTo(NavigationTab.SETTINGS);
+    }
+
+    @FXML
+    private void onLogoutClicked() {
+        if (mainApp != null) {
+            logoutButton.setDisable(true);
+            logoutButton.setText("Signing out...");
+            mainApp.logout();
+        }
     }
 }

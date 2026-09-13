@@ -1,16 +1,26 @@
 package com.landrop.ui;
 
 import com.landrop.ui.controllers.MainController;
+import com.landrop.ui.controllers.LoginController;
+import com.landrop.ui.controllers.RegisterController;
 import com.landrop.ui.controllers.SetupController;
+import com.landrop.ui.auth.api.AuthApi;
+import com.landrop.ui.auth.api.HttpAuthApi;
+import com.landrop.ui.auth.api.PreferencesSessionStore;
+import com.landrop.ui.auth.api.SessionStore;
+import com.landrop.ui.auth.services.AuthStateService;
 import com.landrop.ui.services.UIStateService;
 import javafx.application.Application;
+import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 
 import java.io.IOException;
+import java.net.URI;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * Main JavaFX Desktop Application entry point for LANDrop.
@@ -24,6 +34,7 @@ public class MainApp extends Application {
 
     private Stage primaryStage;
     private UIStateService stateService;
+    private AuthStateService authStateService;
 
     // Parsed configuration
     private String configuredDisplayName = "Peer A";
@@ -36,7 +47,21 @@ public class MainApp extends Application {
     @Override
     public void init() {
         this.stateService = new UIStateService();
+        initializeAuth(new HttpAuthApi(URI.create(System.getProperty(
+                "landrop.auth.base-url", "http://localhost:3000/api"))), new PreferencesSessionStore());
         parseParameters();
+    }
+
+    /** Injectable constructor used by headless tests and local composition roots. */
+    public MainApp(AuthApi authApi, SessionStore sessionStore) {
+        this.stateService = new UIStateService();
+        initializeAuth(authApi, sessionStore);
+    }
+
+    public MainApp() { }
+
+    private void initializeAuth(AuthApi authApi, SessionStore sessionStore) {
+        this.authStateService = new AuthStateService(Objects.requireNonNull(authApi), Objects.requireNonNull(sessionStore));
     }
 
     private void parseParameters() {
@@ -130,11 +155,68 @@ public class MainApp extends Application {
         stage.setWidth(DEFAULT_WIDTH);
         stage.setHeight(DEFAULT_HEIGHT);
 
-        showSetupView();
+        showAuthLoadingView();
         stage.show();
         stage.toFront();
         stage.requestFocus();
-        System.out.println("[LANDrop] JavaFX UI initialized successfully. Window: LANDrop (" + configuredDisplayName + ")");
+        authStateService.restoreSession().whenComplete((user, failure) -> Platform.runLater(() -> {
+            if (authStateService.isAuthenticated()) {
+                onAuthenticated();
+            } else {
+                showLoginView();
+            }
+        }));
+    }
+
+    private void showAuthLoadingView() {
+        var root = new javafx.scene.layout.StackPane();
+        root.getStyleClass().add("auth-page");
+        var label = new javafx.scene.control.Label("Checking your LANDrop session...");
+        label.getStyleClass().add("page-subtitle");
+        root.getChildren().add(label);
+        var scene = new Scene(root, DEFAULT_WIDTH, DEFAULT_HEIGHT);
+        applyStylesheets(scene);
+        primaryStage.setScene(scene);
+    }
+
+    public void showLoginView() {
+        try {
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/auth-login-view.fxml"));
+            Parent root = loader.load();
+            loader.<LoginController>getController().init(this, authStateService);
+            Scene scene = new Scene(root, DEFAULT_WIDTH, DEFAULT_HEIGHT);
+            applyStylesheets(scene);
+            primaryStage.setScene(scene);
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to load the login view", e);
+        }
+    }
+
+    public void showRegisterView() {
+        try {
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/auth-register-view.fxml"));
+            Parent root = loader.load();
+            loader.<RegisterController>getController().init(this, authStateService);
+            Scene scene = new Scene(root, DEFAULT_WIDTH, DEFAULT_HEIGHT);
+            applyStylesheets(scene);
+            primaryStage.setScene(scene);
+        } catch (IOException e) {
+            throw new IllegalStateException("Unable to load the register view", e);
+        }
+    }
+
+    public AuthStateService getAuthStateService() { return authStateService; }
+
+    /** Called only after restore, login, or register has established a valid session. */
+    public void onAuthenticated() {
+        if (stateService != null) stateService.shutdown();
+        stateService = new UIStateService();
+        showSetupView();
+    }
+
+    public void logout() {
+        if (stateService != null) stateService.shutdown();
+        authStateService.logout().whenComplete((ignored, failure) -> Platform.runLater(this::showLoginView));
     }
 
     /**

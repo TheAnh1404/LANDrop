@@ -7,4 +7,10 @@ import java.util.concurrent.CompletableFuture;
 @FunctionalInterface
 public interface ApiTransport {
     CompletableFuture<String> get(String path, Map<String, String> query);
+
+    /** Optional headers are used by authenticated Phase 15 requests. */
+    default CompletableFuture<String> get(String path, Map<String, String> query,
+                                         Map<String, String> headers) {
+        return get(path, query);
+    }
 }

@@ -11,9 +11,10 @@ LANDrop sử dụng Discovery Server để các máy tìm thấy nhau. Sau khi k
 | **Core — Phase 1–13** | Đã hoàn thành: discovery, chat, truyền file, tải từ nhiều peer và giao diện JavaFX |
 | **Frontend — Phase 14B** | Đã hoàn thành nền tảng domain, DTO, mapper, API client và mock data bằng Java |
 | **Backend cloud — Phase 14A** | Neon/PostgreSQL, schema SQL, migration, seed, model và repository layer đã có trong `backend/` |
-| **Tích hợp API/database thực tế** | HTTP API chưa có trong checkout; cần đối chiếu backend model với frontend contract trước khi kết nối |
+| **Frontend — Phase 15B** | Authentication UI, centralized session state, session restore, logout và access-token refresh/retry đã có |
+| **Tích hợp API/database thực tế** | Auth HTTP contract đang chờ đối chiếu với Phase 15A; API server chưa có trong checkout này |
 
-Phase 14B là một lớp dữ liệu frontend độc lập, chưa được đưa vào luồng khởi động hoặc các màn hình Core. Hợp đồng API đang ở trạng thái **đề xuất frontend v1**; backend database foundation đã có, nhưng HTTP endpoint và đối chiếu field-level vẫn còn chờ.
+Phase 14B là một lớp dữ liệu frontend độc lập, chưa được đưa vào luồng khởi động hoặc các màn hình Core. Phase 15B bổ sung auth gate trước khi vào setup/application; dữ liệu cloud vẫn chưa được đưa vào màn hình workspace.
 
 ## Chức năng hiện có
 
@@ -118,7 +119,8 @@ LANDrop/
 │       │   ├── services/           # Trạng thái và kết nối giao diện với Core
 │       │   ├── models/             # Model phục vụ giao diện Core
 │       │   ├── utils/              # Tiện ích giao diện
-│       │   └── cloud/              # Nền tảng dữ liệu frontend Phase 14B
+│       │   ├── cloud/              # Nền tảng dữ liệu frontend Phase 14B
+│       │   └── auth/               # Authentication và session Phase 15B
 │       │       ├── model/          # Domain records
 │       │       ├── dto/            # Hình dạng JSON dự kiến từ API
 │       │       ├── mapping/        # Kiểm tra JSON và chuyển đổi DTO
@@ -393,6 +395,8 @@ Các route GET được đề xuất:
 
 Xem [hướng dẫn frontend](frontend/README.md), [hợp đồng API](docs/PHASE-14B-API-CONTRACT.md) và [báo cáo bàn giao Phase 14B](docs/PHASE-14B-DELIVERY.md). Phase này chưa bổ sung màn hình quản lý workspace hoặc lưu lịch sử chat LAN vào database.
 
+Authentication frontend Phase 15B được mô tả trong [tài liệu auth](docs/PHASE-15B-AUTH.md). Ứng dụng mở loading scene, khôi phục refresh token và gọi `/auth/me` trước khi hiển thị setup hoặc Core application. Nếu chưa đăng nhập, người dùng được đưa tới Login; Register, logout và retry sau access-token expiry nằm trong cùng auth state service.
+
 ## Kiểm thử
 
 Chạy toàn bộ test:
@@ -449,7 +453,7 @@ Các test tích hợp cần quyền mở socket localhost; test JavaFX cần phi
 
 Core tập trung vào giao tiếp trong mạng LAN. SHA-256 dùng để kiểm tra toàn vẹn file; Core chưa triển khai xác thực người dùng, mã hóa đường truyền hoặc NAT traversal để hoạt động qua Internet.
 
-Repository chưa triển khai login/register, quản lý workspace trên giao diện, task, notification, search, activity log hoặc production deployment. Những nội dung trong [roadmap](docs/PRODUCTION_ROADMAP.md) là định hướng phát triển, không phải tính năng đã có. Phase 15 chưa được triển khai.
+Repository đã có login/register frontend và session handling Phase 15B. Backend Phase 15A auth API chưa có trong checkout này nên live login, refresh và `/auth/me` chưa được xác minh. Repository chưa triển khai quản lý workspace trên giao diện, task, notification, search, activity log hoặc production deployment. Những nội dung trong [roadmap](docs/PRODUCTION_ROADMAP.md) là định hướng phát triển, không phải tính năng đã có. Phase 16 chưa được triển khai.
 
 ## Tài liệu tham khảo trong project
 
@@ -464,4 +468,5 @@ Repository chưa triển khai login/register, quản lý workspace trên giao di
 | [Core baseline](docs/CORE_BASELINE.md) | Trạng thái hoàn thành và ranh giới bảo toàn Core |
 | [API contract Phase 14B](docs/PHASE-14B-API-CONTRACT.md) | Domain, DTO, route, phân trang và lỗi |
 | [Bàn giao Phase 14B](docs/PHASE-14B-DELIVERY.md) | File thay đổi, kết quả xác minh và lệnh đã chạy |
+| [Authentication Phase 15B](docs/PHASE-15B-AUTH.md) | Auth API shape, session state, UI flow, refresh và phạm vi |
 | [Roadmap](docs/PRODUCTION_ROADMAP.md) | Các hướng phát triển sau Core |

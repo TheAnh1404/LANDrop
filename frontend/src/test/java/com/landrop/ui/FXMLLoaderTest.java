@@ -2,6 +2,9 @@ package com.landrop.ui;
 
 import com.landrop.ui.controllers.*;
 import com.landrop.ui.services.UIStateService;
+import com.landrop.ui.auth.api.AuthApi;
+import com.landrop.ui.auth.api.InMemorySessionStore;
+import com.landrop.ui.auth.dto.AuthDto;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Node;
@@ -11,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import java.io.IOException;
 import java.net.URL;
+import java.util.concurrent.CompletableFuture;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -43,6 +47,28 @@ public class FXMLLoaderTest {
 
         UIStateService stateService = new UIStateService();
         assertDoesNotThrow(() -> controller.init(new MainApp(), stateService, "TestPeer", 5001, "localhost", 8888, "127.0.0.1", false));
+    }
+
+    @Test
+    void testLoadLoginView() throws IOException {
+        FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/auth-login-view.fxml"));
+        Parent root = loader.load();
+        assertNotNull(root);
+        LoginController controller = loader.getController();
+        assertNotNull(controller);
+        MainApp app = new MainApp(new NoopAuthApi(), new InMemorySessionStore());
+        assertDoesNotThrow(() -> controller.init(app, app.getAuthStateService()));
+    }
+
+    @Test
+    void testLoadRegisterView() throws IOException {
+        FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/auth-register-view.fxml"));
+        Parent root = loader.load();
+        assertNotNull(root);
+        RegisterController controller = loader.getController();
+        assertNotNull(controller);
+        MainApp app = new MainApp(new NoopAuthApi(), new InMemorySessionStore());
+        assertDoesNotThrow(() -> controller.init(app, app.getAuthStateService()));
     }
 
     @Test
@@ -121,5 +147,13 @@ public class FXMLLoaderTest {
 
         UIStateService stateService = new UIStateService();
         assertDoesNotThrow(() -> controller.init(stateService, new MainApp()));
+    }
+
+    private static final class NoopAuthApi implements AuthApi {
+        @Override public CompletableFuture<AuthDto.AuthResponse> register(AuthDto.RegisterRequest request) { return CompletableFuture.failedFuture(new IllegalStateException()); }
+        @Override public CompletableFuture<AuthDto.AuthResponse> login(AuthDto.LoginRequest request) { return CompletableFuture.failedFuture(new IllegalStateException()); }
+        @Override public CompletableFuture<AuthDto.RefreshResponse> refresh(AuthDto.RefreshRequest request) { return CompletableFuture.failedFuture(new IllegalStateException()); }
+        @Override public CompletableFuture<AuthDto.AuthUserResponse> me(String accessToken) { return CompletableFuture.failedFuture(new IllegalStateException()); }
+        @Override public CompletableFuture<Void> logout(String accessToken, String refreshToken) { return CompletableFuture.completedFuture(null); }
     }
 }

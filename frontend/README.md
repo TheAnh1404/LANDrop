@@ -55,6 +55,8 @@ CloudApi api = CloudApi.mock();
 
 // When the backend API is available:
 // CloudApi api = CloudApi.http(URI.create("http://localhost:3000/api/"));
+// For protected Phase 14B reads:
+// CloudApi api = CloudApi.authenticatedHttp(URI.create("http://localhost:3000/api/"), authState);
 ```
 
 The base URI includes `/api/`; HTTP requests use a 10-second default timeout. An existing presentation consumer can load data without blocking JavaFX:
@@ -104,4 +106,4 @@ These commands describe how to verify the implementation; their inclusion is not
 
 Existing `UIStateService`, `UIMessage`, Core chat/realtime, discovery, and LAN transfer flows keep their current behavior and identities. The persistent-data client is not started by the application and does not replace Core storage or network services. Mock data never appears in existing LAN conversations or transfer lists.
 
-Phase 14B contains no authentication, login/register, workspace management UI, tasks, notifications, search, activity log, production deployment, upload/download service, or Phase 15 work.
+Phase 14B contains no workspace management UI, tasks, notifications, search, activity log, production deployment, upload/download service, or Phase 16 work. Phase 15B authentication is documented separately in [PHASE-15B-AUTH.md](../docs/PHASE-15B-AUTH.md); its backend wire contract remains pending Phase 15A reconciliation.

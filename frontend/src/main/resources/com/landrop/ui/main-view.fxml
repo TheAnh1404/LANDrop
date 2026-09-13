@@ -29,6 +29,7 @@
                 </HBox>
 
                 <Label fx:id="topPeerIdentityBadge" text="Peer" styleClass="topbar-identity-badge"/>
+                <Button fx:id="logoutButton" text="Sign out" styleClass="secondary-button" onAction="#onLogoutClicked"/>
             </HBox>
         </HBox>
     </top>
