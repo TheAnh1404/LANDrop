@@ -147,6 +147,11 @@ public class WorkspaceStateService {
         return u != null ? u.id() : null;
     }
 
+    /** Shared authenticated session for workspace-scoped clients; never expose a user/device identity as chat input. */
+    public AuthStateService authStateService() {
+        return authStateService;
+    }
+
     // --- Workspace Lifecycle Actions ---
 
     /**

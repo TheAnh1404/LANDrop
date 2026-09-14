@@ -43,6 +43,7 @@ public class MainApp extends Application {
     private AuthStateService authStateService;
     private volatile RealtimeChatService realtimeChatService;
     private volatile WorkspaceStateService workspaceStateService;
+    private volatile com.landrop.ui.workspace.chat.services.WorkspaceChatStateService workspaceChatStateService;
     private volatile URI resolvedWsUri;
     private volatile URI resolvedApiUri;
 
@@ -226,6 +227,7 @@ public class MainApp extends Application {
     public void setRealtimeChatService(RealtimeChatService service) { this.realtimeChatService = service; }
     public com.landrop.ui.workspace.services.WorkspaceStateService getWorkspaceStateService() { return workspaceStateService; }
     public void setWorkspaceStateService(com.landrop.ui.workspace.services.WorkspaceStateService service) { this.workspaceStateService = service; }
+    public com.landrop.ui.workspace.chat.services.WorkspaceChatStateService getWorkspaceChatStateService() { return workspaceChatStateService; }
 
     /** Called only after restore, login, or register has established a valid session. */
     public void onAuthenticated() {
@@ -240,21 +242,18 @@ public class MainApp extends Application {
             }
         }
 
-        // Initialize and connect RealtimeChatService
-        if (resolvedWsUri != null) {
-            this.realtimeChatService = new RealtimeChatService(resolvedWsUri, authStateService);
-            stateService.setRealtimeChatService(realtimeChatService);
-            realtimeChatService.connect().exceptionally(ex -> {
-                System.out.println("[LANDrop] Realtime connection attempt: " + ex.getMessage());
-                return null;
-            });
-        }
+        // Phase 17B opens a single authenticated channel socket only after a channel is selected.
+        // The old global socket had no workspace/channel authorization context.
 
         // Initialize WorkspaceStateService (Phase 16B)
         if (resolvedApiUri != null) {
             com.landrop.ui.workspace.api.HttpWorkspaceApi wsApi =
                     new com.landrop.ui.workspace.api.HttpWorkspaceApi(resolvedApiUri, authStateService);
             this.workspaceStateService = new com.landrop.ui.workspace.services.WorkspaceStateService(wsApi, authStateService);
+            this.workspaceChatStateService = new com.landrop.ui.workspace.chat.services.WorkspaceChatStateService(
+                    workspaceStateService,
+                    new com.landrop.ui.workspace.chat.api.HttpTeamChatApi(resolvedApiUri, authStateService),
+                    resolvedWsUri);
             workspaceStateService.loadWorkspaces().exceptionally(ex -> {
                 System.out.println("[LANDrop] Workspaces load notice: " + ex.getMessage());
                 return java.util.Collections.emptyList();
@@ -265,6 +264,10 @@ public class MainApp extends Application {
     }
 
     public void logout() {
+        if (workspaceChatStateService != null) {
+            try { workspaceChatStateService.close(); } catch (Exception ignored) { }
+            workspaceChatStateService = null;
+        }
         if (realtimeChatService != null) {
             try {
                 realtimeChatService.close();
@@ -338,6 +341,9 @@ public class MainApp extends Application {
 
     @Override
     public void stop() {
+        if (workspaceChatStateService != null) {
+            try { workspaceChatStateService.close(); } catch (Exception ignored) { }
+        }
         if (realtimeChatService != null) {
             try {
                 realtimeChatService.close();

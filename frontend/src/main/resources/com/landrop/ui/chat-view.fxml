@@ -1,66 +1,20 @@
 <?xml version="1.0" encoding="UTF-8"?>
-
-<?import javafx.geometry.Insets?>
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
 <?import javafx.scene.shape.Circle?>
-
-<VBox xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
-      fx:controller="com.landrop.ui.controllers.ChatController"
-      spacing="0.0" VBox.vgrow="ALWAYS" styleClass="page-container" style="-fx-padding: 16px 24px 20px 24px;">
-
-    <!-- Chat Container Card -->
-    <VBox styleClass="chat-container" VBox.vgrow="ALWAYS">
-        <!-- Header -->
-        <HBox alignment="CENTER_LEFT" styleClass="chat-header">
-            <VBox spacing="2.0">
-                <Label fx:id="remotePeerNameLabel" text="Messages" styleClass="card-title"/>
-                <HBox alignment="CENTER_LEFT" spacing="6.0">
-                    <Circle fx:id="connectionDot" radius="4.0" fill="#94a3b8"/>
-                    <Label fx:id="connectionStatusLabel" text="Connecting..." styleClass="page-subtitle" style="-fx-font-size: 11px;"/>
-                </HBox>
-            </VBox>
-
-            <Region HBox.hgrow="ALWAYS"/>
-
-            <HBox spacing="10.0" alignment="CENTER_RIGHT">
-                <Button fx:id="pingButton" text="Ping" styleClass="secondary-button" onAction="#onPingClicked"/>
-                <Button fx:id="disconnectButton" text="Disconnect" styleClass="danger-button" onAction="#onDisconnectClicked"/>
-            </HBox>
-        </HBox>
-
-        <!-- Messages Area -->
-        <StackPane VBox.vgrow="ALWAYS">
-            <ScrollPane fx:id="chatScrollPane" fitToWidth="true" styleClass="chat-messages-scroll" VBox.vgrow="ALWAYS">
-                <VBox fx:id="messagesContainer" styleClass="chat-messages-container"/>
-            </ScrollPane>
-
-            <!-- Empty Messages Placeholder -->
-            <VBox fx:id="emptyMessagesContainer" styleClass="empty-state-box" alignment="CENTER" maxWidth="400.0" maxHeight="150.0">
-                <Label text="No messages yet." styleClass="empty-state-title"/>
-                <Label text="Send a message below to start the conversation." styleClass="empty-state-desc"/>
-            </VBox>
-
-            <!-- Disconnected Placeholder -->
-            <VBox fx:id="disconnectedOverlay" styleClass="empty-state-box" alignment="CENTER"
-                  style="-fx-background-color: rgba(248, 250, 252, 0.95); -fx-border-color: transparent;">
-                <Label text="Chat Disconnected" styleClass="page-title" style="-fx-font-size: 18px;"/>
-                <Label text="Connecting to real-time chat service..." styleClass="page-subtitle"/>
-                <Button text="Reconnect" styleClass="primary-button" onAction="#onReconnectClicked" style="-fx-margin-top: 10px;"/>
-            </VBox>
-        </StackPane>
-
-        <!-- Input Bar -->
-        <HBox alignment="CENTER_LEFT" styleClass="chat-input-bar">
-            <!-- File transfer attachment button -->
-            <Button fx:id="attachFileButton" text="📎" styleClass="secondary-button" disable="true"
-                    onAction="#onAttachFileClicked"
-                    style="-fx-font-size: 15px; -fx-padding: 6px 12px;"/>
-
-            <TextField fx:id="messageInput" promptText="Type a message... (Press Enter to send)"
-                       styleClass="text-input-field" HBox.hgrow="ALWAYS" onAction="#onSendMessage"/>
-
-            <Button fx:id="sendButton" text="Send" styleClass="primary-button" onAction="#onSendMessage"/>
-        </HBox>
-    </VBox>
-</VBox>
+<HBox xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.landrop.ui.controllers.ChatController" spacing="0" styleClass="page-container" style="-fx-padding: 16px 24px 20px 24px;">
+  <VBox prefWidth="220" styleClass="channel-sidebar">
+    <Label fx:id="workspaceNameLabel" text="Workspace" styleClass="card-title"/>
+    <Label text="CHANNELS" styleClass="sidebar-heading"/>
+    <ScrollPane fitToWidth="true" VBox.vgrow="ALWAYS" styleClass="channel-list-scroll"><VBox fx:id="channelListContainer" spacing="3"/></ScrollPane>
+    <VBox fx:id="createChannelBox" spacing="6" styleClass="create-channel-box"><Label text="Create channel" styleClass="workspace-item-name"/><TextField fx:id="channelNameInput" promptText="channel-name" styleClass="text-input-field"/><TextField fx:id="channelDescriptionInput" promptText="Description (optional)" styleClass="text-input-field"/><Button fx:id="createChannelButton" text="Create" onAction="#onCreateChannel" styleClass="secondary-button"/></VBox>
+  </VBox>
+  <VBox styleClass="chat-container" HBox.hgrow="ALWAYS">
+    <HBox alignment="CENTER_LEFT" styleClass="chat-header"><VBox spacing="2"><Label fx:id="channelTitleLabel" text="Select a channel" styleClass="card-title"/><Label fx:id="channelDescriptionLabel" styleClass="page-subtitle"/></VBox><Region HBox.hgrow="ALWAYS"/><HBox spacing="6" alignment="CENTER_RIGHT"><Circle fx:id="connectionDot" radius="4" fill="#94a3b8"/><Label fx:id="connectionStatusLabel" text="Disconnected" styleClass="page-subtitle"/></HBox></HBox>
+    <Label fx:id="errorLabel" styleClass="chat-error-label"/>
+    <Button fx:id="loadOlderButton" text="Load older messages" onAction="#onLoadOlder" styleClass="message-action-button" maxWidth="Infinity"/>
+    <StackPane VBox.vgrow="ALWAYS"><ScrollPane fx:id="chatScrollPane" fitToWidth="true" styleClass="chat-messages-scroll"><VBox fx:id="messagesContainer" styleClass="chat-messages-container"/></ScrollPane><VBox fx:id="emptyMessagesContainer" alignment="CENTER" maxWidth="400" maxHeight="150" styleClass="empty-state-box"><Label text="No messages yet." styleClass="empty-state-title"/><Label text="Start the channel conversation below." styleClass="empty-state-desc"/></VBox></StackPane>
+    <HBox fx:id="replyBar" spacing="8" alignment="CENTER_LEFT" visible="false" managed="false" styleClass="reply-bar"><Label fx:id="replyLabel" HBox.hgrow="ALWAYS"/><Button text="Cancel" onAction="#onCancelReply" styleClass="message-action-button"/></HBox>
+    <HBox alignment="CENTER_LEFT" styleClass="chat-input-bar"><TextField fx:id="messageInput" promptText="Message this channel… (Enter to send)" onAction="#onSendMessage" styleClass="text-input-field" HBox.hgrow="ALWAYS"/><Button fx:id="sendButton" text="Send" onAction="#onSendMessage" styleClass="primary-button"/></HBox>
+  </VBox>
+</HBox>

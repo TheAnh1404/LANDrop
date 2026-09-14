@@ -105,7 +105,7 @@ public final class Domain {
 
     public record Message(String id, String channelId, String senderId, String content,
                           MessageType type, String replyToId, String fileId,
-                          Instant createdAt, Instant updatedAt) {
+                          Instant createdAt, Instant updatedAt, Instant editedAt, Instant deletedAt) {
         public Message {
             required(id, "id");
             required(channelId, "channelId");
@@ -118,7 +118,8 @@ public final class Domain {
                 throw new IllegalArgumentException("A message cannot reply to itself");
             }
             if (type == MessageType.TEXT) {
-                required(content, "content");
+                // Soft-deleted messages intentionally retain their position while content may be blank.
+                if (deletedAt == null) required(content, "content");
                 if (fileId != null) {
                     throw new IllegalArgumentException("TEXT messages cannot reference fileId");
                 }
@@ -127,6 +128,18 @@ public final class Domain {
             }
             timestamps(createdAt, updatedAt);
         }
+
+        /** Phase 14 compatibility constructor; Phase 17 adds edit/delete timestamps. */
+        public Message(String id, String channelId, String senderId, String content,
+                       MessageType type, String replyToId, String fileId,
+                       Instant createdAt, Instant updatedAt) {
+            this(id, channelId, senderId, content, type, replyToId, fileId, createdAt, updatedAt, null, null);
+        }
+
+        /** Sender identity is a user ID; presentation resolves it from authenticated workspace members. */
+        public String sender() { return senderId; }
+        public boolean isDeleted() { return deletedAt != null; }
+        public boolean isEdited() { return editedAt != null; }
     }
 
     public record Folder(String id, String workspaceId, String parentId, String name,

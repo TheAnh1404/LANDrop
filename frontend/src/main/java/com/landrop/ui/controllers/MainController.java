@@ -140,7 +140,9 @@ public class MainController {
         FXMLLoader chatLoader = new FXMLLoader(getClass().getResource("/com/landrop/ui/chat-view.fxml"));
         Node chatNode = chatLoader.load();
         this.chatController = chatLoader.getController();
-        chatController.init(stateService, this);
+        if (mainApp != null && mainApp.getWorkspaceChatStateService() != null && mainApp.getWorkspaceStateService() != null) {
+            chatController.init(mainApp.getWorkspaceChatStateService(), mainApp.getWorkspaceStateService(), this);
+        }
         viewCache.put(NavigationTab.CHAT, chatNode);
 
         // 5. Transfers View

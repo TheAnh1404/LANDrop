@@ -42,7 +42,7 @@ public final class CloudMapper {
         required(dto);
         return new Domain.Message(dto.id(), dto.channelId(), dto.senderId(), dto.content(),
                 enumValue(Domain.MessageType.class, dto.type()), dto.replyToId(), dto.fileId(),
-                timestamp(dto.createdAt()), timestamp(dto.updatedAt()));
+                timestamp(dto.createdAt()), timestamp(dto.updatedAt()), null, null);
     }
 
     public static Domain.Folder folder(Dto.FolderResponse dto) {
