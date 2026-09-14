@@ -27,6 +27,7 @@ public final class WorkspaceHttpServer {
     private final AuthMiddleware auth;
     private final WorkspaceService service;
     private final com.landrop.chat.service.ChannelChatService channelService;
+    private final com.landrop.file.server.FileHttpServer fileHttpServer;
     private final ObjectMapper mapper;
 
     public WorkspaceHttpServer(AuthMiddleware auth, WorkspaceService service, ObjectMapper mapper) {
@@ -35,9 +36,18 @@ public final class WorkspaceHttpServer {
 
     public WorkspaceHttpServer(AuthMiddleware auth, WorkspaceService service,
                                com.landrop.chat.service.ChannelChatService channelService, ObjectMapper mapper) {
+        this(auth, service, channelService, null, mapper);
+    }
+
+    public WorkspaceHttpServer(AuthMiddleware auth, WorkspaceService service,
+                               com.landrop.chat.service.ChannelChatService channelService,
+                               com.landrop.file.server.FileHttpServer fileHttpServer,
+                               ObjectMapper mapper) {
         this.auth = Objects.requireNonNull(auth);
         this.service = Objects.requireNonNull(service);
         this.channelService = Objects.requireNonNull(channelService);
+        this.fileHttpServer = fileHttpServer != null ? fileHttpServer
+            : new com.landrop.file.server.FileHttpServer(auth, new com.landrop.file.service.FileManagementService(), new com.landrop.file.service.TransferCoordinationService(), mapper);
         this.mapper = Objects.requireNonNull(mapper);
     }
 
@@ -95,6 +105,20 @@ public final class WorkspaceHttpServer {
                 UUID id = uuid(parts[0]);
                 if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) listChannels(exchange, claims.userId(), id);
                 else if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) createChannel(exchange, claims.userId(), id);
+                else method(exchange, "GET, POST");
+                return;
+            }
+            if (parts.length == 2 && "files".equals(parts[1])) {
+                UUID id = uuid(parts[0]);
+                if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) fileHttpServer.listWorkspaceFiles(exchange, claims.userId(), id);
+                else if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) fileHttpServer.createWorkspaceFile(exchange, claims.userId(), id);
+                else method(exchange, "GET, POST");
+                return;
+            }
+            if (parts.length == 2 && "folders".equals(parts[1])) {
+                UUID id = uuid(parts[0]);
+                if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) fileHttpServer.listWorkspaceFolders(exchange, claims.userId(), id);
+                else if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) fileHttpServer.createWorkspaceFolder(exchange, claims.userId(), id);
                 else method(exchange, "GET, POST");
                 return;
             }
@@ -186,5 +210,5 @@ public final class WorkspaceHttpServer {
     private void method(HttpExchange e,String allowed)throws IOException{e.getResponseHeaders().set("Allow",allowed);sendError(e,405,"METHOD_NOT_ALLOWED","Allowed methods: "+allowed);}
     private void send(HttpExchange e,int status,Object body)throws IOException{if(body==null){e.sendResponseHeaders(status,-1);e.close();return;}byte[] bytes=mapper.writeValueAsBytes(body);e.getResponseHeaders().set("Content-Type","application/json; charset=utf-8");e.sendResponseHeaders(status,bytes.length);try(OutputStream out=e.getResponseBody()){out.write(bytes);}}
     private void sendError(HttpExchange e,int status,String code,String message)throws IOException{send(e,status,Map.of("error",Map.of("code",code,"message",message)));}
-    private void handleError(HttpExchange e,Exception x)throws IOException{if(x instanceof com.landrop.chat.service.ChatException c){sendError(e,c.getStatus(),c.code(),c.getMessage());return;}if(x instanceof WorkspaceException w){sendError(e,w.getStatusCode(),w.code(),w.getMessage());return;}if(x instanceof AuthException a){sendError(e,a.getStatusCode(),"UNAUTHENTICATED","Authentication required.");return;}if(x instanceof SQLException){AppLogger.error(TAG,"Workspace database request failed",x);sendError(e,503,"DATABASE_UNAVAILABLE","Workspace data is temporarily unavailable.");return;}AppLogger.error(TAG,"Workspace request failed",x);sendError(e,500,"INTERNAL_ERROR","The request could not be completed.");}
+    private void handleError(HttpExchange e,Exception x)throws IOException{if(x instanceof com.landrop.file.exception.FileException f){sendError(e,f.getStatusCode(),f.code(),f.getMessage());return;}if(x instanceof com.landrop.chat.service.ChatException c){sendError(e,c.getStatus(),c.code(),c.getMessage());return;}if(x instanceof WorkspaceException w){sendError(e,w.getStatusCode(),w.code(),w.getMessage());return;}if(x instanceof AuthException a){sendError(e,a.getStatusCode(),"UNAUTHENTICATED","Authentication required.");return;}if(x instanceof SQLException){AppLogger.error(TAG,"Workspace database request failed",x);sendError(e,503,"DATABASE_UNAVAILABLE","Workspace data is temporarily unavailable.");return;}AppLogger.error(TAG,"Workspace request failed",x);sendError(e,500,"INTERNAL_ERROR","The request could not be completed.");}
 }

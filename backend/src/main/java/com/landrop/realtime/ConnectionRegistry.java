@@ -59,6 +59,12 @@ public final class ConnectionRegistry {
         return users.getOrDefault(userId, Map.of()).size();
     }
 
+    public synchronized List<Connection> getConnections(UUID userId) {
+        var devices = users.get(userId);
+        if (devices == null) return List.of();
+        return new ArrayList<>(devices.values());
+    }
+
     public synchronized List<Connection> snapshot() {
         return users.values().stream().flatMap(m -> m.values().stream()).toList();
     }

@@ -25,7 +25,8 @@ public final class DatabaseMigrator {
         "/db/migration/V1__init_cloud_database_phase14.sql",
         "/db/migration/V2__auth_sessions_phase15.sql",
         "/db/migration/V3__realtime_message_identity.sql",
-        "/db/migration/V4__persistent_chat_phase17.sql"
+        "/db/migration/V4__persistent_chat_phase17.sql",
+        "/db/migration/V5__file_management_phase18.sql"
     );
 
     private final DatabaseManager databaseManager;
@@ -81,7 +82,9 @@ public final class DatabaseMigrator {
             "messages",
             "folders",
             "files",
-            "refresh_tokens"
+            "refresh_tokens",
+            "devices",
+            "transfers"
         };
 
         List<String> foundTables = new ArrayList<>();
@@ -113,6 +116,20 @@ public final class DatabaseMigrator {
                     if (!rs.next() || !rs.getBoolean(1)) {
                         throw new SQLException("Required column " + col + " missing in messages table");
                     }
+                }
+            }
+
+            // Verify deleted_at column in files and folders
+            String filesDelSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'files' AND column_name = 'deleted_at')";
+            try (ResultSet rs = stmt.executeQuery(filesDelSql)) {
+                if (!rs.next() || !rs.getBoolean(1)) {
+                    throw new SQLException("Required column deleted_at missing in files table");
+                }
+            }
+            String foldersDelSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'folders' AND column_name = 'deleted_at')";
+            try (ResultSet rs = stmt.executeQuery(foldersDelSql)) {
+                if (!rs.next() || !rs.getBoolean(1)) {
+                    throw new SQLException("Required column deleted_at missing in folders table");
                 }
             }
         }

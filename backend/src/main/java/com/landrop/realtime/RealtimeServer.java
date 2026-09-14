@@ -16,7 +16,7 @@ import java.util.*;
 import java.util.concurrent.*;
 
 /** Authenticated, channel-scoped and room-aware WebSocket chat for one shared backend process. */
-public final class RealtimeServer extends WebSocketServer implements ChannelBroadcaster {
+public final class RealtimeServer extends WebSocketServer implements ChannelBroadcaster, com.landrop.file.service.TransferBroadcaster {
     private static final String PREFIX = "/api/realtime/channels/";
     private static final String BASE_PATH = "/api/realtime";
     private static final ObjectMapper JSON = JsonMapper.builder()
@@ -25,6 +25,7 @@ public final class RealtimeServer extends WebSocketServer implements ChannelBroa
     private final SocketAuthenticator authenticator;
     private final RealtimeStore store;
     private final ConnectionRegistry registry = new ConnectionRegistry();
+    private volatile com.landrop.file.service.TransferCoordinationService transferService;
     // A short integration-phase serialization boundary guarantees persist -> broadcast order.
     private final Object dispatchLock = new Object();
     private final CompletableFuture<Void> ready = new CompletableFuture<>();
@@ -42,6 +43,9 @@ public final class RealtimeServer extends WebSocketServer implements ChannelBroa
 
     public ConnectionRegistry registry() { return registry; }
     public void awaitReady() throws Exception { ready.get(10, TimeUnit.SECONDS); }
+    public void setTransferService(com.landrop.file.service.TransferCoordinationService transferService) {
+        this.transferService = transferService;
+    }
 
     @Override
     public void broadcast(UUID channelId, Object event) {
@@ -71,6 +75,9 @@ public final class RealtimeServer extends WebSocketServer implements ChannelBroa
             }
 
             String label = request.getFieldValue("X-Device-Label");
+            if (label == null || label.isBlank()) {
+                label = request.getFieldValue("X-Device-Id");
+            }
             if (label != null && (label.length() > 80 || label.chars().anyMatch(Character::isISOControl))) {
                 throw new IllegalArgumentException();
             }
@@ -130,6 +137,14 @@ public final class RealtimeServer extends WebSocketServer implements ChannelBroa
                 case "channel.join" -> Set.of("type", "requestId", "channelId", "workspaceId");
                 case "channel.leave" -> Set.of("type", "requestId", "channelId");
                 case "history" -> Set.of("type", "requestId", "channelId", "limit", "before");
+                case "transfer.request" -> Set.of("type", "requestId", "fileId", "receiverUserId", "senderDeviceId", "receiverDeviceId");
+                case "transfer.accept" -> Set.of("type", "requestId", "transferId", "receiverDeviceId");
+                case "transfer.reject" -> Set.of("type", "requestId", "transferId", "reason");
+                case "transfer.cancel" -> Set.of("type", "requestId", "transferId", "reason");
+                case "transfer.progress" -> Set.of("type", "requestId", "transferId", "bytesTransferred", "totalBytes", "speedBytesPerSec");
+                case "transfer.complete" -> Set.of("type", "requestId", "transferId");
+                case "transfer.fail" -> Set.of("type", "requestId", "transferId", "error");
+                case "device.register" -> Set.of("type", "requestId", "deviceId", "deviceName", "peerId", "ipAddress", "port");
                 default -> throw invalid();
             };
 
@@ -203,16 +218,80 @@ public final class RealtimeServer extends WebSocketServer implements ChannelBroa
                         var page = store.history(connection.principal().userId(), channelId, limit, before);
                         send(socket, Map.of("type", "history", "requestId", requestId, "page", page));
                     }
+                    case "transfer.request" -> {
+                        if (transferService == null) throw invalid();
+                        UUID fileId = uuid(command, "fileId");
+                        UUID receiverUserId = uuid(command, "receiverUserId");
+                        String senderDeviceId = command.hasNonNull("senderDeviceId") ? string(command, "senderDeviceId") : connection.deviceLabel();
+                        String receiverDeviceId = command.hasNonNull("receiverDeviceId") ? string(command, "receiverDeviceId") : null;
+                        var result = transferService.requestTransfer(connection.principal().userId(), fileId, receiverUserId, senderDeviceId, receiverDeviceId);
+                        send(socket, Map.of("type", "transfer.requested", "requestId", requestId, "data", result));
+                    }
+                    case "transfer.accept" -> {
+                        if (transferService == null) throw invalid();
+                        UUID transferId = uuid(command, "transferId");
+                        String receiverDeviceId = command.hasNonNull("receiverDeviceId") ? string(command, "receiverDeviceId") : connection.deviceLabel();
+                        var result = transferService.acceptTransfer(connection.principal().userId(), transferId, receiverDeviceId);
+                        send(socket, Map.of("type", "transfer.accepted", "requestId", requestId, "data", result));
+                    }
+                    case "transfer.reject" -> {
+                        if (transferService == null) throw invalid();
+                        UUID transferId = uuid(command, "transferId");
+                        String reason = command.hasNonNull("reason") ? string(command, "reason") : null;
+                        var result = transferService.rejectTransfer(connection.principal().userId(), transferId, reason);
+                        send(socket, Map.of("type", "transfer.rejected", "requestId", requestId, "data", result));
+                    }
+                    case "transfer.cancel" -> {
+                        if (transferService == null) throw invalid();
+                        UUID transferId = uuid(command, "transferId");
+                        String reason = command.hasNonNull("reason") ? string(command, "reason") : null;
+                        var result = transferService.cancelTransfer(connection.principal().userId(), transferId, reason);
+                        send(socket, Map.of("type", "transfer.cancelled", "requestId", requestId, "data", result));
+                    }
+                    case "transfer.progress" -> {
+                        if (transferService == null) throw invalid();
+                        UUID transferId = uuid(command, "transferId");
+                        long transferred = command.path("bytesTransferred").asLong(0);
+                        long total = command.path("totalBytes").asLong(0);
+                        double speed = command.path("speedBytesPerSec").asDouble(0.0);
+                        transferService.updateProgress(connection.principal().userId(), transferId, transferred, total, speed);
+                        send(socket, Map.of("type", "transfer.progress.ack", "requestId", requestId));
+                    }
+                    case "transfer.complete" -> {
+                        if (transferService == null) throw invalid();
+                        UUID transferId = uuid(command, "transferId");
+                        var result = transferService.completeTransfer(connection.principal().userId(), transferId);
+                        send(socket, Map.of("type", "transfer.completed", "requestId", requestId, "data", result));
+                    }
+                    case "transfer.fail" -> {
+                        if (transferService == null) throw invalid();
+                        UUID transferId = uuid(command, "transferId");
+                        String error = command.hasNonNull("error") ? string(command, "error") : "Transfer failed";
+                        var result = transferService.failTransfer(connection.principal().userId(), transferId, error);
+                        send(socket, Map.of("type", "transfer.failed", "requestId", requestId, "data", result));
+                    }
+                    case "device.register" -> {
+                        if (transferService == null) throw invalid();
+                        String deviceId = command.hasNonNull("deviceId") ? string(command, "deviceId") : connection.deviceLabel();
+                        String deviceName = command.hasNonNull("deviceName") ? string(command, "deviceName") : "Device";
+                        String peerId = command.hasNonNull("peerId") ? string(command, "peerId") : null;
+                        String ipAddress = command.hasNonNull("ipAddress") ? string(command, "ipAddress") : null;
+                        Integer port = command.hasNonNull("port") ? command.get("port").asInt() : null;
+                        var result = transferService.registerDevice(connection.principal().userId(), deviceId, deviceName, peerId, ipAddress, port);
+                        send(socket, Map.of("type", "device.registered", "requestId", requestId, "data", result));
+                    }
                 }
             }
         } catch (RealtimeException e) {
             error(socket, requestId, e.code(), e.getMessage());
         } catch (ChatException e) {
             error(socket, requestId, e.code(), e.getMessage());
+        } catch (com.landrop.file.exception.FileException e) {
+            error(socket, requestId, e.code(), e.getMessage());
         } catch (java.sql.SQLException e) {
-            error(socket, requestId, "PERSISTENCE_UNAVAILABLE", "Chat storage is unavailable. Retry with the same clientMessageId.");
+            error(socket, requestId, "PERSISTENCE_UNAVAILABLE", "Chat or file storage is unavailable.");
         } catch (Exception e) {
-            error(socket, requestId, "INVALID_REQUEST", "Invalid chat request.");
+            error(socket, requestId, "INVALID_REQUEST", "Invalid request.");
         }
     }
 
@@ -240,6 +319,44 @@ public final class RealtimeServer extends WebSocketServer implements ChannelBroa
                 });
                 if (permitted) send(connection.socket(), event);
                 else connection.socket().close(1008, "Channel access is unavailable.");
+            }
+        }
+    }
+
+    @Override
+    public void broadcast(UUID userId, String deviceId, String event, Object payload) {
+        synchronized (dispatchLock) {
+            List<ConnectionRegistry.Connection> targets = registry.getConnections(userId);
+            if (targets.isEmpty()) return;
+
+            Map<String, Object> message = new LinkedHashMap<>();
+            message.put("type", event);
+            message.put("event", event);
+            if (payload instanceof Map<?, ?> map) {
+                map.forEach((k, v) -> message.put(String.valueOf(k), v));
+            } else if (payload != null) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> props = JSON.convertValue(payload, Map.class);
+                    props.forEach((k, v) -> message.put(String.valueOf(k), v));
+                } catch (Exception ignored) {}
+                message.put("data", payload);
+                message.put("transfer", payload);
+            }
+
+            boolean sent = false;
+            if (deviceId != null && !deviceId.isBlank()) {
+                for (var conn : targets) {
+                    if (deviceId.equals(conn.deviceLabel())) {
+                        send(conn.socket(), message);
+                        sent = true;
+                    }
+                }
+            }
+            if (!sent) {
+                for (var conn : targets) {
+                    send(conn.socket(), message);
+                }
             }
         }
     }

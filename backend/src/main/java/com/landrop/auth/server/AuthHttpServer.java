@@ -48,6 +48,9 @@ public class AuthHttpServer {
     private final WorkspaceHttpServer workspaceHttpServer;
     private final com.landrop.chat.server.ChatHttpServer chatHttpServer;
     private final com.landrop.chat.service.ChannelChatService channelChatService;
+    private final com.landrop.file.service.FileManagementService fileManagementService;
+    private final com.landrop.file.service.TransferCoordinationService transferCoordinationService;
+    private final com.landrop.file.server.FileHttpServer fileHttpServer;
     private final ObjectMapper objectMapper;
     private HttpServer httpServer;
 
@@ -66,12 +69,23 @@ public class AuthHttpServer {
 
     public AuthHttpServer(int port, AuthService authService, AuthMiddleware authMiddleware,
                           WorkspaceService workspaceService, com.landrop.chat.service.ChannelChatService channelChatService) {
+        this(port, authService, authMiddleware, workspaceService, channelChatService,
+             new com.landrop.file.service.FileManagementService(), new com.landrop.file.service.TransferCoordinationService());
+    }
+
+    public AuthHttpServer(int port, AuthService authService, AuthMiddleware authMiddleware,
+                          WorkspaceService workspaceService, com.landrop.chat.service.ChannelChatService channelChatService,
+                          com.landrop.file.service.FileManagementService fileManagementService,
+                          com.landrop.file.service.TransferCoordinationService transferCoordinationService) {
         this.port = port;
         this.authService = authService;
         this.authMiddleware = authMiddleware;
         this.objectMapper = createObjectMapper();
         this.channelChatService = channelChatService != null ? channelChatService : new com.landrop.chat.service.ChannelChatService();
-        this.workspaceHttpServer = new WorkspaceHttpServer(authMiddleware, workspaceService, this.channelChatService, objectMapper);
+        this.fileManagementService = fileManagementService != null ? fileManagementService : new com.landrop.file.service.FileManagementService();
+        this.transferCoordinationService = transferCoordinationService != null ? transferCoordinationService : new com.landrop.file.service.TransferCoordinationService();
+        this.fileHttpServer = new com.landrop.file.server.FileHttpServer(authMiddleware, this.fileManagementService, this.transferCoordinationService, objectMapper);
+        this.workspaceHttpServer = new WorkspaceHttpServer(authMiddleware, workspaceService, this.channelChatService, this.fileHttpServer, objectMapper);
         this.chatHttpServer = new com.landrop.chat.server.ChatHttpServer(authMiddleware, this.channelChatService, objectMapper);
     }
 
@@ -113,6 +127,7 @@ public class AuthHttpServer {
         httpServer.createContext("/api/auth/health", this::handleHealth);
         workspaceHttpServer.register(httpServer);
         chatHttpServer.register(httpServer);
+        fileHttpServer.register(httpServer);
 
         httpServer.start();
         AppLogger.info(TAG, "Auth HTTP Server started on port " + getPort() + " (Virtual Threads enabled)");
@@ -120,6 +135,18 @@ public class AuthHttpServer {
 
     public com.landrop.chat.service.ChannelChatService getChannelChatService() {
         return channelChatService;
+    }
+
+    public com.landrop.file.service.FileManagementService getFileManagementService() {
+        return fileManagementService;
+    }
+
+    public com.landrop.file.service.TransferCoordinationService getTransferCoordinationService() {
+        return transferCoordinationService;
+    }
+
+    public com.landrop.file.server.FileHttpServer getFileHttpServer() {
+        return fileHttpServer;
     }
 
     public synchronized void stop(int delaySeconds) {
