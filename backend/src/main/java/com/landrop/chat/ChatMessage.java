@@ -6,7 +6,9 @@ import java.util.Objects;
  * Immutable representation of a chat message in the LANDrop peer chat system.
  *
  * @param requestId the unique correlation ID of the packet
- * @param sender the sender identifier or peer name
+ * LAN transport message only; sender is not an authenticated product User identity.
+ * Persistent authenticated chat uses com.landrop.realtime.RealtimeStore.Message.
+ * @param sender the LAN sender identifier or peer name
  * @param content the text payload of the message
  * @param timestamp epoch millisecond timestamp when the message was created or received
  */

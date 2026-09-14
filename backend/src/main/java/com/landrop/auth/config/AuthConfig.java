@@ -1,6 +1,5 @@
 package com.landrop.auth.config;
 
-import com.landrop.config.AppConfig;
 import com.landrop.util.AppLogger;
 
 import java.io.BufferedReader;
@@ -30,7 +29,21 @@ public final class AuthConfig {
     private AuthConfig() {}
 
     public static int getAuthPort() {
-        return AppConfig.getInt("landrop.auth.port", "AUTH_PORT", DEFAULT_AUTH_PORT);
+        return port("landrop.auth.port", "AUTH_PORT", DEFAULT_AUTH_PORT);
+    }
+
+    public static int getRealtimePort() { return port("landrop.realtime.port", "REALTIME_PORT", 3001); }
+
+    public static String getBindHost() {
+        String host = getResolvedValue("landrop.bind.host", "BIND_HOST");
+        return host == null || host.isBlank() ? "0.0.0.0" : host.trim();
+    }
+
+    private static int port(String property, String environment, int fallback) {
+        String value = getResolvedValue(property, environment);
+        int port = value == null || value.isBlank() ? fallback : Integer.parseInt(value.trim());
+        if (port < 1 || port > 65535) throw new IllegalArgumentException(environment + " must be between 1 and 65535");
+        return port;
     }
 
     public static String getJwtAccessSecret() {

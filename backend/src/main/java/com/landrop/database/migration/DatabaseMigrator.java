@@ -23,7 +23,8 @@ public final class DatabaseMigrator {
     private static final String TAG = "DatabaseMigrator";
     private static final List<String> MIGRATION_RESOURCES = List.of(
         "/db/migration/V1__init_cloud_database_phase14.sql",
-        "/db/migration/V2__auth_sessions_phase15.sql"
+        "/db/migration/V2__auth_sessions_phase15.sql",
+        "/db/migration/V3__realtime_message_identity.sql"
     );
 
     private final DatabaseManager databaseManager;
@@ -37,10 +38,10 @@ public final class DatabaseMigrator {
     }
 
     /**
-     * Executes all database migrations (V1, V2) against the connected database.
+     * Executes database migrations V1–V3 against the connected database.
      */
     public void migrate() throws SQLException, IOException {
-        AppLogger.info(TAG, "Starting cloud database schema migration (V1, V2)...");
+        AppLogger.info(TAG, "Starting cloud database schema migration (V1–V3)...");
 
         for (String resource : MIGRATION_RESOURCES) {
             String migrationSql = loadMigrationScript(resource);

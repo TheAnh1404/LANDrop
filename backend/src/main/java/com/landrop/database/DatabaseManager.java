@@ -22,6 +22,10 @@ public final class DatabaseManager implements AutoCloseable {
     private final AtomicBoolean closed = new AtomicBoolean(false);
 
     private DatabaseManager(String rawDatabaseUrl) {
+        this(rawDatabaseUrl, null);
+    }
+
+    private DatabaseManager(String rawDatabaseUrl, String schema) {
         if (rawDatabaseUrl == null || rawDatabaseUrl.isBlank()) {
             throw new IllegalArgumentException(
                 "DATABASE_URL is not defined. Set the DATABASE_URL environment variable or configure .env."
@@ -37,12 +41,20 @@ public final class DatabaseManager implements AutoCloseable {
         config.setIdleTimeout(DatabaseConfig.getIdleTimeoutMs());
         config.setMaxLifetime(DatabaseConfig.getMaxLifetimeMs());
         config.setPoolName("LANDrop-Neon-Pool");
+        if (schema != null) config.setSchema(schema);
 
         // Sensible connection pool properties for cloud databases (Neon)
         config.addDataSourceProperty("reWriteBatchedInserts", "true");
         config.addDataSourceProperty("stringtype", "unspecified");
 
         this.dataSource = new HikariDataSource(config);
+    }
+
+    /** Independent pool for schema-isolated integration runs; does not replace the application singleton. */
+    public static DatabaseManager forSchema(String databaseUrl, String schema) {
+        if (schema == null || !schema.matches("[a-z_][a-z0-9_]{0,62}"))
+            throw new IllegalArgumentException("Invalid schema name");
+        return new DatabaseManager(databaseUrl, schema);
     }
 
     private static void configureConnection(HikariConfig config, String rawUrl) {

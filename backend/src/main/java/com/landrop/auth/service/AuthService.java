@@ -154,7 +154,9 @@ public class AuthService {
                 .orElseThrow(() -> new UnauthorizedException("User not found"));
 
         // 5. Token rotation: revoke previous refresh token to prevent reuse attacks
-        refreshTokenRepository.revokeByTokenHash(tokenHash);
+        if (!refreshTokenRepository.revokeByTokenHash(tokenHash)) {
+            throw new UnauthorizedException("Refresh token has already been used");
+        }
 
         // 6. Issue fresh token pair
         return issueAuthTokens(user);

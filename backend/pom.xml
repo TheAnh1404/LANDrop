@@ -25,6 +25,11 @@
     </properties>
 
     <dependencies>
+        <dependency>
+            <groupId>org.java-websocket</groupId>
+            <artifactId>Java-WebSocket</artifactId>
+            <version>1.6.0</version>
+        </dependency>
         <!-- Jackson for JSON serialization of discovery protocol payloads -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
