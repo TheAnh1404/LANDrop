@@ -61,6 +61,18 @@ public class FoundationRealtimeServer extends WebSocketServer {
         ready.get(10, TimeUnit.SECONDS);
     }
 
+    /** Control-plane hook for the Admin Dashboard; no client auth model is changed here. */
+    public boolean disconnectClient(String clientInstanceId, String reasonCode, String reasonMessage) {
+        if (clientInstanceId == null || clientInstanceId.isBlank()) return false;
+        ClientConnection connection = clientRegistry.findByInstanceId(clientInstanceId).orElse(null);
+        if (connection == null) return false;
+        String code = reasonCode == null || reasonCode.isBlank() ? ProtocolConstants.ERR_ADMIN_DISCONNECT : reasonCode;
+        String message = reasonMessage == null || reasonMessage.isBlank() ? "Disconnected by server administrator." : reasonMessage;
+        sendEnvelope(connection.socket(), EventEnvelope.error(null, code, message));
+        connection.close(ProtocolConstants.CLOSE_ADMIN_DISCONNECT, code + ": " + message);
+        return true;
+    }
+
     @Override
     public void onStart() {
         // Schedule periodic heartbeat sweep
@@ -177,6 +189,8 @@ public class FoundationRealtimeServer extends WebSocketServer {
         String deviceName = root.hasNonNull("deviceName") ? root.path("deviceName").asText() : "Generic Device";
         String clientVersion = root.hasNonNull("clientVersion") ? root.path("clientVersion").asText() : "1.0.0";
         String platform = root.hasNonNull("platform") ? root.path("platform").asText() : "unknown";
+        String osVersion = root.hasNonNull("osVersion") ? root.path("osVersion").asText() : "unknown";
+        String architecture = root.hasNonNull("architecture") ? root.path("architecture").asText() : "unknown";
 
         String connectionId = UUID.randomUUID().toString();
         ClientConnection connection = new ClientConnection(
@@ -188,6 +202,8 @@ public class FoundationRealtimeServer extends WebSocketServer {
             protocolVer,
             clientVersion,
             platform,
+            osVersion,
+            architecture,
             socket
         );
 
@@ -378,6 +394,11 @@ public class FoundationRealtimeServer extends WebSocketServer {
 
     @Override
     public void stop(int timeout) throws InterruptedException {
+        for (ClientConnection connection : clientRegistry.activeConnections()) {
+            sendEnvelope(connection.socket(), EventEnvelope.error(null, ProtocolConstants.ERR_SERVER_SHUTDOWN,
+                    "Server is shutting down."));
+            connection.close(ProtocolConstants.CLOSE_SERVER_SHUTDOWN, ProtocolConstants.ERR_SERVER_SHUTDOWN);
+        }
         heartbeatMonitor.shutdownNow();
         super.stop(timeout);
     }

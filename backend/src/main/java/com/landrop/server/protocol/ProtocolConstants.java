@@ -16,6 +16,7 @@ public final class ProtocolConstants {
      * Server version identifier.
      */
     public static final String SERVER_VERSION = "1.0.0-foundation";
+    public static final String SERVER_NAME = "LANDrop Server";
 
     /**
      * Default network host (0.0.0.0 listens on all LAN interfaces).
@@ -57,6 +58,7 @@ public final class ProtocolConstants {
     public static final String EVENT_HEARTBEAT_ACK = "heartbeat_ack";
     public static final String EVENT_ECHO_ACK = "echo_ack";
     public static final String EVENT_ERROR = "error";
+    public static final String EVENT_DISCONNECT = "disconnect";
 
     // Error Codes
     public static final String ERR_PROTOCOL_VERSION_UNSUPPORTED = "PROTOCOL_VERSION_UNSUPPORTED";
@@ -68,4 +70,12 @@ public final class ProtocolConstants {
     public static final String ERR_TRANSFER_NOT_FOUND = "TRANSFER_NOT_FOUND";
     public static final String ERR_INVALID_TRANSFER_STATE = "INVALID_TRANSFER_STATE";
     public static final String ERR_INTERNAL_ERROR = "INTERNAL_ERROR";
+    public static final String ERR_SERVER_RESTARTING = "SERVER_RESTARTING";
+    public static final String ERR_SERVER_SHUTDOWN = "SERVER_SHUTDOWN";
+    public static final String ERR_ADMIN_DISCONNECT = "ADMIN_DISCONNECT";
+    public static final String ERR_SESSION_REVOKED = "SESSION_REVOKED";
+    public static final String ERR_ACCOUNT_DISABLED = "ACCOUNT_DISABLED";
+
+    public static final int CLOSE_ADMIN_DISCONNECT = 4001;
+    public static final int CLOSE_SERVER_SHUTDOWN = 1001;
 }

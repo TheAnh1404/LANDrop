@@ -50,6 +50,13 @@ public final class FrontendConfig {
         return DEFAULT_API_BASE_URL;
     }
 
+    public static boolean hasExplicitApiConfiguration(Map<String, String> namedArgs) {
+        return namedArgs != null && namedArgs.containsKey("api-url")
+                || nonBlank(System.getProperty("landrop.api.base-url"))
+                || nonBlank(System.getProperty("landrop.auth.base-url"))
+                || nonBlank(getEnv("LANDROP_API_URL", "VITE_API_URL", "API_URL"));
+    }
+
     /**
      * Resolves the WebSocket URL for real-time messaging.
      * Priority:
@@ -80,6 +87,15 @@ public final class FrontendConfig {
 
         return DEFAULT_WS_URL;
     }
+
+    public static boolean hasExplicitWsConfiguration(Map<String, String> namedArgs) {
+        return namedArgs != null && namedArgs.containsKey("ws-url")
+                || nonBlank(System.getProperty("landrop.ws.url"))
+                || nonBlank(getEnv("LANDROP_WS_URL", "VITE_WS_URL", "WS_URL"));
+    }
+
+    public static String validateApiBaseUrl(String value) { return validateUrl(value, "http", "https"); }
+    public static String validateWsUrl(String value) { return validateUrl(value, "ws", "wss"); }
 
     /**
      * Resolves the session profile partition name.
@@ -154,4 +170,22 @@ public final class FrontendConfig {
         }
         return trimmed;
     }
+
+    private static String validateUrl(String value, String... schemes) {
+        String normalized = normalizeUrl(stripQuotes(value));
+        try {
+            URI uri = URI.create(normalized);
+            boolean allowed = java.util.Arrays.stream(schemes).anyMatch(s -> s.equalsIgnoreCase(uri.getScheme()));
+            if (!allowed || uri.getHost() == null || uri.getHost().isBlank()) {
+                throw new IllegalArgumentException("Server address must include a valid " + String.join("/", schemes) + " URL.");
+            }
+            return normalized;
+        } catch (IllegalArgumentException error) {
+            throw error;
+        } catch (Exception error) {
+            throw new IllegalArgumentException("Invalid server address: " + value, error);
+        }
+    }
+
+    private static boolean nonBlank(String value) { return value != null && !value.isBlank(); }
 }

@@ -35,8 +35,8 @@ public final class ClientRealtimeService implements AutoCloseable {
     private static final int PROTOCOL_VERSION = FrontendConfig.PROTOCOL_VERSION;
     private static final Duration REQUEST_TIMEOUT = Duration.ofSeconds(12);
     private static final long[] BACKOFF_SECONDS = {1, 2, 5, 10};
-    private final URI wsUri;
-    private final HealthProbe health;
+    private volatile URI wsUri;
+    private volatile HealthProbe health;
     private final ClientInstanceService instance;
     private final Supplier<String> tokenSupplier;
     private final Supplier<String> deviceNameSupplier;
@@ -45,9 +45,14 @@ public final class ClientRealtimeService implements AutoCloseable {
     private final ScheduledExecutorService scheduler;
     private final ObjectProperty<ConnectionState> state = new SimpleObjectProperty<>(ConnectionState.IDLE);
     private final StringProperty connectionId = new SimpleStringProperty("");
+    private final StringProperty serverName = new SimpleStringProperty("");
+    private final StringProperty serverAddress = new SimpleStringProperty("");
     private final StringProperty serverVersion = new SimpleStringProperty("");
     private final IntegerProperty serverProtocolVersion = new SimpleIntegerProperty(-1);
+    private final StringProperty clientVersion = new SimpleStringProperty(FrontendConfig.CLIENT_VERSION);
+    private final StringProperty deviceName = new SimpleStringProperty("");
     private final StringProperty lastHeartbeat = new SimpleStringProperty("");
+    private final StringProperty disconnectReason = new SimpleStringProperty("");
     private final IntegerProperty reconnectAttempts = new SimpleIntegerProperty();
     private final Map<String, CopyOnWriteArrayList<Consumer<RealtimeEnvelope>>> subscribers = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<RealtimeEnvelope>> pending = new ConcurrentHashMap<>();
@@ -72,20 +77,36 @@ public final class ClientRealtimeService implements AutoCloseable {
         this.wsUri = Objects.requireNonNull(wsUri); this.health = Objects.requireNonNull(health);
         this.instance = Objects.requireNonNull(instance); this.tokenSupplier = Objects.requireNonNull(tokenSupplier);
         this.deviceNameSupplier = Objects.requireNonNull(deviceNameSupplier); this.transports = Objects.requireNonNull(transports); this.requestTimeout = Objects.requireNonNull(requestTimeout);
+        this.serverAddress.set(wsUri.toString());
+        this.deviceName.set(safeDeviceName());
+        this.clientVersion.set(clientVersion());
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> { Thread t = new Thread(r, "landrop-server-control"); t.setDaemon(true); return t; });
     }
     public ReadOnlyObjectProperty<ConnectionState> stateProperty() { return state; }
     public StringProperty connectionIdProperty() { return connectionId; }
+    public StringProperty serverNameProperty() { return serverName; }
+    public StringProperty serverAddressProperty() { return serverAddress; }
     public StringProperty serverVersionProperty() { return serverVersion; }
     public IntegerProperty serverProtocolVersionProperty() { return serverProtocolVersion; }
+    public StringProperty clientVersionProperty() { return clientVersion; }
+    public StringProperty deviceNameProperty() { return deviceName; }
     public StringProperty lastHeartbeatProperty() { return lastHeartbeat; }
+    public StringProperty disconnectReasonProperty() { return disconnectReason; }
     public IntegerProperty reconnectAttemptsProperty() { return reconnectAttempts; }
     public String clientInstanceId() { return instance.clientInstanceId(); }
     public ConnectionState state() { return state.get(); }
     public boolean isConnected() { return state() == ConnectionState.CONNECTED; }
     public CompletableFuture<Void> checkHealth() { return health.check(); }
     public void start() { explicitlyClosed.set(false); connect(false); }
-    public void reconnectNow() { stopTimers(); closeTransport(); reconnectAttempt = 0; explicitlyClosed.set(false); update(ConnectionState.DISCONNECTED); connect(true); }
+    public synchronized void reconfigure(URI nextWsUri, HealthProbe nextHealth) {
+        this.wsUri = Objects.requireNonNull(nextWsUri, "WebSocket URL is required");
+        this.health = Objects.requireNonNull(nextHealth, "Health probe is required");
+        serverAddress.set(nextWsUri.toString());
+        log("CONFIG_CHANGED");
+        stopTimers(); closeTransport(); reconnectAttempt = 0; explicitlyClosed.set(false);
+        disconnectReason.set(""); update(ConnectionState.DISCONNECTED); connect(true);
+    }
+    public void reconnectNow() { stopTimers(); closeTransport(); reconnectAttempt = 0; explicitlyClosed.set(false); disconnectReason.set(""); update(ConnectionState.DISCONNECTED); connect(true); }
 
     public AutoCloseable subscribe(String eventType, Consumer<RealtimeEnvelope> listener) {
         Objects.requireNonNull(eventType); Objects.requireNonNull(listener);
@@ -132,20 +153,24 @@ public final class ClientRealtimeService implements AutoCloseable {
         next.setListener(new RealtimeTransport.Listener() {
             @Override public void onOpen() { onSocketOpen(next); }
             @Override public void onMessage(String payload) { onSocketMessage(next, payload); }
-            @Override public void onClose(int code, String reason) { onSocketLost(next, new IllegalStateException("WebSocket closed (" + code + "): " + reason)); }
+            @Override public void onClose(int code, String reason) { onSocketLost(next, new IllegalStateException("WebSocket closed (" + code + "): " + reason), reason); }
             @Override public void onError(Throwable error) { onSocketLost(next, error); }
         });
         next.connect().exceptionally(error -> { onSocketLost(next, error); return null; });
     }
     private void onSocketOpen(RealtimeTransport source) {
         if (source != transport || explicitlyClosed.get()) return;
-        log("WS_CONNECTED"); log("HANDSHAKING"); update(ConnectionState.HANDSHAKING);
+        log("SERVER_CONNECTED"); log("HANDSHAKING"); update(ConnectionState.HANDSHAKING);
         var hello = RealtimeEnvelope.newPayload();
         hello.put("protocolVersion", PROTOCOL_VERSION);
         hello.put("clientVersion", clientVersion());
         hello.put("clientInstanceId", instance.clientInstanceId());
         hello.put("deviceName", safeDeviceName());
         hello.put("platform", instance.platform());
+        hello.put("osVersion", instance.osVersion());
+        hello.put("architecture", instance.architecture());
+        clientVersion.set(clientVersion());
+        deviceName.set(safeDeviceName());
         RealtimeEnvelope helloEvent = RealtimeEnvelope.create("hello", hello);
         sendHello(helloEvent).whenComplete((ignored, error) -> { if (error != null) handshakeFailed(error); });
         cancel(handshakeTimeout);
@@ -159,36 +184,54 @@ public final class ClientRealtimeService implements AutoCloseable {
         if ("welcome".equals(event.type())) { welcome(event); return; }
         if ("error".equals(event.type())) {
             CompletableFuture<RealtimeEnvelope> request = removePending(event.requestId());
-            IllegalStateException failure = new IllegalStateException(event.payload().path("message").asText("Server rejected request."));
-            if (request != null) request.completeExceptionally(failure); dispatch(event); return;
+            String code = event.payload().path("code").asText("");
+            String message = event.payload().path("message").asText("Server rejected request.");
+            ServerErrorException failure = new ServerErrorException(code, message);
+            if (request != null) request.completeExceptionally(failure);
+            dispatch(event);
+            if (isTerminalCode(code)) { markExplicitDisconnect(code, message); closeTransport(); }
+            return;
         }
         boolean heartbeatAck = "heartbeat_ack".equals(event.type());
         if (heartbeatAck) lastHeartbeat.set(java.time.Instant.now().toString());
         CompletableFuture<RealtimeEnvelope> request = removePending(event.requestId());
         if (request != null) request.complete(event);
         boolean delivered = dispatch(event);
+        if ("disconnect".equals(event.type())) {
+            markExplicitDisconnect(event.payload().path("code").asText("ADMIN_DISCONNECT"), event.payload().path("message").asText("Disconnected by server."));
+            closeTransport();
+            return;
+        }
         if (!heartbeatAck && request == null && !delivered) log("UNKNOWN_SERVER_EVENT");
     }
     private void welcome(RealtimeEnvelope event) {
         int version = event.payload().path("protocolVersion").asInt(-1);
-        if (version != PROTOCOL_VERSION) { handshakeFailed(new IllegalStateException("Unsupported server protocol version: " + version)); return; }
+        if (version != PROTOCOL_VERSION) {
+            markExplicitDisconnect("PROTOCOL_VERSION_UNSUPPORTED", "Unsupported server protocol version: " + version);
+            update(ConnectionState.ERROR); closeTransport(); return;
+        }
         cancel(handshakeTimeout);
         connectionId.set(event.payload().path("connectionId").asText(""));
+        serverName.set(event.payload().path("serverName").asText("LANDrop Server"));
         serverVersion.set(event.payload().path("serverVersion").asText(""));
         serverProtocolVersion.set(version);
+        disconnectReason.set("");
+        serverAddress.set(wsUri.toString());
         boolean reconnected = reconnectAttempt > 0;
-        reconnectAttempt = 0; reconnectAttempts.set(0); update(ConnectionState.CONNECTED); log("HANDSHAKE_OK"); if (reconnected) log("RECONNECTED");
+        reconnectAttempt = 0; update(ConnectionState.CONNECTED); log("HANDSHAKE_OK"); if (reconnected) log("RECONNECTED");
         long heartbeatMillis = event.payload().path("heartbeatIntervalMs").asLong(30_000L);
         if (heartbeatMillis < 1_000L) heartbeatMillis = 1_000L;
         startHeartbeat(heartbeatMillis);
         dispatch(event);
     }
-    private void handshakeFailed(Throwable error) { if (state() != ConnectionState.HANDSHAKING || explicitlyClosed.get()) return; log("HANDSHAKE_FAILED"); update(ConnectionState.ERROR); closeTransport(); scheduleReconnect(); }
-    private synchronized void onSocketLost(RealtimeTransport source, Throwable error) {
+    private void handshakeFailed(Throwable error) { if (state() != ConnectionState.HANDSHAKING || explicitlyClosed.get()) return; log("HANDSHAKE_FAILED"); update(ConnectionState.ERROR); closeTransport(); if (!isTerminalDisconnect()) scheduleReconnect(); }
+    private void onSocketLost(RealtimeTransport source, Throwable error) { onSocketLost(source, error, ""); }
+    private synchronized void onSocketLost(RealtimeTransport source, Throwable error, String closeReason) {
         if (source != transport) return;
+        classifyCloseReason(closeReason);
         closeTransport(); stopTimers(); failPending(error);
         if (explicitlyClosed.get()) { update(ConnectionState.DISCONNECTED); return; }
-        log("WS_DISCONNECTED"); update(ConnectionState.DISCONNECTED); scheduleReconnect();
+        log("SERVER_DISCONNECTED"); update(ConnectionState.DISCONNECTED); if (!isTerminalDisconnect()) scheduleReconnect();
     }
     private synchronized void scheduleReconnect() {
         if (explicitlyClosed.get() || reconnectTask != null && !reconnectTask.isDone()) return;
@@ -201,7 +244,6 @@ public final class ClientRealtimeService implements AutoCloseable {
         cancel(heartbeatTask);
         heartbeatTask = scheduler.scheduleAtFixedRate(() -> {
             if (isConnected()) {
-                lastHeartbeat.set(java.time.Instant.now().toString());
                 log("HEARTBEAT_SENT");
                 send("heartbeat", RealtimeEnvelope.newPayload()).exceptionally(error -> null);
             }
@@ -233,6 +275,35 @@ public final class ClientRealtimeService implements AutoCloseable {
     private void stopTimers() { cancel(heartbeatTask); heartbeatTask = null; cancel(handshakeTimeout); handshakeTimeout = null; }
     private static void cancel(ScheduledFuture<?> task) { if (task != null) task.cancel(false); }
     private void closeTransport() { RealtimeTransport current = transport; transport = null; if (current != null) current.close(); }
+    private void markExplicitDisconnect(String code, String message) {
+        disconnectReason.set(code + (message == null || message.isBlank() ? "" : ": " + message));
+        if ("ADMIN_DISCONNECT".equals(code)) log("ADMIN_DISCONNECTED");
+        if (isTerminalCode(code)) {
+            explicitlyClosed.set(true);
+            stopTimers();
+            failPending(new ServerErrorException(code, message));
+            update(ConnectionState.DISCONNECTED);
+        }
+    }
+    private void classifyCloseReason(String reason) {
+        if (reason == null || reason.isBlank()) return;
+        String upper = reason.toUpperCase(java.util.Locale.ROOT);
+        for (String code : TERMINAL_CODES) {
+            if (upper.contains(code)) { markExplicitDisconnect(code, reason); return; }
+        }
+        if (upper.contains("SERVER_RESTARTING")) disconnectReason.set("SERVER_RESTARTING: " + reason);
+    }
+    private boolean isTerminalDisconnect() {
+        String reason = disconnectReason.get();
+        return explicitlyClosed.get() || (!reason.isBlank() && isTerminalCode(reason.split(":", 2)[0]));
+    }
+    private static boolean isTerminalCode(String code) {
+        return java.util.Arrays.asList(TERMINAL_CODES).contains(code);
+    }
+    private static final String[] TERMINAL_CODES = {
+            "ADMIN_DISCONNECT", "SERVER_SHUTDOWN", "SESSION_REVOKED",
+            "ACCOUNT_DISABLED", "PROTOCOL_VERSION_UNSUPPORTED"
+    };
     // This is a state model, not a scene node. Controllers marshal their UI work to the FX thread.
     // Keeping it synchronous also makes WELCOME atomically establish CONNECTED before dispatching subscribers.
     private void update(ConnectionState next) { state.set(next); }

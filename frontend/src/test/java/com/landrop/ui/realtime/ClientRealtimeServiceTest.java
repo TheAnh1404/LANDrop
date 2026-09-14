@@ -24,10 +24,19 @@ class ClientRealtimeServiceTest {
             RealtimeEnvelope hello = RealtimeEnvelope.parse(transport.sent.getFirst());
             assertEquals("hello", hello.type());
             assertEquals(1, hello.payload().path("protocolVersion").asInt());
+            assertFalse(hello.payload().path("clientInstanceId").asText().isBlank());
+            assertEquals("Laptop", hello.payload().path("deviceName").asText());
+            assertFalse(hello.payload().path("platform").asText().isBlank());
+            assertFalse(hello.payload().path("clientVersion").asText().isBlank());
+            assertFalse(hello.payload().path("osVersion").asText().isBlank());
+            assertFalse(hello.payload().path("architecture").asText().isBlank());
 
             transport.receive(new RealtimeEnvelope("welcome", hello.requestId(), "2026-01-01T00:00:00Z",
-                    RealtimeEnvelope.newPayload().put("protocolVersion", 1).put("heartbeatIntervalMs", 60_000)).toJson());
+                    RealtimeEnvelope.newPayload().put("protocolVersion", 1).put("heartbeatIntervalMs", 60_000)
+                            .put("serverName", "Test Server").put("serverVersion", "test-1")).toJson());
             assertEquals(ConnectionState.CONNECTED, client.state());
+            assertEquals("Test Server", client.serverNameProperty().get());
+            assertEquals("test-1", client.serverVersionProperty().get());
 
             var payload = RealtimeEnvelope.newPayload().put("message", "hello server");
             CompletableFuture<RealtimeEnvelope> response = client.request("echo", payload);
@@ -71,6 +80,25 @@ class ClientRealtimeServiceTest {
     void clientInstanceIdPersistsWithinTheSameProfile() {
         String profile = "instance-" + System.nanoTime();
         assertEquals(new ClientInstanceService(profile).clientInstanceId(), new ClientInstanceService(profile).clientInstanceId());
+    }
+
+    @Test
+    void adminDisconnectCleansUpWithoutSchedulingReconnect() {
+        FakeTransport transport = new FakeTransport();
+        ClientRealtimeService client = new ClientRealtimeService(URI.create("ws://server/api/realtime"),
+                () -> CompletableFuture.completedFuture(null), new ClientInstanceService("admin-disconnect-" + System.nanoTime()), () -> "token", () -> "Laptop",
+                (uri, token) -> transport);
+        try {
+            client.start();
+            RealtimeEnvelope hello = RealtimeEnvelope.parse(transport.sent.getFirst());
+            transport.receive(new RealtimeEnvelope("welcome", hello.requestId(), "2026-01-01T00:00:00Z",
+                    RealtimeEnvelope.newPayload().put("protocolVersion", 1).put("heartbeatIntervalMs", 60_000)).toJson());
+            transport.receive(new RealtimeEnvelope("error", null, "2026-01-01T00:00:01Z",
+                    RealtimeEnvelope.newPayload().put("code", "ADMIN_DISCONNECT").put("message", "Removed by admin")).toJson());
+            assertEquals(ConnectionState.DISCONNECTED, client.state());
+            assertTrue(client.disconnectReasonProperty().get().startsWith("ADMIN_DISCONNECT"));
+            assertEquals(0, client.reconnectAttemptsProperty().get());
+        } finally { client.close(); }
     }
 
     private static final class FakeTransport implements RealtimeTransport {

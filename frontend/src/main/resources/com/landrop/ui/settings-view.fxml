@@ -19,18 +19,28 @@
             <Label text="LANDrop Server Connection" styleClass="card-title"/>
             <VBox styleClass="form-group">
                 <Label text="API URL" styleClass="form-label"/>
-                <TextField fx:id="apiUrlField" editable="false" styleClass="form-readonly-value"/>
+                <TextField fx:id="apiUrlField" promptText="http://server:3000/api"/>
             </VBox>
             <VBox styleClass="form-group">
                 <Label text="WebSocket URL" styleClass="form-label"/>
-                <TextField fx:id="wsUrlField" editable="false" styleClass="form-readonly-value"/>
+                <TextField fx:id="wsUrlField" promptText="ws://server:3001/api/realtime"/>
             </VBox>
             <Label fx:id="serverStatusLabel" text="Server: Disconnected" wrapText="true" style="-fx-text-fill: #64748b;"/>
+            <Button text="Save address &amp; Connect" styleClass="primary-button" onAction="#onApplyServerClicked"/>
+            <HBox spacing="16.0">
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="Server Name" styleClass="form-label"/><TextField fx:id="serverNameField" editable="false" styleClass="form-readonly-value"/></VBox>
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="Server Address" styleClass="form-label"/><TextField fx:id="serverAddressField" editable="false" styleClass="form-readonly-value"/></VBox>
+            </HBox>
             <HBox spacing="16.0">
                 <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="Connection ID" styleClass="form-label"/><TextField fx:id="connectionIdField" editable="false" styleClass="form-readonly-value"/></VBox>
                 <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="Client Instance ID" styleClass="form-label"/><TextField fx:id="clientInstanceIdField" editable="false" styleClass="form-readonly-value"/></VBox>
             </HBox>
             <HBox spacing="16.0">
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="Device Name" styleClass="form-label"/><TextField fx:id="deviceNameField" editable="false" styleClass="form-readonly-value"/></VBox>
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="Client Version" styleClass="form-label"/><TextField fx:id="clientVersionField" editable="false" styleClass="form-readonly-value"/></VBox>
+            </HBox>
+            <HBox spacing="16.0">
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="State" styleClass="form-label"/><TextField fx:id="stateDiagnosticField" editable="false" styleClass="form-readonly-value"/></VBox>
                 <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="Server Version / Protocol" styleClass="form-label"/><TextField fx:id="serverProtocolField" editable="false" styleClass="form-readonly-value"/></VBox>
                 <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="Last Heartbeat / Retry" styleClass="form-label"/><TextField fx:id="heartbeatDiagnosticField" editable="false" styleClass="form-readonly-value"/></VBox>
             </HBox>
@@ -39,7 +49,7 @@
                 <Button text="Reconnect" styleClass="secondary-button" onAction="#onReconnectClicked"/>
                 <Button text="Send echo test" styleClass="secondary-button" onAction="#onEchoClicked"/>
             </HBox>
-            <Label text="Set API_URL and WS_URL (or --api-url and --ws-url) before launch to connect to a LAN server." wrapText="true" styleClass="page-subtitle"/>
+            <Label text="Enter the current server address after a port change. Credentials are not stored here." wrapText="true" styleClass="page-subtitle"/>
         </VBox>
 
         <!-- Identity Card -->

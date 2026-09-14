@@ -19,6 +19,7 @@ import javafx.stage.Stage;
 
 import com.landrop.ui.auth.model.AuthModels;
 import com.landrop.ui.config.FrontendConfig;
+import com.landrop.ui.config.ServerConnectionPreferences;
 import com.landrop.ui.services.RealtimeChatService;
 import com.landrop.ui.workspace.services.WorkspaceStateService;
 import com.landrop.ui.bootstrap.ClientInstanceService;
@@ -57,6 +58,7 @@ public class MainApp extends Application {
     private volatile com.landrop.ui.device.CurrentDeviceService currentDeviceService;
     private volatile URI resolvedWsUri;
     private volatile URI resolvedApiUri;
+    private ServerConnectionPreferences serverConnectionPreferences;
 
     // Parsed configuration
     private String configuredDisplayName = null;
@@ -72,6 +74,15 @@ public class MainApp extends Application {
         Map<String, String> named = (getParameters() != null) ? getParameters().getNamed() : Collections.emptyMap();
         String apiBaseUrl = FrontendConfig.resolveApiBaseUrl(named);
         String wsUrl = FrontendConfig.resolveWsUrl(named, apiBaseUrl);
+        this.serverConnectionPreferences = new ServerConnectionPreferences();
+        if (!FrontendConfig.hasExplicitApiConfiguration(named) && !serverConnectionPreferences.apiUrl().isBlank()) {
+            apiBaseUrl = serverConnectionPreferences.apiUrl();
+        }
+        if (!FrontendConfig.hasExplicitWsConfiguration(named) && !serverConnectionPreferences.wsUrl().isBlank()) {
+            wsUrl = serverConnectionPreferences.wsUrl();
+        } else if (!FrontendConfig.hasExplicitWsConfiguration(named)) {
+            wsUrl = FrontendConfig.resolveWsUrl(named, apiBaseUrl);
+        }
         String sessionProfile = FrontendConfig.resolveSessionProfile(named);
 
         this.resolvedApiUri = URI.create(apiBaseUrl);
@@ -250,6 +261,21 @@ public class MainApp extends Application {
     public URI getResolvedApiUri() { return resolvedApiUri; }
     public URI getResolvedWsUri() { return resolvedWsUri; }
 
+    /** Applies a user-edited server endpoint without rebuilding auth or LAN services. */
+    public synchronized void configureServerConnection(String apiUrl, String wsUrl) {
+        String api = FrontendConfig.validateApiBaseUrl(apiUrl);
+        String ws = (wsUrl == null || wsUrl.isBlank())
+                ? FrontendConfig.deriveWsUrl(api)
+                : FrontendConfig.validateWsUrl(wsUrl);
+        resolvedApiUri = URI.create(api);
+        resolvedWsUri = URI.create(ws);
+        if (serverConnectionPreferences == null) serverConnectionPreferences = new ServerConnectionPreferences();
+        serverConnectionPreferences.save(api, ws);
+        if (serverRealtimeService != null) {
+            serverRealtimeService.reconfigure(resolvedWsUri, new ServerHealthClient(resolvedApiUri)::check);
+        }
+    }
+
     /** Called only after restore, login, or register has established a valid session. */
     public void onAuthenticated() {
         if (stateService != null) stateService.shutdown();
@@ -274,7 +300,7 @@ public class MainApp extends Application {
             this.serverRealtimeService = new ClientRealtimeService(
                     resolvedWsUri, new ServerHealthClient(resolvedApiUri), clientInstanceService,
                     () -> authStateService.accessToken().orElse(null),
-                    () -> currentDeviceService.currentDevice() == null ? configuredDisplayName : currentDeviceService.currentDevice().label());
+                    () -> currentDeviceService.currentDevice() == null ? clientInstanceService.deviceName() : currentDeviceService.currentDevice().label());
             this.realtimeGateway = new com.landrop.ui.realtime.RealtimeGateway(serverRealtimeService);
             this.transferControlService = new TransferControlService(serverRealtimeService, event -> {
                 // Transfer UI subscribes to the server-owned control state in a later composition pass.

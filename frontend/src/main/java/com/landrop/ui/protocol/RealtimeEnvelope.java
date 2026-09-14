@@ -21,11 +21,17 @@ public record RealtimeEnvelope(String type, String requestId, String timestamp, 
             JsonNode root = JSON.readTree(source);
             if (root == null || !root.isObject()) throw new IllegalArgumentException("Realtime event must be an object.");
             JsonNode p = root.path("payload");
-            ObjectNode normalized = p.isMissingNode() || p.isNull() ? JSON.createObjectNode() : (ObjectNode) p;
+            ObjectNode normalized = p.isMissingNode() || p.isNull() || !p.isObject()
+                    ? JSON.createObjectNode() : (ObjectNode) p;
             // FOUNDATION-01A errors carry code/message at the top level for compatibility.
             if (normalized.isEmpty() && root.hasNonNull("message")) {
                 normalized.put("message", root.path("message").asText());
                 if (root.hasNonNull("code")) normalized.put("code", root.path("code").asText());
+            }
+            if (root.path("error").isObject()) {
+                JsonNode error = root.path("error");
+                if (!normalized.has("code") && error.hasNonNull("code")) normalized.put("code", error.path("code").asText());
+                if (!normalized.has("message") && error.hasNonNull("message")) normalized.put("message", error.path("message").asText());
             }
             return new RealtimeEnvelope(text(root, "type"), optionalText(root, "requestId"), text(root, "timestamp"), normalized);
         } catch (Exception error) { throw new IllegalArgumentException("Invalid realtime event.", error); }

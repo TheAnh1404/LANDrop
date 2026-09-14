@@ -79,4 +79,12 @@ public class FrontendConfigTest {
         assertEquals("wss://cloud.landrop.net:443/api/realtime", FrontendConfig.deriveWsUrl("https://cloud.landrop.net:443/api/v1"));
         assertEquals("ws://my-box/api/realtime", FrontendConfig.deriveWsUrl("http://my-box"));
     }
+
+    @Test
+    void validatesEditableServerAddresses() {
+        assertEquals("http://server:8080/api", FrontendConfig.validateApiBaseUrl("http://server:8080/api/"));
+        assertEquals("ws://server:8081/realtime", FrontendConfig.validateWsUrl("ws://server:8081/realtime/"));
+        assertThrows(IllegalArgumentException.class, () -> FrontendConfig.validateApiBaseUrl("not-an-address"));
+        assertThrows(IllegalArgumentException.class, () -> FrontendConfig.validateWsUrl("http://server:8081/realtime"));
+    }
 }

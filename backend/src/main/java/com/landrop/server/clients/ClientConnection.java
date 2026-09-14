@@ -19,6 +19,8 @@ public final class ClientConnection {
     private final int protocolVersion;
     private final String clientVersion;
     private final String platform;
+    private final String osVersion;
+    private final String architecture;
     private final WebSocket socket;
 
     private final AtomicReference<Instant> lastHeartbeatAt;
@@ -32,6 +34,8 @@ public final class ClientConnection {
                             int protocolVersion,
                             String clientVersion,
                             String platform,
+                            String osVersion,
+                            String architecture,
                             WebSocket socket) {
         this.connectionId = Objects.requireNonNull(connectionId, "connectionId cannot be null");
         this.clientInstanceId = Objects.requireNonNull(clientInstanceId, "clientInstanceId cannot be null");
@@ -41,6 +45,8 @@ public final class ClientConnection {
         this.protocolVersion = protocolVersion;
         this.clientVersion = clientVersion != null ? clientVersion : "unknown";
         this.platform = platform != null ? platform : "unknown";
+        this.osVersion = osVersion != null ? osVersion : "unknown";
+        this.architecture = architecture != null ? architecture : "unknown";
         this.socket = socket;
         this.lastHeartbeatAt = new AtomicReference<>(this.connectedAt);
         this.status = new AtomicReference<>(ClientStatus.ACTIVE);
@@ -86,6 +92,10 @@ public final class ClientConnection {
     public String platform() {
         return platform;
     }
+
+    public String osVersion() { return osVersion; }
+
+    public String architecture() { return architecture; }
 
     public WebSocket socket() {
         return socket;

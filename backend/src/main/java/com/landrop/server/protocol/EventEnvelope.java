@@ -48,6 +48,7 @@ public record EventEnvelope(
             Instant.now().toString(),
             Map.of(
                 "connectionId", connectionId,
+                "serverName", ProtocolConstants.SERVER_NAME,
                 "serverVersion", serverVersion,
                 "protocolVersion", protocolVersion,
                 "heartbeatIntervalMs", heartbeatIntervalMs
