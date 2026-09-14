@@ -29,9 +29,9 @@ public class MessageRepository {
 
     public Message create(Message message) throws SQLException {
         String sql = """
-            INSERT INTO messages (id, channel_id, user_id, parent_message_id, content, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            RETURNING id, channel_id, user_id, parent_message_id, content, created_at, updated_at
+            INSERT INTO messages (id, channel_id, user_id, parent_message_id, client_message_id, content, created_at, updated_at, edited_at, deleted_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id, channel_id, user_id, parent_message_id, client_message_id, content, created_at, updated_at, edited_at, deleted_at
         """;
 
         try (Connection conn = databaseManager.getConnection();
@@ -47,9 +47,24 @@ public class MessageRepository {
             } else {
                 ps.setNull(4, Types.OTHER);
             }
-            ps.setString(5, message.content());
-            ps.setTimestamp(6, Timestamp.from(message.createdAt() != null ? message.createdAt() : now));
-            ps.setTimestamp(7, Timestamp.from(message.updatedAt() != null ? message.updatedAt() : now));
+            if (message.clientMessageId() != null) {
+                ps.setObject(5, message.clientMessageId());
+            } else {
+                ps.setNull(5, Types.OTHER);
+            }
+            ps.setString(6, message.content());
+            ps.setTimestamp(7, Timestamp.from(message.createdAt() != null ? message.createdAt() : now));
+            ps.setTimestamp(8, Timestamp.from(message.updatedAt() != null ? message.updatedAt() : now));
+            if (message.editedAt() != null) {
+                ps.setTimestamp(9, Timestamp.from(message.editedAt()));
+            } else {
+                ps.setNull(9, Types.TIMESTAMP);
+            }
+            if (message.deletedAt() != null) {
+                ps.setTimestamp(10, Timestamp.from(message.deletedAt()));
+            } else {
+                ps.setNull(10, Types.TIMESTAMP);
+            }
 
             try (ResultSet rs = ps.executeQuery()) {
                 if (rs.next()) {
@@ -74,11 +89,26 @@ public class MessageRepository {
         return Optional.empty();
     }
 
+    public Optional<Message> findByUserAndClientId(UUID userId, UUID clientMessageId) throws SQLException {
+        String sql = "SELECT * FROM messages WHERE user_id = ? AND client_message_id = ?";
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setObject(1, userId);
+            ps.setObject(2, clientMessageId);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(mapRow(rs));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
     public List<Message> findByChannelId(UUID channelId, int limit, int offset) throws SQLException {
         String sql = """
             SELECT * FROM messages 
             WHERE channel_id = ? 
-            ORDER BY created_at ASC 
+            ORDER BY created_at ASC, id ASC
             LIMIT ? OFFSET ?
         """;
         List<Message> list = new ArrayList<>();
@@ -97,7 +127,7 @@ public class MessageRepository {
     }
 
     public List<Message> findReplies(UUID parentMessageId) throws SQLException {
-        String sql = "SELECT * FROM messages WHERE parent_message_id = ? ORDER BY created_at ASC";
+        String sql = "SELECT * FROM messages WHERE parent_message_id = ? ORDER BY created_at ASC, id ASC";
         List<Message> list = new ArrayList<>();
         try (Connection conn = databaseManager.getConnection();
              PreparedStatement ps = conn.prepareStatement(sql)) {
@@ -109,6 +139,52 @@ public class MessageRepository {
             }
         }
         return list;
+    }
+
+    public Optional<Message> updateContent(UUID id, String newContent, Instant editedAt) throws SQLException {
+        String sql = """
+            UPDATE messages
+            SET content = ?, edited_at = ?, updated_at = ?
+            WHERE id = ?
+            RETURNING *
+        """;
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            Instant now = editedAt != null ? editedAt : Instant.now();
+            ps.setString(1, newContent);
+            ps.setTimestamp(2, Timestamp.from(now));
+            ps.setTimestamp(3, Timestamp.from(now));
+            ps.setObject(4, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(mapRow(rs));
+                }
+            }
+        }
+        return Optional.empty();
+    }
+
+    public Optional<Message> softDelete(UUID id, Instant deletedAt, String placeholderContent) throws SQLException {
+        String sql = """
+            UPDATE messages
+            SET deleted_at = ?, updated_at = ?, content = ?
+            WHERE id = ?
+            RETURNING *
+        """;
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            Instant now = deletedAt != null ? deletedAt : Instant.now();
+            ps.setTimestamp(1, Timestamp.from(now));
+            ps.setTimestamp(2, Timestamp.from(now));
+            ps.setString(3, placeholderContent != null ? placeholderContent : "[This message was deleted]");
+            ps.setObject(4, id);
+            try (ResultSet rs = ps.executeQuery()) {
+                if (rs.next()) {
+                    return Optional.of(mapRow(rs));
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     public boolean deleteById(UUID id) throws SQLException {
@@ -128,14 +204,30 @@ public class MessageRepository {
     }
 
     private Message mapRow(ResultSet rs) throws SQLException {
+        Timestamp editedAtTs = null;
+        Timestamp deletedAtTs = null;
+        UUID clientMsgId = null;
+        try {
+            editedAtTs = rs.getTimestamp("edited_at");
+        } catch (SQLException ignored) {}
+        try {
+            deletedAtTs = rs.getTimestamp("deleted_at");
+        } catch (SQLException ignored) {}
+        try {
+            clientMsgId = (UUID) rs.getObject("client_message_id");
+        } catch (SQLException ignored) {}
+
         return new Message(
             (UUID) rs.getObject("id"),
             (UUID) rs.getObject("channel_id"),
             (UUID) rs.getObject("user_id"),
             (UUID) rs.getObject("parent_message_id"),
+            clientMsgId,
             rs.getString("content"),
             rs.getTimestamp("created_at").toInstant(),
-            rs.getTimestamp("updated_at").toInstant()
+            rs.getTimestamp("updated_at").toInstant(),
+            editedAtTs != null ? editedAtTs.toInstant() : null,
+            deletedAtTs != null ? deletedAtTs.toInstant() : null
         );
     }
 }

@@ -2,6 +2,8 @@ package com.landrop.realtime;
 
 import com.fasterxml.jackson.databind.*;
 import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.landrop.chat.service.ChannelBroadcaster;
+import com.landrop.chat.service.ChatException;
 import org.java_websocket.WebSocket;
 import org.java_websocket.drafts.*;
 import org.java_websocket.exceptions.InvalidDataException;
@@ -13,9 +15,10 @@ import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
 
-/** Authenticated, channel-scoped WebSocket chat for one shared backend process. */
-public final class RealtimeServer extends WebSocketServer {
+/** Authenticated, channel-scoped and room-aware WebSocket chat for one shared backend process. */
+public final class RealtimeServer extends WebSocketServer implements ChannelBroadcaster {
     private static final String PREFIX = "/api/realtime/channels/";
+    private static final String BASE_PATH = "/api/realtime";
     private static final ObjectMapper JSON = JsonMapper.builder()
             .enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
             .enable(com.fasterxml.jackson.core.JsonParser.Feature.STRICT_DUPLICATE_DETECTION).build();
@@ -36,21 +39,42 @@ public final class RealtimeServer extends WebSocketServer {
         setReuseAddr(true);
         setConnectionLostTimeout(30);
     }
+
     public ConnectionRegistry registry() { return registry; }
     public void awaitReady() throws Exception { ready.get(10, TimeUnit.SECONDS); }
+
+    @Override
+    public void broadcast(UUID channelId, Object event) {
+        broadcastToChannel(channelId, event);
+    }
 
     @Override public ServerHandshakeBuilder onWebsocketHandshakeReceivedAsServer(
             WebSocket socket, Draft draft, ClientHandshake request) throws InvalidDataException {
         try {
             // No query-string tokens; native Java clients send Authorization in the handshake.
             String path = request.getResourceDescriptor();
-            if (!path.startsWith(PREFIX) || request.hasFieldValue("Origin")) throw new IllegalArgumentException();
-            UUID channel = UUID.fromString(path.substring(PREFIX.length()));
-            if (!path.equals(PREFIX + channel)) throw new IllegalArgumentException();
+            if (request.hasFieldValue("Origin")) throw new IllegalArgumentException();
+
+            UUID channel = null;
+            if (path.startsWith(PREFIX)) {
+                channel = UUID.fromString(path.substring(PREFIX.length()));
+                if (!path.equals(PREFIX + channel)) throw new IllegalArgumentException();
+            } else if (!path.equals(BASE_PATH) && !path.equals(BASE_PATH + "/") && !path.equals(BASE_PATH + "/ws")) {
+                throw new IllegalArgumentException();
+            }
+
             SocketPrincipal principal = authenticator.authenticate(request.getFieldValue("Authorization"));
-            if (principal.expired() || !store.canAccess(principal.userId(), channel)) throw new IllegalArgumentException();
+            if (principal.expired()) throw new IllegalArgumentException();
+
+            if (channel != null && !store.canAccess(principal.userId(), channel)) {
+                throw new IllegalArgumentException();
+            }
+
             String label = request.getFieldValue("X-Device-Label");
-            if (label.length() > 80 || label.chars().anyMatch(Character::isISOControl)) throw new IllegalArgumentException();
+            if (label != null && (label.length() > 80 || label.chars().anyMatch(Character::isISOControl))) {
+                throw new IllegalArgumentException();
+            }
+
             socket.setAttachment(new ConnectionRegistry.Connection(UUID.randomUUID(), principal, channel,
                     label, Instant.now(), socket));
             return super.onWebsocketHandshakeReceivedAsServer(socket, draft, request);
@@ -59,23 +83,34 @@ public final class RealtimeServer extends WebSocketServer {
             throw new InvalidDataException(1008, "Authentication or channel access rejected.");
         }
     }
+
     @Override public void onOpen(WebSocket socket, ClientHandshake request) {
         ConnectionRegistry.Connection connection = socket.getAttachment();
         if (connection == null || connection.principal().expired()) { socket.close(1008, "Sign in is required."); return; }
         synchronized (dispatchLock) {
             registry.add(connection);
-            send(socket, Map.of("type", "connected", "socketId", connection.socketId(),
-                    "userId", connection.principal().userId(), "channelId", connection.channelId(),
-                    "accessTokenId", connection.principal().accessTokenId(), "deviceLabel", connection.deviceLabel()));
+            var event = new LinkedHashMap<String, Object>();
+            event.put("type", "connected");
+            event.put("socketId", connection.socketId());
+            event.put("userId", connection.principal().userId());
+            if (connection.channelId() != null) {
+                event.put("channelId", connection.channelId());
+            }
+            event.put("accessTokenId", connection.principal().accessTokenId());
+            event.put("deviceLabel", connection.deviceLabel());
+            send(socket, event);
         }
     }
+
     @Override public void onClose(WebSocket socket, int code, String reason, boolean remote) {
         ConnectionRegistry.Connection connection = socket.getAttachment();
         if (connection != null) registry.remove(connection);
     }
+
     @Override public void onMessage(WebSocket socket, ByteBuffer bytes) {
         socket.close(1003, "Only JSON text messages are supported.");
     }
+
     @Override public void onMessage(WebSocket socket, String text) {
         ConnectionRegistry.Connection connection = socket.getAttachment();
         if (connection == null || connection.principal().expired()) { socket.close(4001, "Refresh access and reconnect."); return; }
@@ -85,38 +120,94 @@ public final class RealtimeServer extends WebSocketServer {
             JsonNode command = JSON.readTree(text);
             if (command == null || !command.isObject()) throw invalid();
             requestId = uuid(command, "requestId").toString();
-            String type = string(command, "type");
+            String rawType = string(command, "type");
+            String type = rawType.replace(':', '.');
+
             Set<String> allowed = switch (type) {
-                case "message.send" -> Set.of("type", "requestId", "clientMessageId", "content");
-                case "history" -> Set.of("type", "requestId", "limit", "before");
+                case "message.send" -> Set.of("type", "requestId", "clientMessageId", "content", "channelId", "replyToId");
+                case "message.edit", "message.update" -> Set.of("type", "requestId", "messageId", "content");
+                case "message.delete" -> Set.of("type", "requestId", "messageId");
+                case "channel.join" -> Set.of("type", "requestId", "channelId", "workspaceId");
+                case "channel.leave" -> Set.of("type", "requestId", "channelId");
+                case "history" -> Set.of("type", "requestId", "channelId", "limit", "before");
                 default -> throw invalid();
             };
+
             var names = command.fieldNames();
             while (names.hasNext()) if (!allowed.contains(names.next())) throw invalid();
+
             synchronized (dispatchLock) {
                 if (connection.principal().expired()) { socket.close(4001, "Refresh access and reconnect."); return; }
-                if (type.equals("message.send")) {
-                    String content = string(command, "content");
-                    if (content.isBlank() || content.length() > 4000 || content.indexOf('\0') >= 0) throw invalid();
-                    UUID clientId = uuid(command, "clientMessageId");
-                    // No senderId/peer/user is read from JSON, even if a client tries to supply one.
-                    var saved = store.save(connection.principal().userId(), connection.channelId(), clientId, content);
-                    var event = Map.of("type", "message.created", "requestId", requestId, "message", saved.message());
-                    if (saved.inserted()) broadcastCanonical(connection.channelId(), event);
-                    else send(socket, event); // Lost acknowledgement retry: same canonical ID, no repeat fanout.
-                } else {
-                    int limit = 50;
-                    if (command.has("limit")) {
-                        if (!command.get("limit").isIntegralNumber() || !command.get("limit").canConvertToInt()) throw invalid();
-                        limit = command.get("limit").intValue();
+
+                switch (type) {
+                    case "channel.join" -> {
+                        UUID channelId = uuid(command, "channelId");
+                        UUID workspaceId = command.hasNonNull("workspaceId") ? uuid(command, "workspaceId") : null;
+                        store.verifyChannelRoomAccess(connection.principal().userId(), channelId, workspaceId);
+                        connection.joinRoom(channelId);
+                        var response = new LinkedHashMap<String, Object>();
+                        response.put("type", "channel.joined");
+                        response.put("requestId", requestId);
+                        response.put("channelId", channelId);
+                        if (workspaceId != null) response.put("workspaceId", workspaceId);
+                        send(socket, response);
                     }
-                    if (limit < 1 || limit > 100) throw invalid();
-                    String before = command.hasNonNull("before") ? string(command, "before") : null;
-                    var page = store.history(connection.principal().userId(), connection.channelId(), limit, before);
-                    send(socket, Map.of("type", "history", "requestId", requestId, "page", page));
+                    case "channel.leave" -> {
+                        UUID channelId = uuid(command, "channelId");
+                        connection.leaveRoom(channelId);
+                        send(socket, Map.of("type", "channel.left", "requestId", requestId, "channelId", channelId));
+                    }
+                    case "message.send" -> {
+                        UUID channelId = resolveChannel(command, connection);
+                        String content = string(command, "content");
+                        if (content.isBlank() || content.length() > 4000 || content.indexOf('\0') >= 0) throw invalid();
+                        UUID clientId = uuid(command, "clientMessageId");
+                        UUID replyToId = command.hasNonNull("replyToId") ? uuid(command, "replyToId") : null;
+
+                        var saved = store.save(connection.principal().userId(), channelId, clientId, content, replyToId);
+                        var event = Map.of("type", "message.created", "requestId", requestId, "channelId", channelId, "message", saved.message());
+                        if (saved.inserted()) broadcastToChannel(channelId, event);
+                        else send(socket, event); // Lost acknowledgement retry
+                    }
+                    case "message.edit", "message.update" -> {
+                        UUID messageId = uuid(command, "messageId");
+                        String content = string(command, "content");
+                        if (content.isBlank() || content.length() > 4000 || content.indexOf('\0') >= 0) throw invalid();
+
+                        var updated = store.edit(connection.principal().userId(), messageId, content);
+                        var event = Map.of("type", "message.updated", "requestId", requestId, "channelId", updated.channelId(),
+                                "messageId", messageId, "message", updated);
+                        broadcastToChannel(updated.channelId(), event);
+                    }
+                    case "message.delete" -> {
+                        UUID messageId = uuid(command, "messageId");
+                        var deleted = store.delete(connection.principal().userId(), messageId);
+                        var event = new LinkedHashMap<String, Object>();
+                        event.put("type", "message.deleted");
+                        event.put("requestId", requestId);
+                        event.put("channelId", deleted.channelId());
+                        event.put("messageId", messageId);
+                        if (deleted.deletedAt() != null) event.put("deletedAt", deleted.deletedAt());
+                        event.put("message", deleted);
+                        broadcastToChannel(deleted.channelId(), event);
+                    }
+                    case "history" -> {
+                        UUID channelId = resolveChannel(command, connection);
+                        int limit = 50;
+                        if (command.has("limit")) {
+                            if (!command.get("limit").isIntegralNumber() || !command.get("limit").canConvertToInt()) throw invalid();
+                            limit = command.get("limit").intValue();
+                        }
+                        if (limit < 1 || limit > 100) throw invalid();
+                        String before = command.hasNonNull("before") ? string(command, "before") : null;
+                        var page = store.history(connection.principal().userId(), channelId, limit, before);
+                        send(socket, Map.of("type", "history", "requestId", requestId, "page", page));
+                    }
                 }
             }
         } catch (RealtimeException e) {
+            error(socket, requestId, e.code(), e.getMessage());
+        } catch (ChatException e) {
             error(socket, requestId, e.code(), e.getMessage());
         } catch (java.sql.SQLException e) {
             error(socket, requestId, "PERSISTENCE_UNAVAILABLE", "Chat storage is unavailable. Retry with the same clientMessageId.");
@@ -124,31 +215,51 @@ public final class RealtimeServer extends WebSocketServer {
             error(socket, requestId, "INVALID_REQUEST", "Invalid chat request.");
         }
     }
-    private void broadcastCanonical(UUID channel, Object event) {
-        Map<UUID, Boolean> access = new HashMap<>();
-        for (var connection : registry.snapshot()) {
-            if (!connection.channelId().equals(channel)) continue;
-            if (connection.principal().expired()) { connection.socket().close(4001, "Refresh access and reconnect."); continue; }
-            boolean permitted = access.computeIfAbsent(connection.principal().userId(), user -> {
-                try { return store.canAccess(user, channel); } catch (Exception e) { return false; }
-            });
-            if (permitted) send(connection.socket(), event);
-            else connection.socket().close(1008, "Channel access is unavailable.");
+
+    private UUID resolveChannel(JsonNode command, ConnectionRegistry.Connection connection) {
+        if (command.hasNonNull("channelId")) {
+            return uuid(command, "channelId");
+        }
+        if (connection.channelId() != null) {
+            return connection.channelId();
+        }
+        if (connection.rooms().size() == 1) {
+            return connection.rooms().iterator().next();
+        }
+        throw new RealtimeException("INVALID_REQUEST", "Channel ID must be specified.");
+    }
+
+    public void broadcastToChannel(UUID channel, Object event) {
+        synchronized (dispatchLock) {
+            Map<UUID, Boolean> access = new HashMap<>();
+            for (var connection : registry.snapshot()) {
+                if (!connection.isInRoom(channel)) continue;
+                if (connection.principal().expired()) { connection.socket().close(4001, "Refresh access and reconnect."); continue; }
+                boolean permitted = access.computeIfAbsent(connection.principal().userId(), user -> {
+                    try { return store.canAccess(user, channel); } catch (Exception e) { return false; }
+                });
+                if (permitted) send(connection.socket(), event);
+                else connection.socket().close(1008, "Channel access is unavailable.");
+            }
         }
     }
+
     private void error(WebSocket socket, String request, String code, String message) {
         var event = new LinkedHashMap<String, Object>();
         event.put("type", "error"); event.put("requestId", request); event.put("code", code); event.put("message", message);
         send(socket, event);
     }
+
     private void send(WebSocket socket, Object value) {
         try { if (socket.isOpen()) socket.send(JSON.writeValueAsString(value)); }
         catch (Exception e) { socket.close(1011, "Reconnect to recover chat history."); }
     }
+
     private static String string(JsonNode node, String key) {
         if (!node.path(key).isTextual()) throw invalid();
         return node.get(key).textValue();
     }
+
     private static UUID uuid(JsonNode node, String key) {
         try {
             String value = string(node, key);
@@ -157,13 +268,16 @@ public final class RealtimeServer extends WebSocketServer {
             return id;
         } catch (IllegalArgumentException e) { throw invalid(); }
     }
+
     private static RealtimeException invalid() {
         return new RealtimeException("INVALID_REQUEST", "Invalid chat request.");
     }
+
     @Override public void onError(WebSocket socket, Exception e) {
         if (socket == null) ready.completeExceptionally(new IllegalStateException("Realtime listener failed."));
         else socket.close(1011, "Reconnect to recover chat history.");
     }
+
     @Override public void onStart() {
         expiry.scheduleAtFixedRate(() -> {
             for (var c : registry.snapshot()) if (c.principal().expired())
@@ -171,6 +285,7 @@ public final class RealtimeServer extends WebSocketServer {
         }, 1, 1, TimeUnit.SECONDS);
         ready.complete(null);
     }
+
     @Override public void stop(int timeout) throws InterruptedException {
         expiry.shutdownNow();
         super.stop(timeout);

@@ -24,7 +24,8 @@ public final class DatabaseMigrator {
     private static final List<String> MIGRATION_RESOURCES = List.of(
         "/db/migration/V1__init_cloud_database_phase14.sql",
         "/db/migration/V2__auth_sessions_phase15.sql",
-        "/db/migration/V3__realtime_message_identity.sql"
+        "/db/migration/V3__realtime_message_identity.sql",
+        "/db/migration/V4__persistent_chat_phase17.sql"
     );
 
     private final DatabaseManager databaseManager;
@@ -38,10 +39,10 @@ public final class DatabaseMigrator {
     }
 
     /**
-     * Executes database migrations V1–V3 against the connected database.
+     * Executes database migrations V1–V4 against the connected database.
      */
     public void migrate() throws SQLException, IOException {
-        AppLogger.info(TAG, "Starting cloud database schema migration (V1–V3)...");
+        AppLogger.info(TAG, "Starting cloud database schema migration (V1–V4)...");
 
         for (String resource : MIGRATION_RESOURCES) {
             String migrationSql = loadMigrationScript(resource);
@@ -102,6 +103,16 @@ public final class DatabaseMigrator {
             try (ResultSet rs = stmt.executeQuery(colCheckSql)) {
                 if (!rs.next() || !rs.getBoolean(1)) {
                     throw new SQLException("Required column password_hash missing in users table");
+                }
+            }
+
+            // Verify edited_at and deleted_at columns in messages
+            for (String col : List.of("edited_at", "deleted_at")) {
+                String msgColSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'messages' AND column_name = '" + col + "')";
+                try (ResultSet rs = stmt.executeQuery(msgColSql)) {
+                    if (!rs.next() || !rs.getBoolean(1)) {
+                        throw new SQLException("Required column " + col + " missing in messages table");
+                    }
                 }
             }
         }

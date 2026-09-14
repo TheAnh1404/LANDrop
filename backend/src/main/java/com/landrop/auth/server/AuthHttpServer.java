@@ -46,24 +46,33 @@ public class AuthHttpServer {
     private final AuthService authService;
     private final AuthMiddleware authMiddleware;
     private final WorkspaceHttpServer workspaceHttpServer;
+    private final com.landrop.chat.server.ChatHttpServer chatHttpServer;
+    private final com.landrop.chat.service.ChannelChatService channelChatService;
     private final ObjectMapper objectMapper;
     private HttpServer httpServer;
 
     public AuthHttpServer(AuthService authService, AuthMiddleware authMiddleware) {
-        this(AuthConfig.getAuthPort(), authService, authMiddleware, new WorkspaceService());
+        this(AuthConfig.getAuthPort(), authService, authMiddleware, new WorkspaceService(), new com.landrop.chat.service.ChannelChatService());
     }
 
     public AuthHttpServer(int port, AuthService authService, AuthMiddleware authMiddleware) {
-        this(port, authService, authMiddleware, new WorkspaceService());
+        this(port, authService, authMiddleware, new WorkspaceService(), new com.landrop.chat.service.ChannelChatService());
     }
 
     public AuthHttpServer(int port, AuthService authService, AuthMiddleware authMiddleware,
                           WorkspaceService workspaceService) {
+        this(port, authService, authMiddleware, workspaceService, new com.landrop.chat.service.ChannelChatService());
+    }
+
+    public AuthHttpServer(int port, AuthService authService, AuthMiddleware authMiddleware,
+                          WorkspaceService workspaceService, com.landrop.chat.service.ChannelChatService channelChatService) {
         this.port = port;
         this.authService = authService;
         this.authMiddleware = authMiddleware;
         this.objectMapper = createObjectMapper();
-        this.workspaceHttpServer = new WorkspaceHttpServer(authMiddleware, workspaceService, objectMapper);
+        this.channelChatService = channelChatService != null ? channelChatService : new com.landrop.chat.service.ChannelChatService();
+        this.workspaceHttpServer = new WorkspaceHttpServer(authMiddleware, workspaceService, this.channelChatService, objectMapper);
+        this.chatHttpServer = new com.landrop.chat.server.ChatHttpServer(authMiddleware, this.channelChatService, objectMapper);
     }
 
     public static ObjectMapper createObjectMapper() {
@@ -103,9 +112,14 @@ public class AuthHttpServer {
         httpServer.createContext("/api/auth/me", this::handleMe);
         httpServer.createContext("/api/auth/health", this::handleHealth);
         workspaceHttpServer.register(httpServer);
+        chatHttpServer.register(httpServer);
 
         httpServer.start();
         AppLogger.info(TAG, "Auth HTTP Server started on port " + getPort() + " (Virtual Threads enabled)");
+    }
+
+    public com.landrop.chat.service.ChannelChatService getChannelChatService() {
+        return channelChatService;
     }
 
     public synchronized void stop(int delaySeconds) {
@@ -339,6 +353,7 @@ public class AuthHttpServer {
                 new InetSocketAddress(AuthConfig.getBindHost(), AuthConfig.getRealtimePort()),
                 com.landrop.realtime.SocketAuthenticator.jwt(jwtService, userRepository),
                 new com.landrop.realtime.JdbcRealtimeStore(dbManager));
+            server.getChannelChatService().setBroadcaster(realtime);
             realtime.start();
             try {
                 realtime.awaitReady();
