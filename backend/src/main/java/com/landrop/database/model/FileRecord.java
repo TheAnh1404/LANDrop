@@ -45,4 +45,8 @@ public record FileRecord(
     public boolean isDeleted() {
         return deletedAt != null;
     }
+
+    public com.landrop.file.model.StorageType storageTypeEnum() {
+        return com.landrop.file.model.StorageType.fromString(storageType);
+    }
 }

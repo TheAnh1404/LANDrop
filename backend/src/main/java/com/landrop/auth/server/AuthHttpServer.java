@@ -381,6 +381,8 @@ public class AuthHttpServer {
                 com.landrop.realtime.SocketAuthenticator.jwt(jwtService, userRepository),
                 new com.landrop.realtime.JdbcRealtimeStore(dbManager));
             server.getChannelChatService().setBroadcaster(realtime);
+            server.getTransferCoordinationService().setBroadcaster(realtime);
+            realtime.setTransferService(server.getTransferCoordinationService());
             realtime.start();
             try {
                 realtime.awaitReady();

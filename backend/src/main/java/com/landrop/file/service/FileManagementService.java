@@ -288,6 +288,22 @@ public class FileManagementService {
         throw new FileException(404, "WORKSPACE_NOT_FOUND", "Workspace not found.");
     }
 
+    public WorkspaceRole requireWorkspaceAdmin(UUID workspaceId, UUID userId) throws SQLException {
+        WorkspaceRole role = requireWorkspaceMember(workspaceId, userId);
+        if (role != WorkspaceRole.OWNER && role != WorkspaceRole.ADMIN) {
+            throw new FileException(403, "FORBIDDEN", "This action requires a workspace administrator.");
+        }
+        return role;
+    }
+
+    public WorkspaceRole requireWorkspaceOwner(UUID workspaceId, UUID userId) throws SQLException {
+        WorkspaceRole role = requireWorkspaceMember(workspaceId, userId);
+        if (role != WorkspaceRole.OWNER) {
+            throw new FileException(403, "FORBIDDEN", "This action requires the workspace owner.");
+        }
+        return role;
+    }
+
     public FileDto toFileDto(FileRecord r) {
         return new FileDto(
             r.id(),

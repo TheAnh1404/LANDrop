@@ -1,0 +1,255 @@
+// ==============================================================================
+// LANDrop Production Core Schema (PostgreSQL / Neon)
+// Canonical Prisma ORM Schema - CORE-01A Standardization
+// ==============================================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// ==============================================================================
+// Enums
+// ==============================================================================
+
+enum WorkspaceRole {
+  OWNER
+  ADMIN
+  MEMBER
+  GUEST
+}
+
+// ==============================================================================
+// 1. Identity & Session
+// ==============================================================================
+
+model User {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  email        String   @unique @db.VarChar(255)
+  username     String   @unique @db.VarChar(100)
+  displayName  String?  @map("display_name") @db.VarChar(255)
+  avatarUrl    String?  @map("avatar_url")
+  passwordHash String?  @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  ownedWorkspaces   Workspace[]       @relation("WorkspaceOwner")
+  workspaceMembers  WorkspaceMember[]
+  messages          Message[]
+  folders           Folder[]          @relation("FolderCreatedBy")
+  files             File[]
+  refreshTokens     RefreshToken[]
+  devices           Device[]
+  sentTransfers     Transfer[]        @relation("TransferSender")
+  receivedTransfers Transfer[]        @relation("TransferReceiver")
+
+  @@map("users")
+}
+
+model RefreshToken {
+  id        String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  tokenHash String   @unique @map("token_hash") @db.VarChar(255)
+  expiresAt DateTime @map("expires_at") @db.Timestamptz(6)
+  revoked   Boolean  @default(false)
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_refresh_tokens_user_id")
+  @@map("refresh_tokens")
+}
+
+model Device {
+  id         String   @id @db.VarChar(100)
+  userId     String   @map("user_id") @db.Uuid
+  deviceName String   @map("device_name") @db.VarChar(255)
+  peerId     String?  @map("peer_id") @db.VarChar(100)
+  ipAddress  String?  @map("ip_address") @db.VarChar(100)
+  port       Int?
+  lastSeenAt DateTime @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  createdAt  DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt  DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId], map: "idx_devices_user_id")
+  @@index([peerId], map: "idx_devices_peer_id")
+  @@map("devices")
+}
+
+// ==============================================================================
+// 2. Workspace & Members
+// ==============================================================================
+
+model Workspace {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name        String   @db.VarChar(255)
+  slug        String   @unique @db.VarChar(100)
+  description String?
+  ownerId     String   @map("owner_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  owner    User              @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Restrict)
+  members  WorkspaceMember[]
+  channels Channel[]
+  folders  Folder[]
+  files    File[]
+
+  @@index([ownerId], map: "idx_workspaces_owner_id")
+  @@map("workspaces")
+}
+
+model WorkspaceMember {
+  id          String        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String        @map("workspace_id") @db.Uuid
+  userId      String        @map("user_id") @db.Uuid
+  role        WorkspaceRole @default(MEMBER)
+  joinedAt    DateTime      @default(now()) @map("joined_at") @db.Timestamptz(6)
+  updatedAt   DateTime      @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([workspaceId, userId], map: "uq_workspace_member")
+  @@index([workspaceId], map: "idx_workspace_members_workspace_id")
+  @@index([userId], map: "idx_workspace_members_user_id")
+  @@map("workspace_members")
+}
+
+// ==============================================================================
+// 3. Persistent Channels & Messages
+// ==============================================================================
+
+model Channel {
+  id          String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId String   @map("workspace_id") @db.Uuid
+  name        String   @db.VarChar(100)
+  topic       String?
+  isPrivate   Boolean  @default(false) @map("is_private")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  messages  Message[]
+
+  @@unique([workspaceId, name], map: "uq_channel_workspace_name")
+  @@index([workspaceId], map: "idx_channels_workspace_id")
+  @@map("channels")
+}
+
+model Message {
+  id              String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  channelId       String    @map("channel_id") @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  parentMessageId String?   @map("parent_message_id") @db.Uuid
+  clientMessageId String?   @map("client_message_id") @db.Uuid
+  content         String
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  editedAt        DateTime? @map("edited_at") @db.Timestamptz(6)
+  deletedAt       DateTime? @map("deleted_at") @db.Timestamptz(6)
+
+  channel       Channel   @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  user          User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  parentMessage Message?  @relation("MessageThread", fields: [parentMessageId], references: [id], onDelete: SetNull)
+  childMessages Message[] @relation("MessageThread")
+
+  @@unique([userId, clientMessageId], map: "idx_messages_sender_client_id")
+  @@index([channelId], map: "idx_messages_channel_id")
+  @@index([userId], map: "idx_messages_user_id")
+  @@index([parentMessageId], map: "idx_messages_parent_message_id")
+  @@index([channelId, createdAt], map: "idx_messages_channel_created_at")
+  @@index([channelId, createdAt(sort: Desc), id(sort: Desc)], map: "idx_messages_channel_history")
+  @@index([channelId, createdAt(sort: Asc), id(sort: Asc)], map: "idx_messages_channel_chronological")
+  @@map("messages")
+}
+
+// ==============================================================================
+// 4. File Management & Transfers
+// ==============================================================================
+
+model Folder {
+  id             String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId    String    @map("workspace_id") @db.Uuid
+  name           String    @db.VarChar(255)
+  parentFolderId String?   @map("parent_folder_id") @db.Uuid
+  createdById    String?   @map("created_by_id") @db.Uuid
+  deletedAt      DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace    Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  parentFolder Folder?   @relation("FolderTree", fields: [parentFolderId], references: [id], onDelete: Cascade)
+  childFolders Folder[]  @relation("FolderTree")
+  createdBy    User?     @relation("FolderCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  files        File[]
+
+  @@index([workspaceId], map: "idx_folders_workspace_id")
+  @@index([parentFolderId], map: "idx_folders_parent_folder_id")
+  @@index([deletedAt], map: "idx_folders_deleted_at")
+  @@map("folders")
+}
+
+model File {
+  id           String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  workspaceId  String    @map("workspace_id") @db.Uuid
+  userId       String    @map("user_id") @db.Uuid
+  folderId     String?   @map("folder_id") @db.Uuid
+  name         String    @db.VarChar(255)
+  originalName String?   @map("original_name") @db.VarChar(255)
+  size         BigInt
+  mimeType     String?   @map("mime_type") @db.VarChar(255)
+  sha256       String?   @db.VarChar(64)
+  storageKey   String?   @map("storage_key")
+  storageType  String    @default("LAN_ONLY") @map("storage_type") @db.VarChar(50)
+  storagePath  String?   @map("storage_path")
+  deletedAt    DateTime? @map("deleted_at") @db.Timestamptz(6)
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt    DateTime  @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  workspace Workspace  @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  user      User       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  folder    Folder?    @relation(fields: [folderId], references: [id], onDelete: SetNull)
+  transfers Transfer[]
+
+  @@index([workspaceId], map: "idx_files_workspace_id")
+  @@index([userId], map: "idx_files_user_id")
+  @@index([folderId], map: "idx_files_folder_id")
+  @@index([workspaceId, folderId], map: "idx_files_workspace_folder")
+  @@index([deletedAt], map: "idx_files_deleted_at")
+  @@index([sha256], map: "idx_files_sha256")
+  @@map("files")
+}
+
+model Transfer {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  fileId           String    @map("file_id") @db.Uuid
+  senderUserId     String    @map("sender_user_id") @db.Uuid
+  receiverUserId   String    @map("receiver_user_id") @db.Uuid
+  senderDeviceId   String?   @map("sender_device_id") @db.VarChar(100)
+  receiverDeviceId String?   @map("receiver_device_id") @db.VarChar(100)
+  status           String    @default("PENDING") @db.VarChar(50)
+  createdAt        DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  startedAt        DateTime? @map("started_at") @db.Timestamptz(6)
+  completedAt      DateTime? @map("completed_at") @db.Timestamptz(6)
+  failedAt         DateTime? @map("failed_at") @db.Timestamptz(6)
+  errorMessage     String?   @map("error_message")
+
+  file         File @relation(fields: [fileId], references: [id], onDelete: Cascade)
+  senderUser   User @relation("TransferSender", fields: [senderUserId], references: [id], onDelete: Cascade)
+  receiverUser User @relation("TransferReceiver", fields: [receiverUserId], references: [id], onDelete: Cascade)
+
+  @@index([fileId], map: "idx_transfers_file_id")
+  @@index([senderUserId], map: "idx_transfers_sender_user")
+  @@index([receiverUserId], map: "idx_transfers_receiver_user")
+  @@index([status], map: "idx_transfers_status")
+  @@map("transfers")
+}
