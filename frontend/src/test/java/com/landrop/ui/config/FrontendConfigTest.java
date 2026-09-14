@@ -26,7 +26,7 @@ public class FrontendConfigTest {
         assertEquals("http://localhost:3000/api", api);
 
         String ws = FrontendConfig.resolveWsUrl(Collections.emptyMap(), null);
-        assertEquals("ws://localhost:3000/ws", ws);
+        assertEquals("ws://localhost:3001", ws);
 
         String profile = FrontendConfig.resolveSessionProfile(Collections.emptyMap());
         assertNull(profile);
@@ -75,7 +75,7 @@ public class FrontendConfigTest {
     @Test
     @DisplayName("15.5B.7: Derive WebSocket URL automatically from HTTP/HTTPS API URL")
     void testDeriveWsUrl() {
-        assertEquals("ws://192.168.1.10:3000/ws", FrontendConfig.deriveWsUrl("http://192.168.1.10:3000/api"));
+        assertEquals("ws://192.168.1.10:3001/ws", FrontendConfig.deriveWsUrl("http://192.168.1.10:3000/api"));
         assertEquals("wss://cloud.landrop.net:443/ws", FrontendConfig.deriveWsUrl("https://cloud.landrop.net:443/api/v1"));
         assertEquals("ws://my-box/ws", FrontendConfig.deriveWsUrl("http://my-box"));
     }

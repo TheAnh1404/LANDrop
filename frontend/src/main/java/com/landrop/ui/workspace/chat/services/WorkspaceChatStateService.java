@@ -4,8 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.landrop.ui.cloud.model.Domain;
 import com.landrop.ui.models.RealtimeConnectionStatus;
-import com.landrop.ui.services.RealtimeTransport;
-import com.landrop.ui.services.WebSocketRealtimeTransport;
+import com.landrop.ui.realtime.RealtimeGateway;
 import com.landrop.ui.workspace.chat.api.HttpTeamChatApi;
 import com.landrop.ui.workspace.chat.api.TeamChatApi;
 import com.landrop.ui.workspace.services.WorkspaceStateService;
@@ -14,11 +13,8 @@ import javafx.beans.property.*;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 
-import java.net.URI;
-import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -30,22 +26,21 @@ public final class WorkspaceChatStateService implements AutoCloseable {
     private static final JsonMapper JSON = JsonMapper.builder().build();
     private final WorkspaceStateService workspaces;
     private final TeamChatApi api;
-    private final URI wsBase;
+    private final RealtimeGateway realtime;
     private final ObservableList<Domain.Channel> channels = FXCollections.observableArrayList();
     private final ObservableList<Domain.Message> messages = FXCollections.observableArrayList();
     private final ObjectProperty<Domain.Channel> activeChannel = new SimpleObjectProperty<>();
-    private final ObjectProperty<RealtimeConnectionStatus> connectionStatus = new SimpleObjectProperty<>(RealtimeConnectionStatus.DISCONNECTED);
     private final BooleanProperty loadingChannels = new SimpleBooleanProperty();
     private final BooleanProperty loadingHistory = new SimpleBooleanProperty();
     private final BooleanProperty loadingOlder = new SimpleBooleanProperty();
     private final StringProperty errorMessage = new SimpleStringProperty("");
     private final StringProperty historyCursor = new SimpleStringProperty();
     private final AtomicLong generation = new AtomicLong();
-    private volatile RealtimeTransport channelSocket;
+    private volatile AutoCloseable channelSubscription;
     private volatile boolean closed;
 
-    public WorkspaceChatStateService(WorkspaceStateService workspaces, TeamChatApi api, URI wsBase) {
-        this.workspaces = Objects.requireNonNull(workspaces); this.api = Objects.requireNonNull(api); this.wsBase = wsBase;
+    public WorkspaceChatStateService(WorkspaceStateService workspaces, TeamChatApi api, RealtimeGateway realtime) {
+        this.workspaces = Objects.requireNonNull(workspaces); this.api = Objects.requireNonNull(api); this.realtime = Objects.requireNonNull(realtime);
         workspaces.activeWorkspaceProperty().addListener((o, old, next) -> loadWorkspace(next));
         if (workspaces.getActiveWorkspace() != null) loadWorkspace(workspaces.getActiveWorkspace());
     }
@@ -53,7 +48,7 @@ public final class WorkspaceChatStateService implements AutoCloseable {
     public ObservableList<Domain.Message> messages() { return messages; }
     public ReadOnlyObjectProperty<Domain.Channel> activeChannelProperty() { return activeChannel; }
     public Domain.Channel activeChannel() { return activeChannel.get(); }
-    public ReadOnlyObjectProperty<RealtimeConnectionStatus> connectionStatusProperty() { return connectionStatus; }
+    public ReadOnlyObjectProperty<RealtimeConnectionStatus> connectionStatusProperty() { return realtime.statusProperty(); }
     public ReadOnlyBooleanProperty loadingChannelsProperty() { return loadingChannels; }
     public ReadOnlyBooleanProperty loadingHistoryProperty() { return loadingHistory; }
     public ReadOnlyBooleanProperty loadingOlderProperty() { return loadingOlder; }
@@ -120,20 +115,12 @@ public final class WorkspaceChatStateService implements AutoCloseable {
         List<Domain.Message> ordered = new ArrayList<>(byId.values()); ordered.sort(Comparator.comparing(Domain.Message::createdAt).thenComparing(Domain.Message::id)); messages.setAll(ordered);
     }
     private void connectSocket(String channelId, long token) {
-        if (wsBase == null || closed) return;
-        String accessToken = workspaces.authStateService().accessToken().orElse(null);
-        WebSocketRealtimeTransport socket = new WebSocketRealtimeTransport(channelUri(channelId), accessToken);
-        channelSocket = socket;
-        socket.setListener(new RealtimeTransport.Listener() {
-            @Override public void onOpen() { if (token == generation.get()) run(() -> connectionStatus.set(RealtimeConnectionStatus.CONNECTED)); }
+        if (closed) return;
+        channelSubscription = realtime.subscribeChannel(channelId, new RealtimeGateway.SubscriptionListener() {
             @Override public void onMessage(String payload) { receiveEvent(payload, channelId, token); }
-            @Override public void onClose(int code, String reason) { if (!closed && token == generation.get()) { run(() -> connectionStatus.set(RealtimeConnectionStatus.RECONNECTING)); reconnect(channelId, token); } }
-            @Override public void onError(Throwable error) { if (!closed && token == generation.get()) { run(() -> connectionStatus.set(RealtimeConnectionStatus.RECONNECTING)); reconnect(channelId, token); } }
+            @Override public void onError(Throwable error) { if (token == generation.get()) run(() -> errorMessage.set("Realtime connection failed; message history remains available.")); }
         });
-        run(() -> connectionStatus.set(RealtimeConnectionStatus.CONNECTING));
-        socket.connect().exceptionally(failure -> { if (token == generation.get()) run(() -> { connectionStatus.set(RealtimeConnectionStatus.DISCONNECTED); errorMessage.set("Realtime connection failed; message history remains available."); }); return null; });
     }
-    private void reconnect(String channelId, long token) { CompletableFuture.delayedExecutor(3, TimeUnit.SECONDS).execute(() -> { if (!closed && token == generation.get()) connectSocket(channelId, token); }); }
     private void receiveEvent(String payload, String channelId, long token) {
         try { JsonNode root = JSON.readTree(payload); String type = root.path("type").asText();
             if (!("message.created".equals(type) || "message.updated".equals(type) || "message.deleted".equals(type))) return;
@@ -141,11 +128,7 @@ public final class WorkspaceChatStateService implements AutoCloseable {
             if (token == generation.get() && channelId.equals(message.channelId())) run(() -> merge(List.of(message)));
         } catch (Exception ignored) { }
     }
-    private URI channelUri(String channelId) {
-        URI base = wsBase; String root = base.getScheme() + "://" + base.getAuthority();
-        return URI.create(root + "/api/realtime/channels/" + channelId);
-    }
-    private void disconnectSocket() { RealtimeTransport socket = channelSocket; channelSocket = null; if (socket != null) socket.close(); run(() -> connectionStatus.set(RealtimeConnectionStatus.DISCONNECTED)); }
+    private void disconnectSocket() { AutoCloseable subscription = channelSubscription; channelSubscription = null; if (subscription != null) try { subscription.close(); } catch (Exception ignored) { } }
     @Override public void close() { closed = true; generation.incrementAndGet(); disconnectSocket(); run(() -> { channels.clear(); messages.clear(); activeChannel.set(null); }); }
     private static String blankToNull(String value) { return value == null || value.isBlank() ? null : value.trim(); }
     private static String problem(Throwable t) { Throwable x = t; while (x.getCause() != null && (x instanceof java.util.concurrent.CompletionException || x instanceof java.util.concurrent.ExecutionException)) x = x.getCause(); return x.getMessage() == null ? "Chat request failed." : x.getMessage(); }

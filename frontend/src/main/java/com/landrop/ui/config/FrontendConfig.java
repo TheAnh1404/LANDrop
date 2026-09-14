@@ -9,8 +9,12 @@ import java.util.Map;
  */
 public final class FrontendConfig {
 
+    /** Development-only defaults; deployment uses CLI, system properties, or environment variables. */
     public static final String DEFAULT_API_BASE_URL = "http://localhost:3000/api";
-    public static final String DEFAULT_WS_URL = "ws://localhost:3000/ws";
+    public static final String DEFAULT_WS_URL = "ws://localhost:3001";
+    public static final String DEFAULT_DISCOVERY_HOST = "127.0.0.1";
+    public static final String DEFAULT_ADVERTISED_HOST = "127.0.0.1";
+    public static final int DEFAULT_DISCOVERY_PORT = 8888;
 
     private FrontendConfig() {}
 
@@ -108,7 +112,9 @@ public final class FrontendConfig {
             String scheme = uri.getScheme();
             String wsScheme = "https".equalsIgnoreCase(scheme) ? "wss" : "ws";
             String host = uri.getHost() != null ? uri.getHost() : "localhost";
-            int port = uri.getPort();
+            // The embedded LANDrop backend serves HTTP on 3000 and realtime on 3001.
+            // Deployments with a gateway should provide WS_URL explicitly.
+            int port = uri.getPort() == 3000 ? 3001 : uri.getPort();
             String authority = (port > 0) ? host + ":" + port : host;
             return wsScheme + "://" + authority + "/ws";
         } catch (Exception e) {

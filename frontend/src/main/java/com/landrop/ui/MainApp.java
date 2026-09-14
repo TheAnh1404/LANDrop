@@ -45,15 +45,18 @@ public class MainApp extends Application {
     private volatile WorkspaceStateService workspaceStateService;
     private volatile com.landrop.ui.workspace.chat.services.WorkspaceChatStateService workspaceChatStateService;
     private volatile com.landrop.ui.workspace.files.services.FileManagerStateService fileManagerStateService;
+    private volatile com.landrop.ui.realtime.RealtimeGateway realtimeGateway;
+    private volatile com.landrop.ui.lan.UIStateLanServices lanServices;
+    private volatile com.landrop.ui.device.CurrentDeviceService currentDeviceService;
     private volatile URI resolvedWsUri;
     private volatile URI resolvedApiUri;
 
     // Parsed configuration
     private String configuredDisplayName = null;
     private int configuredLocalPort = 5001;
-    private String configuredDiscoveryHost = "127.0.0.1";
+    private String configuredDiscoveryHost = FrontendConfig.DEFAULT_DISCOVERY_HOST;
     private int configuredDiscoveryPort = 8888;
-    private String configuredAdvertisedHost = "127.0.0.1";
+    private String configuredAdvertisedHost = FrontendConfig.DEFAULT_ADVERTISED_HOST;
     private boolean configuredAutoConnect = false;
 
     @Override
@@ -230,11 +233,15 @@ public class MainApp extends Application {
     public void setWorkspaceStateService(com.landrop.ui.workspace.services.WorkspaceStateService service) { this.workspaceStateService = service; }
     public com.landrop.ui.workspace.chat.services.WorkspaceChatStateService getWorkspaceChatStateService() { return workspaceChatStateService; }
     public com.landrop.ui.workspace.files.services.FileManagerStateService getFileManagerStateService() { return fileManagerStateService; }
+    public com.landrop.ui.lan.LanDiscoveryService getLanDiscoveryService() { return lanServices; }
+    public com.landrop.ui.lan.LanTransferService getLanTransferService() { return lanServices; }
+    public com.landrop.ui.device.CurrentDeviceService getCurrentDeviceService() { return currentDeviceService; }
 
     /** Called only after restore, login, or register has established a valid session. */
     public void onAuthenticated() {
         if (stateService != null) stateService.shutdown();
         stateService = new UIStateService();
+        lanServices = new com.landrop.ui.lan.UIStateLanServices(stateService);
 
         AuthModels.AuthUser user = authStateService.user();
         if (user != null) {
@@ -249,13 +256,15 @@ public class MainApp extends Application {
 
         // Initialize WorkspaceStateService (Phase 16B)
         if (resolvedApiUri != null) {
+            this.currentDeviceService = new com.landrop.ui.device.CurrentDeviceService(resolvedApiUri, authStateService);
+            this.realtimeGateway = new com.landrop.ui.realtime.RealtimeGateway(resolvedWsUri, authStateService);
             com.landrop.ui.workspace.api.HttpWorkspaceApi wsApi =
                     new com.landrop.ui.workspace.api.HttpWorkspaceApi(resolvedApiUri, authStateService);
             this.workspaceStateService = new com.landrop.ui.workspace.services.WorkspaceStateService(wsApi, authStateService);
             this.workspaceChatStateService = new com.landrop.ui.workspace.chat.services.WorkspaceChatStateService(
                     workspaceStateService,
                     new com.landrop.ui.workspace.chat.api.HttpTeamChatApi(resolvedApiUri, authStateService),
-                    resolvedWsUri);
+                    realtimeGateway);
             this.fileManagerStateService = new com.landrop.ui.workspace.files.services.FileManagerStateService(
                     workspaceStateService,
                     new com.landrop.ui.workspace.files.api.HttpFileManagerApi(resolvedApiUri, authStateService));
@@ -269,6 +278,10 @@ public class MainApp extends Application {
     }
 
     public void logout() {
+        if (realtimeGateway != null) {
+            try { realtimeGateway.close(); } catch (Exception ignored) { }
+            realtimeGateway = null;
+        }
         if (fileManagerStateService != null) {
             try { fileManagerStateService.close(); } catch (Exception ignored) { }
             fileManagerStateService = null;
@@ -285,6 +298,8 @@ public class MainApp extends Application {
             realtimeChatService = null;
         }
         this.workspaceStateService = null;
+        this.lanServices = null;
+        this.currentDeviceService = null;
         if (stateService != null) stateService.shutdown();
         authStateService.logout().whenComplete((ignored, failure) -> Platform.runLater(this::showLoginView));
     }
@@ -350,6 +365,9 @@ public class MainApp extends Application {
 
     @Override
     public void stop() {
+        if (realtimeGateway != null) {
+            try { realtimeGateway.close(); } catch (Exception ignored) { }
+        }
         if (fileManagerStateService != null) {
             try { fileManagerStateService.close(); } catch (Exception ignored) { }
         }

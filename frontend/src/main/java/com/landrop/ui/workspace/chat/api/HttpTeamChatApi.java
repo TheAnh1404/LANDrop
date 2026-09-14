@@ -4,33 +4,25 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.landrop.ui.auth.services.AuthStateService;
 import com.landrop.ui.cloud.api.ApiException;
+import com.landrop.ui.cloud.api.ApiClient;
 import com.landrop.ui.cloud.model.Domain;
 
 import java.net.URI;
 import java.net.URLEncoder;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 
 /** Small, strict-enough Phase 17 client. Identity is never included in write payloads. */
 public final class HttpTeamChatApi implements TeamChatApi {
     private static final JsonMapper JSON = JsonMapper.builder().build();
-    private final URI baseUri;
-    private final AuthStateService auth;
-    private final HttpClient http;
+    private final ApiClient client;
 
     public HttpTeamChatApi(URI apiBaseUri, AuthStateService auth) {
-        this.baseUri = URI.create(apiBaseUri.toASCIIString().replaceAll("/+$", "") + "/");
-        this.auth = Objects.requireNonNull(auth);
-        this.http = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        this.client = new ApiClient(apiBaseUri, auth);
     }
 
     @Override public CompletableFuture<List<Domain.Channel>> listChannels(String workspaceId) {
@@ -63,16 +55,7 @@ public final class HttpTeamChatApi implements TeamChatApi {
     }
 
     private CompletableFuture<String> request(String method, String path, String body) {
-        String token = auth.accessToken().orElse(null);
-        if (token == null || token.isBlank()) return CompletableFuture.failedFuture(new ApiException(401, "UNAUTHENTICATED", "Sign in is required."));
-        HttpRequest.Builder b = HttpRequest.newBuilder(URI.create(baseUri + path)).header("Accept", "application/json")
-                .header("Authorization", "Bearer " + token).timeout(Duration.ofSeconds(10));
-        if (body != null) b.header("Content-Type", "application/json").method(method, HttpRequest.BodyPublishers.ofString(body));
-        else b.method(method, HttpRequest.BodyPublishers.noBody());
-        return http.sendAsync(b.build(), HttpResponse.BodyHandlers.ofString()).thenApply(response -> {
-            if (response.statusCode() >= 400) throw error(response.statusCode(), response.body());
-            return response.body();
-        });
+        return client.request(method, path, body);
     }
     private static ApiException error(int status, String body) {
         try { JsonNode e = node(body).path("error"); return new ApiException(status, text(e, "code") == null ? "HTTP_ERROR" : text(e, "code"), text(e, "message") == null ? "Chat request failed." : text(e, "message")); }
