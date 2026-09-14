@@ -264,6 +264,7 @@ public class WorkspaceStateServiceTest {
         awaitFx();
 
         assertThrows(Exception.class, () -> stateOwner.leaveWorkspace().join());
+        awaitFx();
         assertEquals(WorkspaceStateService.OWNER_LEAVE_RESTRICTION, stateOwner.getErrorMessage());
 
         // Non-owner member can leave

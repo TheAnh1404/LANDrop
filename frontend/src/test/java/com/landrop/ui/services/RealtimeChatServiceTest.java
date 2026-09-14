@@ -116,6 +116,7 @@ public class RealtimeChatServiceTest {
 
             // 1. Send optimistic message
             UIMessage sent = service.sendMessage("Hello everyone!").get(5, TimeUnit.SECONDS);
+            awaitFx();
             assertNotNull(sent);
             assertTrue(sent.id().startsWith("opt-"), "Temporary optimistic ID expected");
             assertEquals("u-ada", sent.senderId());
@@ -143,9 +144,7 @@ public class RealtimeChatServiceTest {
             transport.listener.onMessage(serverPayload);
 
             // Wait for JavaFX thread dispatch if needed
-            CountDownLatch latch = new CountDownLatch(1);
-            Platform.runLater(latch::countDown);
-            latch.await(2, TimeUnit.SECONDS);
+            awaitFx();
 
             // Verify optimistic message was replaced in-place, NOT duplicated
             assertEquals(1, service.getMessages().size(), "Optimistic message must be reconciled without duplication");
@@ -178,9 +177,7 @@ public class RealtimeChatServiceTest {
             transport.listener.onMessage(serverPayload);
             transport.listener.onMessage(serverPayload);
 
-            CountDownLatch latch = new CountDownLatch(1);
-            Platform.runLater(latch::countDown);
-            latch.await(2, TimeUnit.SECONDS);
+            awaitFx();
 
             assertEquals(1, service.getMessages().size(), "Duplicate message with same canonical ID must be ignored");
             assertEquals("canonical-uuid-12345", service.getMessages().getFirst().id());
@@ -208,9 +205,7 @@ public class RealtimeChatServiceTest {
 
             transport.listener.onMessage(remoteDevicePayload);
 
-            CountDownLatch latch = new CountDownLatch(1);
-            Platform.runLater(latch::countDown);
-            latch.await(2, TimeUnit.SECONDS);
+            awaitFx();
 
             assertEquals(1, service.getMessages().size());
             UIMessage msg = service.getMessages().getFirst();

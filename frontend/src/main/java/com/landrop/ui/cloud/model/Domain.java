@@ -14,7 +14,7 @@ public final class Domain {
     private Domain() {}
 
     public enum MemberRole {
-        OWNER, ADMIN, MEMBER, GUEST;
+        OWNER, ADMIN, MEMBER;
 
         public static MemberRole fromString(String role) {
             if (role == null) return MEMBER;

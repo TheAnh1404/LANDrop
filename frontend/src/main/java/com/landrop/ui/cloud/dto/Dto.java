@@ -16,13 +16,7 @@ public final class Dto {
                                     String createdAt, String updatedAt) {}
 
     public record WorkspaceMemberResponse(String id, String workspaceId, String userId, String role,
-                                          String displayName, String email, String avatarUrl,
-                                          String createdAt, String updatedAt) {
-        public WorkspaceMemberResponse(String id, String workspaceId, String userId, String role,
-                                       String createdAt, String updatedAt) {
-            this(id, workspaceId, userId, role, null, null, null, createdAt, updatedAt);
-        }
-    }
+                                          String createdAt, String updatedAt) {}
 
     public record CreateWorkspaceRequest(String name, String description) {}
 

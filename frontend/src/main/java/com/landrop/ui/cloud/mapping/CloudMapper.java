@@ -29,7 +29,6 @@ public final class CloudMapper {
         required(dto);
         return new Domain.WorkspaceMember(dto.id(), dto.workspaceId(), dto.userId(),
                 enumValue(Domain.MemberRole.class, dto.role()),
-                dto.displayName(), dto.email(), dto.avatarUrl(),
                 timestamp(dto.createdAt()), timestamp(dto.updatedAt()));
     }
 
