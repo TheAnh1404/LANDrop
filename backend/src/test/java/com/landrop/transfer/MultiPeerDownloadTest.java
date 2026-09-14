@@ -36,8 +36,7 @@ public class MultiPeerDownloadTest {
                 10_000_000L,
                 1024 * 1024,
                 DUMMY_HASH,
-                dest
-        );
+                dest);
 
         assertEquals("tx-1", dl.getTransferId());
         assertEquals("sample.iso", dl.getFileName());
@@ -60,7 +59,8 @@ public class MultiPeerDownloadTest {
         List<MultiPeerDownloadStatus> recordedTransitions = new ArrayList<>();
         dl.addListener(new MultiPeerDownloadListener() {
             @Override
-            public void onStatusChanged(MultiPeerDownload download, MultiPeerDownloadStatus oldStatus, MultiPeerDownloadStatus newStatus) {
+            public void onStatusChanged(MultiPeerDownload download, MultiPeerDownloadStatus oldStatus,
+                    MultiPeerDownloadStatus newStatus) {
                 recordedTransitions.add(newStatus);
             }
         });
@@ -76,8 +76,7 @@ public class MultiPeerDownloadTest {
                 MultiPeerDownloadStatus.PREPARING,
                 MultiPeerDownloadStatus.DOWNLOADING,
                 MultiPeerDownloadStatus.VERIFYING,
-                MultiPeerDownloadStatus.COMPLETED
-        ), recordedTransitions);
+                MultiPeerDownloadStatus.COMPLETED), recordedTransitions);
         assertTrue(dl.isTerminal());
     }
 
@@ -135,7 +134,8 @@ public class MultiPeerDownloadTest {
                         long current = offset;
                         while (buf.hasRemaining()) {
                             int written = channel.write(buf, current);
-                            if (written <= 0) break;
+                            if (written <= 0)
+                                break;
                             current += written;
                         }
                     } catch (IOException e) {
