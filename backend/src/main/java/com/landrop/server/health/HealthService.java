@@ -61,6 +61,7 @@ public class HealthService {
         map.put("host", host);
         map.put("httpPort", httpPort);
         map.put("wsPort", wsPort);
+        map.put("lanAddresses", com.landrop.server.bootstrap.ServerBootstrap.resolveLanIpv4Addresses());
         map.put("connectedClients", activeClients);
         map.put("uptimeSeconds", getUptimeSeconds());
         return map;

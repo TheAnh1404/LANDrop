@@ -1,5 +1,8 @@
 package com.landrop.server.clients;
 
+import com.landrop.server.logging.ServerEvent;
+import com.landrop.server.logging.ServerEventLogger;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.*;
@@ -29,6 +32,8 @@ public class ClientRegistry {
             if (oldConn != null && oldConn.isOpen()) {
                 oldConn.close(1000, "RECONNECTED_FROM_NEW_SESSION");
             }
+            ServerEventLogger.log(ServerEvent.CLIENT_RECONNECTED, connection.connectionId(),
+                    "Client instance '" + connection.clientInstanceId() + "' reconnected; superseded prior session: " + previousConnId);
         }
 
         connectionsById.put(connection.connectionId(), connection);

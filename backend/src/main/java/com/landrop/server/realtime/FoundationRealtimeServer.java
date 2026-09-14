@@ -124,6 +124,7 @@ public class FoundationRealtimeServer extends WebSocketServer {
 
             switch (type) {
                 case ProtocolConstants.EVENT_HEARTBEAT -> {
+                    ServerEventLogger.log(ServerEvent.HEARTBEAT, connection.connectionId(), "Heartbeat received");
                     sendEnvelope(socket, EventEnvelope.heartbeatAck(requestId));
                 }
                 case ProtocolConstants.EVENT_ECHO -> {
@@ -159,6 +160,9 @@ public class FoundationRealtimeServer extends WebSocketServer {
     }
 
     private void handleHello(WebSocket socket, JsonNode root, String requestId) {
+        String remote = socket.getRemoteSocketAddress() != null ? socket.getRemoteSocketAddress().toString() : "unknown";
+        ServerEventLogger.log(ServerEvent.HELLO_RECEIVED, null, "Handshake request from " + remote);
+
         int protocolVer = root.path("protocolVersion").asInt(-1);
         if (protocolVer != ProtocolConstants.PROTOCOL_VERSION) {
             ServerEventLogger.log(ServerEvent.CLIENT_HANDSHAKE_FAILED, null,
@@ -173,7 +177,6 @@ public class FoundationRealtimeServer extends WebSocketServer {
         String deviceName = root.hasNonNull("deviceName") ? root.path("deviceName").asText() : "Generic Device";
         String clientVersion = root.hasNonNull("clientVersion") ? root.path("clientVersion").asText() : "1.0.0";
         String platform = root.hasNonNull("platform") ? root.path("platform").asText() : "unknown";
-        String remote = socket.getRemoteSocketAddress() != null ? socket.getRemoteSocketAddress().toString() : "unknown";
 
         String connectionId = UUID.randomUUID().toString();
         ClientConnection connection = new ClientConnection(
@@ -191,6 +194,8 @@ public class FoundationRealtimeServer extends WebSocketServer {
         socket.setAttachment(connection);
         clientRegistry.register(connection);
 
+        ServerEventLogger.log(ServerEvent.HANDSHAKE_OK, connectionId,
+                "Device: " + deviceName + " (v" + clientVersion + ", " + platform + ")");
         ServerEventLogger.log(ServerEvent.CLIENT_HANDSHAKE_OK, connectionId,
                 "Device: " + deviceName + " (v" + clientVersion + ", " + platform + ")");
 
@@ -216,6 +221,8 @@ public class FoundationRealtimeServer extends WebSocketServer {
                     "Transfer " + record.transferId() + " -> Receiver: " + receiverConnId + " (" + fileName + ", " + fileSize + " bytes)");
 
             // Confirm request accepted to sender
+            ServerEventLogger.log(ServerEvent.TRANSFER_STATUS, sender.connectionId(),
+                    "Transfer " + record.transferId() + " -> PENDING");
             sendEnvelope(sender.socket(), EventEnvelope.event(
                 ProtocolConstants.EVENT_TRANSFER_STATUS,
                 requestId,
@@ -264,6 +271,7 @@ public class FoundationRealtimeServer extends WebSocketServer {
         try {
             TransferRecord record = transferCoordinator.acceptTransfer(transferId, receiver.connectionId());
             ServerEventLogger.log(ServerEvent.TRANSFER_ACCEPTED, receiver.connectionId(), "Transfer " + transferId + " accepted.");
+            ServerEventLogger.log(ServerEvent.TRANSFER_STATUS, receiver.connectionId(), "Transfer " + transferId + " -> ACCEPTED");
 
             // Status ack to receiver
             sendEnvelope(receiver.socket(), EventEnvelope.event(
@@ -293,6 +301,7 @@ public class FoundationRealtimeServer extends WebSocketServer {
 
         try {
             TransferRecord record = transferCoordinator.rejectTransfer(transferId, receiver.connectionId(), reason);
+            ServerEventLogger.log(ServerEvent.TRANSFER_STATUS, receiver.connectionId(), "Transfer " + transferId + " -> REJECTED");
 
             sendEnvelope(receiver.socket(), EventEnvelope.event(
                 ProtocolConstants.EVENT_TRANSFER_STATUS,
@@ -320,6 +329,7 @@ public class FoundationRealtimeServer extends WebSocketServer {
 
         try {
             TransferRecord record = transferCoordinator.cancelTransfer(transferId, actor.connectionId(), reason);
+            ServerEventLogger.log(ServerEvent.TRANSFER_STATUS, actor.connectionId(), "Transfer " + transferId + " -> CANCELLED");
 
             sendEnvelope(actor.socket(), EventEnvelope.event(
                 ProtocolConstants.EVENT_TRANSFER_STATUS,

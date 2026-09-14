@@ -159,26 +159,56 @@ public class ServerBootstrap {
         }
     }
 
+    public static java.util.List<String> resolveLanIpv4Addresses() {
+        java.util.List<String> list = new java.util.ArrayList<>();
+        try {
+            java.util.Enumeration<java.net.NetworkInterface> interfaces = java.net.NetworkInterface.getNetworkInterfaces();
+            while (interfaces.hasMoreElements()) {
+                java.net.NetworkInterface iface = interfaces.nextElement();
+                if (iface.isLoopback() || !iface.isUp() || iface.isVirtual()) continue;
+                java.util.Enumeration<java.net.InetAddress> addrs = iface.getInetAddresses();
+                while (addrs.hasMoreElements()) {
+                    java.net.InetAddress a = addrs.nextElement();
+                    if (a instanceof java.net.Inet4Address && !a.isLoopbackAddress() && a.isSiteLocalAddress()) {
+                        list.add(a.getHostAddress());
+                    }
+                }
+            }
+        } catch (Exception ignored) {}
+        return list;
+    }
+
     private void printStartupBanner() {
         int actualHttpPort = httpServer != null ? httpServer.getPort() : config.getHttpPort();
         int actualWsPort = realtimeServer != null ? realtimeServer.getPort() : config.getWsPort();
 
+        java.util.List<String> lanIps = resolveLanIpv4Addresses();
+        String primaryLanIp = lanIps.isEmpty() ? (config.getHost().equals("0.0.0.0") ? "127.0.0.1" : config.getHost()) : lanIps.get(0);
+        String lanHealthUrl = "http://" + primaryLanIp + ":" + actualHttpPort + "/health";
+        String lanWsUrl = "ws://" + primaryLanIp + ":" + actualWsPort;
+
         String banner = String.format("""
             ==================================================
-            LANDrop Server Stable Core (FOUNDATION-01A)
+            LANDrop Server (FOUNDATION-02A)
             ==================================================
             Status:             RUNNING
-            Host Binding:       %s
-            HTTP Port:          %d (Health: http://%s:%d/health)
-            WebSocket Port:     %d (Gateway: ws://%s:%d)
+            Host:               %s
+            Port (HTTP):        %d
+            Port (WebSocket):   %d
+            LAN IP(s):          %s
+            LAN URL (Health):   %s
+            WebSocket URL:      %s
             Protocol Version:   %d
             Environment:        %s
             Log Level:          %s
             ==================================================
             """,
             config.getHost(),
-            actualHttpPort, config.getHost(), actualHttpPort,
-            actualWsPort, config.getHost(), actualWsPort,
+            actualHttpPort,
+            actualWsPort,
+            lanIps.isEmpty() ? primaryLanIp : String.join(", ", lanIps),
+            lanHealthUrl,
+            lanWsUrl,
             config.getProtocolVersion(),
             config.getEnvironment(),
             config.getLogLevel()
@@ -186,7 +216,7 @@ public class ServerBootstrap {
 
         System.out.println(banner);
         ServerEventLogger.log(ServerEvent.SERVER_STARTED,
-                "Listening on " + config.getHost() + " (HTTP: " + actualHttpPort + ", WS: " + actualWsPort + ")");
+                "Host: " + config.getHost() + " | LAN URL: " + lanHealthUrl + " | WebSocket URL: " + lanWsUrl);
     }
 
     public boolean isRunning() {
