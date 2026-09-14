@@ -44,6 +44,7 @@ public class MainApp extends Application {
     private volatile RealtimeChatService realtimeChatService;
     private volatile WorkspaceStateService workspaceStateService;
     private volatile com.landrop.ui.workspace.chat.services.WorkspaceChatStateService workspaceChatStateService;
+    private volatile com.landrop.ui.workspace.files.services.FileManagerStateService fileManagerStateService;
     private volatile URI resolvedWsUri;
     private volatile URI resolvedApiUri;
 
@@ -228,6 +229,7 @@ public class MainApp extends Application {
     public com.landrop.ui.workspace.services.WorkspaceStateService getWorkspaceStateService() { return workspaceStateService; }
     public void setWorkspaceStateService(com.landrop.ui.workspace.services.WorkspaceStateService service) { this.workspaceStateService = service; }
     public com.landrop.ui.workspace.chat.services.WorkspaceChatStateService getWorkspaceChatStateService() { return workspaceChatStateService; }
+    public com.landrop.ui.workspace.files.services.FileManagerStateService getFileManagerStateService() { return fileManagerStateService; }
 
     /** Called only after restore, login, or register has established a valid session. */
     public void onAuthenticated() {
@@ -254,6 +256,9 @@ public class MainApp extends Application {
                     workspaceStateService,
                     new com.landrop.ui.workspace.chat.api.HttpTeamChatApi(resolvedApiUri, authStateService),
                     resolvedWsUri);
+            this.fileManagerStateService = new com.landrop.ui.workspace.files.services.FileManagerStateService(
+                    workspaceStateService,
+                    new com.landrop.ui.workspace.files.api.HttpFileManagerApi(resolvedApiUri, authStateService));
             workspaceStateService.loadWorkspaces().exceptionally(ex -> {
                 System.out.println("[LANDrop] Workspaces load notice: " + ex.getMessage());
                 return java.util.Collections.emptyList();
@@ -264,6 +269,10 @@ public class MainApp extends Application {
     }
 
     public void logout() {
+        if (fileManagerStateService != null) {
+            try { fileManagerStateService.close(); } catch (Exception ignored) { }
+            fileManagerStateService = null;
+        }
         if (workspaceChatStateService != null) {
             try { workspaceChatStateService.close(); } catch (Exception ignored) { }
             workspaceChatStateService = null;
@@ -341,6 +350,9 @@ public class MainApp extends Application {
 
     @Override
     public void stop() {
+        if (fileManagerStateService != null) {
+            try { fileManagerStateService.close(); } catch (Exception ignored) { }
+        }
         if (workspaceChatStateService != null) {
             try { workspaceChatStateService.close(); } catch (Exception ignored) { }
         }

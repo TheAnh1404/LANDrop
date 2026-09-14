@@ -3,455 +3,65 @@ package com.landrop.ui.controllers;
 import com.landrop.transfer.FileTransfer;
 import com.landrop.transfer.FileTransferDirection;
 import com.landrop.transfer.FileTransferStatus;
-import com.landrop.transfer.MultiPeerDownload;
-import com.landrop.transfer.MultiPeerDownloadStatus;
-import com.landrop.transfer.PeerDownloadState;
+import com.landrop.ui.cloud.model.Domain;
 import com.landrop.ui.services.UIStateService;
-import com.landrop.ui.utils.AlertUtils;
+import com.landrop.ui.workspace.files.services.FileManagerStateService;
+import com.landrop.ui.workspace.services.WorkspaceStateService;
 import javafx.application.Platform;
 import javafx.collections.ListChangeListener;
 import javafx.fxml.FXML;
-import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
-import javafx.scene.layout.GridPane;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
-import javafx.scene.layout.VBox;
+import javafx.scene.Node;
+import javafx.stage.FileChooser;
+import javafx.scene.layout.*;
 
-import java.awt.Desktop;
-import java.nio.file.Files;
+import java.io.File;
+import java.math.BigInteger;
 import java.nio.file.Path;
-import java.util.Locale;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
 
-/**
- * Controller for the dedicated Transfers history and management interface.
- */
-public class TransfersController {
+/** Unified workspace Files surface. Existing LAN FileTransfer objects remain the progress/acceptance engine. */
+public final class TransfersController {
+    @FXML private Label workspaceNameLabel,breadcrumbLabel,errorLabel,successLabel,detailsLabel;
+    @FXML private VBox foldersContainer,filesContainer,transfersContainer,emptyFilesContainer;
+    @FXML private Button rootButton,newFolderButton,selectFileButton;
+    private UIStateService core; private WorkspaceStateService workspaces; private FileManagerStateService files;
+    private long lastRenderMs;
 
-    @FXML
-    private Label totalTransfersLabel;
-
-    @FXML
-    private Label activeTransfersLabel;
-
-    @FXML
-    private Label completedTransfersLabel;
-
-    @FXML
-    private Button startMultiPeerDownloadBtn;
-
-    @FXML
-    private ScrollPane transfersScrollPane;
-
-    @FXML
-    private VBox transfersContainer;
-
-    @FXML
-    private VBox emptyTransfersContainer;
-
-    private UIStateService stateService;
-    private MainController mainController;
-
-    public void init(UIStateService stateService, MainController mainController) {
-        this.stateService = stateService;
-        this.mainController = mainController;
-
-        stateService.getTransfers().addListener((ListChangeListener<FileTransfer>) c -> {
-            Platform.runLater(this::renderTransfers);
-        });
-
-        stateService.getMultiPeerDownloads().addListener((ListChangeListener<MultiPeerDownload>) c -> {
-            Platform.runLater(this::renderTransfers);
-        });
-
-        stateService.setOnFileTransferUpdatedCallback(t -> {
-            Platform.runLater(this::renderTransfers);
-        });
-
-        stateService.setOnMultiPeerDownloadUpdatedCallback(d -> {
-            Platform.runLater(this::renderTransfers);
-        });
-
-        renderTransfers();
+    public void init(UIStateService state, MainController main) {
+        this.core=state; this.workspaces=main.getWorkspaceStateService();
+        if(main.getMainApp()!=null) this.files=main.getMainApp().getFileManagerStateService();
+        if(files==null||workspaces==null){workspaceNameLabel.setText("Files unavailable until you sign in to a workspace.");return;}
+        files.folders().addListener((ListChangeListener<Domain.Folder>)c->Platform.runLater(this::renderFiles)); files.files().addListener((ListChangeListener<Domain.File>)c->Platform.runLater(this::renderFiles)); files.breadcrumbs().addListener((ListChangeListener<Domain.Folder>)c->Platform.runLater(this::renderBreadcrumb));
+        files.errorProperty().addListener((o,a,b)->Platform.runLater(()->errorLabel.setText(b))); files.successProperty().addListener((o,a,b)->Platform.runLater(()->successLabel.setText(b))); workspaces.activeWorkspaceProperty().addListener((o,a,b)->Platform.runLater(()->{workspaceNameLabel.setText(b==null?"No workspace selected":b.name());detailsLabel.setText("");renderFiles();}));
+        core.getTransfers().addListener((ListChangeListener<FileTransfer>)c->scheduleTransferRender()); core.setOnFileTransferUpdatedCallback(t->scheduleTransferRender());
+        workspaceNameLabel.setText(workspaces.getActiveWorkspace()==null?"No workspace selected":workspaces.getActiveWorkspace().name()); renderBreadcrumb();renderFiles();renderTransfers();
     }
-
-    private void renderTransfers() {
-        var singleList = stateService.getTransfers();
-        var multiList = stateService.getMultiPeerDownloads();
-
-        int total = singleList.size() + multiList.size();
-        long activeSingle = singleList.stream().filter(t ->
-                t.getStatus() == FileTransferStatus.TRANSFERRING ||
-                t.getStatus() == FileTransferStatus.ACCEPTED ||
-                t.getStatus() == FileTransferStatus.PENDING ||
-                t.getStatus() == FileTransferStatus.RECONNECTING ||
-                t.getStatus() == FileTransferStatus.RESUMING).count();
-        long activeMulti = multiList.stream().filter(d ->
-                d.getStatus() == MultiPeerDownloadStatus.DOWNLOADING ||
-                d.getStatus() == MultiPeerDownloadStatus.DISCOVERING_PEERS ||
-                d.getStatus() == MultiPeerDownloadStatus.PREPARING ||
-                d.getStatus() == MultiPeerDownloadStatus.VERIFYING).count();
-        long active = activeSingle + activeMulti;
-
-        long completedSingle = singleList.stream().filter(t -> t.getStatus() == FileTransferStatus.COMPLETED).count();
-        long completedMulti = multiList.stream().filter(d -> d.getStatus() == MultiPeerDownloadStatus.COMPLETED).count();
-        long completed = completedSingle + completedMulti;
-
-        if (totalTransfersLabel != null) totalTransfersLabel.setText(String.valueOf(total));
-        if (activeTransfersLabel != null) activeTransfersLabel.setText(String.valueOf(active));
-        if (completedTransfersLabel != null) completedTransfersLabel.setText(String.valueOf(completed));
-
-        transfersContainer.getChildren().clear();
-
-        boolean hasItems = !singleList.isEmpty() || !multiList.isEmpty();
-        emptyTransfersContainer.setVisible(!hasItems);
-        emptyTransfersContainer.setManaged(!hasItems);
-
-        for (MultiPeerDownload download : multiList) {
-            transfersContainer.getChildren().add(createMultiPeerRow(download));
-        }
-
-        for (FileTransfer transfer : singleList) {
-            transfersContainer.getChildren().add(createTransferRow(transfer));
-        }
-    }
-
-    private HBox createTransferRow(FileTransfer transfer) {
-        HBox row = new HBox(14.0);
-        row.getStyleClass().add("card");
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.setStyle("-fx-padding: 12px 16px;");
-
-        // 1. Direction indicator icon
-        boolean isOutgoing = transfer.getDirection() == FileTransferDirection.OUTGOING;
-        Label dirBadge = new Label(isOutgoing ? "⬆ Out" : "⬇ In");
-        dirBadge.setStyle(String.format(
-                "-fx-background-color: %s; -fx-text-fill: %s; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 4px 8px; -fx-background-radius: 4px;",
-                isOutgoing ? "#e0e7ff" : "#ecfdf5",
-                isOutgoing ? "#4338ca" : "#059669"
-        ));
-
-        // 2. File info and remote peer
-        VBox fileInfo = new VBox(2.0);
-        fileInfo.setMinWidth(200.0);
-        fileInfo.setPrefWidth(240.0);
-
-        Label nameLabel = new Label(transfer.getFileName());
-        nameLabel.getStyleClass().add("card-title");
-        nameLabel.setStyle("-fx-font-size: 13px;");
-
-        Label peerLabel = new Label((isOutgoing ? "To: " : "From: ") + transfer.getRemotePeerName() + "  (" + transfer.getFormattedSize() + ")");
-        peerLabel.getStyleClass().add("card-desc");
-        peerLabel.setStyle("-fx-font-size: 11px;");
-
-        fileInfo.getChildren().addAll(nameLabel, peerLabel);
-
-        // 3. Progress area
-        VBox progressBox = new VBox(4.0);
-        HBox.setHgrow(progressBox, Priority.ALWAYS);
-        progressBox.setAlignment(Pos.CENTER_LEFT);
-
-        boolean isIndeterminate = transfer.getStatus() == FileTransferStatus.VERIFYING ||
-                transfer.getStatus() == FileTransferStatus.RECONNECTING ||
-                transfer.getStatus() == FileTransferStatus.RESUMING;
-        ProgressBar bar = new ProgressBar(isIndeterminate ? -1.0 : transfer.getProgress());
-        bar.setMaxWidth(Double.MAX_VALUE);
-        bar.getStyleClass().add("transfer-progress-bar");
-
-        String progressText;
-        if (transfer.getStatus() == FileTransferStatus.VERIFYING) {
-            progressText = "Verifying SHA-256 integrity...";
-        } else if (transfer.getStatus() == FileTransferStatus.COMPLETED) {
-            progressText = "✓ Transfer completed • Integrity verified • SHA-256: " + transfer.getShortenedSha256();
-        } else if (transfer.getStatus() == FileTransferStatus.INTERRUPTED) {
-            progressText = "Connection lost • Resuming... (" + transfer.getChunkProgressText() + ")";
-        } else if (transfer.getStatus() == FileTransferStatus.RECONNECTING) {
-            progressText = "Reconnecting... (Attempt " + transfer.getReconnectAttempt() + " / " + transfer.getMaxReconnectAttempts() + ") • " + transfer.getChunkProgressText();
-        } else if (transfer.getStatus() == FileTransferStatus.RESUMING) {
-            progressText = "Resuming transfer • " + transfer.getChunkProgressText();
-        } else if (transfer.getStatus() == FileTransferStatus.FAILED) {
-            progressText = "✗ Transfer failed: " + (!transfer.getErrorMessage().isBlank() ? transfer.getErrorMessage() : "Unknown error");
-        } else {
-            progressText = String.format("%d%%  •  %s / %s  •  %s",
-                    transfer.getProgressPercent(),
-                    transfer.getFormattedTransferred(),
-                    transfer.getFormattedSize(),
-                    transfer.getChunkProgressText());
-            if (transfer.getStatus() == FileTransferStatus.TRANSFERRING && transfer.getSpeedBytesPerSec() > 0) {
-                progressText += "  •  " + transfer.getFormattedSpeed();
-            }
-        }
-
-        Label progressLabel = new Label(progressText);
-        progressLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748b;");
-        progressBox.getChildren().addAll(bar, progressLabel);
-
-        // 4. Status Badge
-        Label statusBadge = new Label(transfer.getStatus().getLabel());
-        statusBadge.getStyleClass().addAll("transfer-status-label", "transfer-status-" + transfer.getStatus().name().toLowerCase());
-        statusBadge.setMinWidth(80.0);
-        statusBadge.setAlignment(Pos.CENTER);
-
-        // 5. Actions Box
-        HBox actionBox = new HBox(6.0);
-        actionBox.setAlignment(Pos.CENTER_RIGHT);
-        actionBox.setMinWidth(160.0);
-
-        if (transfer.getStatus() == FileTransferStatus.PENDING && transfer.getDirection() == FileTransferDirection.INCOMING) {
-            Button acceptBtn = new Button("Accept");
-            acceptBtn.getStyleClass().add("primary-button");
-            acceptBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4px 10px;");
-            acceptBtn.setOnAction(e -> {
-                acceptBtn.setDisable(true);
-                stateService.acceptTransfer(transfer.getTransferId()).exceptionally(ex -> {
-                    Platform.runLater(() -> AlertUtils.showError("Transfer Error", "Failed to accept transfer", ex.getMessage()));
-                    return null;
-                });
-            });
-
-            Button rejectBtn = new Button("Reject");
-            rejectBtn.getStyleClass().add("danger-button");
-            rejectBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4px 10px;");
-            rejectBtn.setOnAction(e -> {
-                rejectBtn.setDisable(true);
-                stateService.rejectTransfer(transfer.getTransferId(), "Declined by user");
-            });
-
-            actionBox.getChildren().addAll(acceptBtn, rejectBtn);
-
-        } else if (transfer.getStatus() == FileTransferStatus.INTERRUPTED) {
-            Button resumeBtn = new Button("Resume");
-            resumeBtn.getStyleClass().add("primary-button");
-            resumeBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4px 10px;");
-            resumeBtn.setOnAction(e -> stateService.resumeTransfer(transfer.getTransferId()));
-
-            Button cancelBtn = new Button("Cancel");
-            cancelBtn.getStyleClass().add("secondary-button");
-            cancelBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4px 10px;");
-            cancelBtn.setOnAction(e -> stateService.cancelTransfer(transfer.getTransferId()));
-
-            actionBox.getChildren().addAll(resumeBtn, cancelBtn);
-
-        } else if (transfer.getStatus() == FileTransferStatus.TRANSFERRING || transfer.getStatus() == FileTransferStatus.ACCEPTED
-                || transfer.getStatus() == FileTransferStatus.RECONNECTING || transfer.getStatus() == FileTransferStatus.RESUMING) {
-            Button cancelBtn = new Button("Cancel");
-            cancelBtn.getStyleClass().add("secondary-button");
-            cancelBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4px 10px;");
-            cancelBtn.setOnAction(e -> stateService.cancelTransfer(transfer.getTransferId()));
-            actionBox.getChildren().add(cancelBtn);
-
-        } else if (transfer.getStatus() == FileTransferStatus.COMPLETED) {
-            if (transfer.getLocalPath() != null) {
-                Button openBtn = new Button("Open");
-                openBtn.getStyleClass().add("secondary-button");
-                openBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4px 10px;");
-                openBtn.setOnAction(e -> openFileSafely(transfer.getLocalPath()));
-                actionBox.getChildren().add(openBtn);
-            }
-        }
-
-        row.getChildren().addAll(dirBadge, fileInfo, progressBox, statusBadge, actionBox);
-        return row;
-    }
-
-    private HBox createMultiPeerRow(MultiPeerDownload download) {
-        HBox row = new HBox(14.0);
-        row.getStyleClass().add("card");
-        row.setAlignment(Pos.CENTER_LEFT);
-        row.setStyle("-fx-padding: 12px 16px; -fx-background-color: #faf5ff; -fx-border-color: #e9d5ff;");
-
-        // 1. Direction / Mode indicator icon
-        Label dirBadge = new Label("⚡ Multi-Peer");
-        dirBadge.setStyle("-fx-background-color: #f3e8ff; -fx-text-fill: #7c3aed; -fx-font-size: 11px; -fx-font-weight: bold; -fx-padding: 4px 8px; -fx-background-radius: 4px;");
-
-        // 2. File info and remote peers
-        VBox fileInfo = new VBox(2.0);
-        fileInfo.setMinWidth(200.0);
-        fileInfo.setPrefWidth(240.0);
-
-        Label nameLabel = new Label(download.getFileName());
-        nameLabel.getStyleClass().add("card-title");
-        nameLabel.setStyle("-fx-font-size: 13px; -fx-text-fill: #581c87;");
-
-        int activePeerCount = download.getConnectedSourcePeers().size();
-        int totalPeerCount = download.getSourcePeers().size();
-        String peerText = "Sources: " + activePeerCount + (totalPeerCount > activePeerCount ? "/" + totalPeerCount : "") +
-                " peers  (" + download.getFormattedSize() + ")";
-        Label peerLabel = new Label(peerText);
-        peerLabel.getStyleClass().add("card-desc");
-        peerLabel.setStyle("-fx-font-size: 11px;");
-
-        fileInfo.getChildren().addAll(nameLabel, peerLabel);
-
-        // 3. Progress area
-        VBox progressBox = new VBox(4.0);
-        HBox.setHgrow(progressBox, Priority.ALWAYS);
-        progressBox.setAlignment(Pos.CENTER_LEFT);
-
-        boolean isIndeterminate = download.getStatus() == MultiPeerDownloadStatus.VERIFYING ||
-                download.getStatus() == MultiPeerDownloadStatus.DISCOVERING_PEERS ||
-                download.getStatus() == MultiPeerDownloadStatus.PREPARING;
-        ProgressBar bar = new ProgressBar(isIndeterminate ? -1.0 : download.getProgressPercentage() / 100.0);
-        bar.setMaxWidth(Double.MAX_VALUE);
-        bar.getStyleClass().add("transfer-progress-bar");
-        bar.setStyle("-fx-accent: #7c3aed;");
-
-        String progressText;
-        if (download.getStatus() == MultiPeerDownloadStatus.DISCOVERING_PEERS) {
-            progressText = "Discovering peers and querying file availability...";
-        } else if (download.getStatus() == MultiPeerDownloadStatus.PREPARING) {
-            progressText = "Preparing multi-peer partial storage...";
-        } else if (download.getStatus() == MultiPeerDownloadStatus.VERIFYING) {
-            progressText = "Verifying SHA-256 integrity across all downloaded chunks...";
-        } else if (download.getStatus() == MultiPeerDownloadStatus.COMPLETED) {
-            progressText = "✓ Multi-peer download completed • SHA-256 verified: " + download.getShortenedSha256();
-        } else if (download.getStatus() == MultiPeerDownloadStatus.FAILED) {
-            progressText = "✗ Download failed: " + (download.getErrorMessage() != null && !download.getErrorMessage().isBlank() ? download.getErrorMessage() : "Network error");
-        } else if (download.getStatus() == MultiPeerDownloadStatus.CANCELLED) {
-            progressText = "Download cancelled by user";
-        } else {
-            progressText = String.format(Locale.US, "%.1f%%  •  %s / %s  •  %d / %d chunks",
-                    download.getProgressPercentage(),
-                    download.getFormattedTransferred(),
-                    download.getFormattedSize(),
-                    download.getCompletedChunkCount(),
-                    download.getTotalChunks());
-            if (download.getStatus() == MultiPeerDownloadStatus.DOWNLOADING && download.getSpeedBytesPerSec() > 0) {
-                progressText += "  •  " + download.getFormattedSpeed() + "  •  " + download.getEtaString();
-            }
-        }
-
-        Label progressLabel = new Label(progressText);
-        progressLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #64748b;");
-
-        // Per-peer breakdown badges
-        HBox peerBadgesBox = new HBox(6.0);
-        peerBadgesBox.setAlignment(Pos.CENTER_LEFT);
-        for (PeerDownloadState p : download.getSourcePeers()) {
-            Label badge = new Label(p.getPeerDisplayName() + ": " + p.getCompletedChunks() + " chunks" + (p.isConnected() ? "" : " [Offline]"));
-            badge.getStyleClass().add(p.isConnected() ? "peer-chunk-badge-active" : "peer-chunk-badge-offline");
-            peerBadgesBox.getChildren().add(badge);
-        }
-
-        progressBox.getChildren().addAll(bar, progressLabel);
-        if (!peerBadgesBox.getChildren().isEmpty()) {
-            progressBox.getChildren().add(peerBadgesBox);
-        }
-
-        // 4. Status Badge
-        Label statusBadge = new Label(download.getStatus().getLabel());
-        statusBadge.getStyleClass().addAll("transfer-status-label", "transfer-status-" + download.getStatus().name().toLowerCase());
-        statusBadge.setMinWidth(90.0);
-        statusBadge.setAlignment(Pos.CENTER);
-
-        // 5. Actions Box
-        HBox actionBox = new HBox(6.0);
-        actionBox.setAlignment(Pos.CENTER_RIGHT);
-        actionBox.setMinWidth(160.0);
-
-        if (download.getStatus() == MultiPeerDownloadStatus.COMPLETED) {
-            if (download.getDestinationPath() != null) {
-                Button openBtn = new Button("Open");
-                openBtn.getStyleClass().add("secondary-button");
-                openBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4px 10px;");
-                openBtn.setOnAction(e -> openFileSafely(download.getDestinationPath()));
-                actionBox.getChildren().add(openBtn);
-            }
-        } else if (download.getStatus() == MultiPeerDownloadStatus.DOWNLOADING ||
-                download.getStatus() == MultiPeerDownloadStatus.DISCOVERING_PEERS ||
-                download.getStatus() == MultiPeerDownloadStatus.PREPARING) {
-            Button cancelBtn = new Button("Cancel");
-            cancelBtn.getStyleClass().add("secondary-button");
-            cancelBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4px 10px;");
-            cancelBtn.setOnAction(e -> stateService.cancelMultiPeerDownload(download.getTransferId()));
-            actionBox.getChildren().add(cancelBtn);
-        }
-
-        row.getChildren().addAll(dirBadge, fileInfo, progressBox, statusBadge, actionBox);
-        return row;
-    }
-
-    @FXML
-    private void handleStartMultiPeerDownload() {
-        Dialog<MultiPeerDownloadRequest> dialog = new Dialog<>();
-        dialog.setTitle("Start Multi-Peer Download");
-        dialog.setHeaderText("Download a file concurrently from multiple peers");
-
-        ButtonType downloadButtonType = new ButtonType("Download", ButtonBar.ButtonData.OK_DONE);
-        dialog.getDialogPane().getButtonTypes().addAll(downloadButtonType, ButtonType.CANCEL);
-
-        GridPane grid = new GridPane();
-        grid.setHgap(10);
-        grid.setVgap(10);
-        grid.setPadding(new Insets(20, 150, 10, 10));
-
-        TextField fileNameField = new TextField();
-        fileNameField.setPromptText("e.g. archive.zip");
-
-        TextField fileSizeField = new TextField();
-        fileSizeField.setPromptText("e.g. 10485760 (bytes)");
-
-        TextField sha256Field = new TextField();
-        sha256Field.setPromptText("64-character hex hash");
-
-        grid.add(new Label("File Name:"), 0, 0);
-        grid.add(fileNameField, 1, 0);
-        grid.add(new Label("File Size (bytes):"), 0, 1);
-        grid.add(fileSizeField, 1, 1);
-        grid.add(new Label("SHA-256 Hash:"), 0, 2);
-        grid.add(sha256Field, 1, 2);
-
-        dialog.getDialogPane().setContent(grid);
-
-        dialog.setResultConverter(dialogButton -> {
-            if (dialogButton == downloadButtonType) {
-                String name = fileNameField.getText() != null ? fileNameField.getText().trim() : "";
-                long size;
-                try {
-                    size = Long.parseLong(fileSizeField.getText() != null ? fileSizeField.getText().trim() : "");
-                } catch (Exception ex) {
-                    size = -1L;
-                }
-                String hash = sha256Field.getText() != null ? sha256Field.getText().trim() : "";
-                return new MultiPeerDownloadRequest(name, size, hash);
-            }
-            return null;
-        });
-
-        var result = dialog.showAndWait();
-        result.ifPresent(req -> {
-            if (req.name().isBlank() || req.size() <= 0 || !com.landrop.transfer.FileTransferUtils.isValidSha256(req.hash())) {
-                AlertUtils.showError("Invalid Input", "Validation Error", "Please provide a valid file name, positive size in bytes, and a 64-character hex SHA-256 hash.");
-                return;
-            }
-
-            stateService.startMultiPeerDownload(req.name(), req.size(), req.hash().toLowerCase())
-                    .thenAccept(dl -> Platform.runLater(this::renderTransfers))
-                    .exceptionally(ex -> {
-                        Platform.runLater(() -> AlertUtils.showError("Multi-Peer Error", "Could not start download", ex.getMessage()));
-                        return null;
-                    });
-        });
-    }
-
-    private record MultiPeerDownloadRequest(String name, long size, String hash) {}
-
-    private void openFileSafely(Path path) {
-        if (path == null) return;
-        Thread.ofVirtual().start(() -> {
-            try {
-                if (Desktop.isDesktopSupported()) {
-                    Desktop desktop = Desktop.getDesktop();
-                    if (Files.exists(path)) {
-                        desktop.open(path.toFile());
-                    } else if (path.getParent() != null && Files.exists(path.getParent())) {
-                        desktop.open(path.getParent().toFile());
-                    }
-                }
-            } catch (Exception ignored) {
-            }
-        });
-    }
+    private void scheduleTransferRender(){long now=System.currentTimeMillis();if(now-lastRenderMs<100)return;lastRenderMs=now;Platform.runLater(this::renderTransfers);}
+    private void renderBreadcrumb(){StringBuilder text=new StringBuilder("Files");for(Domain.Folder f:files.breadcrumbs())text.append("  >  ").append(f.name());breadcrumbLabel.setText(text.toString());}
+    private void renderFiles(){foldersContainer.getChildren().clear();filesContainer.getChildren().clear();boolean empty=files.folders().isEmpty()&&files.files().isEmpty();emptyFilesContainer.setVisible(empty);emptyFilesContainer.setManaged(empty);
+        for(Domain.Folder folder:files.folders())foldersContainer.getChildren().add(folderRow(folder)); for(Domain.File file:files.files())filesContainer.getChildren().add(fileRow(file));}
+    private HBox folderRow(Domain.Folder folder){HBox row=new HBox(10);row.setAlignment(Pos.CENTER_LEFT);row.getStyleClass().add("file-row");Button open=new Button("📁  "+folder.name());open.getStyleClass().add("file-name-button");open.setOnAction(e->files.openFolder(folder));Region gap=new Region();HBox.setHgrow(gap,Priority.ALWAYS);row.getChildren().addAll(open,gap,actionsForFolder(folder));return row;}
+    private HBox fileRow(Domain.File file){HBox row=new HBox(10);row.setAlignment(Pos.CENTER_LEFT);row.getStyleClass().add("file-row");Button info=new Button(icon(file.mimeType())+"  "+file.name());info.getStyleClass().add("file-name-button");info.setOnAction(e->showDetails(file));VBox meta=new VBox(1,new Label(formatSize(file.sizeBytes())+" • "+uploader(file.uploadedById())),new Label(DateTimeFormatter.ofPattern("dd MMM yyyy").withZone(ZoneId.systemDefault()).format(file.createdAt())));meta.getStyleClass().add("file-meta");Region gap=new Region();HBox.setHgrow(gap,Priority.ALWAYS);Button send=small("Send",e->chooseLocalAndReceiver(file));row.getChildren().addAll(info,meta,gap,send,actionsForFile(file));return row;}
+    private HBox actionsForFolder(Domain.Folder f){HBox box=new HBox(4);box.getChildren().addAll(small("Rename",e->renameFolder(f)),small("Move",e->moveFolder(f)),small("Delete",e->deleteFolder(f)));return box;}
+    private HBox actionsForFile(Domain.File f){HBox box=new HBox(4);box.getChildren().addAll(small("Rename",e->renameFile(f)),small("Move",e->moveFile(f)),small("Delete",e->deleteFile(f)));return box;}
+    private Button small(String text,javafx.event.EventHandler<javafx.event.ActionEvent> h){Button b=new Button(text);b.getStyleClass().add("message-action-button");b.setOnAction(h);return b;}
+    private void showDetails(Domain.File f){detailsLabel.setText("Name: "+f.name()+"\nSize: "+formatSize(f.sizeBytes())+"\nType: "+f.mimeType()+"\nUploaded by: "+uploader(f.uploadedById())+"\nCreated: "+f.createdAt()+"\nHash: "+(f.sha256()==null?"Not available":f.sha256()));}
+    private void renameFolder(Domain.Folder f){prompt("Rename folder",f.name(),name->files.renameFolder(f,name));} private void renameFile(Domain.File f){prompt("Rename file",f.name(),name->files.renameFile(f,name));}
+    private void prompt(String title,String initial,java.util.function.Function<String,java.util.concurrent.CompletableFuture<?>> action){TextInputDialog d=new TextInputDialog(initial);d.setTitle(title);d.setHeaderText(null);d.setContentText("Name:");d.showAndWait().ifPresent(name->{if(name==null||name.trim().isEmpty()){errorLabel.setText("Name is required.");return;}action.apply(name);});}
+    private void moveFolder(Domain.Folder f){chooseFolder("Move folder",target->files.moveFolder(f,target));} private void moveFile(Domain.File f){chooseFolder("Move file",target->files.moveFile(f,target));}
+    private void chooseFolder(String title,java.util.function.Consumer<String> action){ChoiceDialog<String> d=new ChoiceDialog<>("Workspace root",java.util.stream.Stream.concat(java.util.stream.Stream.of("Workspace root"),files.folders().stream().map(Domain.Folder::name)).toList());d.setTitle(title);d.setHeaderText(null);d.setContentText("Destination:");d.showAndWait().ifPresent(choice->{String id="Workspace root".equals(choice)?null:files.folders().stream().filter(x->x.name().equals(choice)).map(Domain.Folder::id).findFirst().orElse(null);action.accept(id);});}
+    private void deleteFolder(Domain.Folder f){confirm("Delete folder ‘"+f.name()+"’?",()->files.deleteFolder(f));} private void deleteFile(Domain.File f){confirm("Delete file ‘"+f.name()+"’?",()->files.deleteFile(f));}
+    private void confirm(String text,Runnable yes){Alert d=new Alert(Alert.AlertType.CONFIRMATION,text,ButtonType.CANCEL,ButtonType.OK);d.setHeaderText("Confirm deletion");if(d.showAndWait().orElse(ButtonType.CANCEL)==ButtonType.OK)yes.run();}
+    @FXML private void onRoot(){files.openRoot();} @FXML private void onNewFolder(){TextInputDialog d=new TextInputDialog();d.setTitle("New Folder");d.setHeaderText("Create folder");d.setContentText("Name:");d.showAndWait().ifPresent(name->{if(name.trim().isEmpty())errorLabel.setText("Folder name is required.");else files.createFolder(name);});}
+    @FXML private void onSelectFile(){chooseLocalAndReceiver(null);}
+    private void chooseLocalAndReceiver(Domain.File existing){if(existing!=null){receiverDialog(null,existing);return;}FileChooser chooser=new FileChooser();chooser.setTitle("Select file to register and send");File selected=chooser.showOpenDialog(selectFileButton.getScene().getWindow());if(selected==null)return;receiverDialog(selected.toPath(),null);}
+    private void receiverDialog(Path local,Domain.File existing){Dialog<ButtonType> dialog=new Dialog<>();dialog.setTitle("Send file");dialog.setHeaderText("Choose a workspace user and LAN device");ButtonType sendType=new ButtonType("Send",ButtonBar.ButtonData.OK_DONE);dialog.getDialogPane().getButtonTypes().addAll(ButtonType.CANCEL,sendType);ComboBox<Domain.WorkspaceMember> users=new ComboBox<>();users.getItems().setAll(workspaces.getActiveMembers().stream().filter(m->!m.userId().equals(workspaces.currentUserId())).toList());users.setCellFactory(x->memberCell());users.setButtonCell(memberCell());ComboBox<Domain.Device> devices=new ComboBox<>();devices.setCellFactory(x->deviceCell());devices.setButtonCell(deviceCell());Label availability=new Label("Choose a recipient.");VBox content=new VBox(10,new Label("Recipient"),users,new Label("Device"),devices,availability);dialog.getDialogPane().setContent(content);Node send=dialog.getDialogPane().lookupButton(sendType);send.setDisable(true);users.valueProperty().addListener((o,a,user)->{devices.getItems().clear();send.setDisable(true);if(user==null)return;availability.setText("Loading devices…");files.devicesFor(user.userId()).whenComplete((found,fail)->Platform.runLater(()->{if(fail!=null){availability.setText("Could not load devices: "+fail.getMessage());return;}devices.getItems().setAll(found);availability.setText(found.isEmpty()?"No reachable LAN device.":"Choose a device.");}));});devices.valueProperty().addListener((o,a,device)->{boolean reachable=device!=null&&device.lanAvailable();send.setDisable(!reachable);availability.setText(device==null?"Choose a device.":device.availabilityLabel());});dialog.showAndWait().filter(x->x==sendType).ifPresent(x->{Domain.WorkspaceMember user=users.getValue();Domain.Device device=devices.getValue();if(user!=null&&device!=null&&device.lanAvailable()){if(existing==null)files.registerAndRequest(local,user.userId(),device.id());else files.requestExistingTransfer(existing,user.userId(),device.id());}});}
+    private ListCell<Domain.WorkspaceMember> memberCell(){return new ListCell<>(){@Override protected void updateItem(Domain.WorkspaceMember m,boolean empty){super.updateItem(m,empty);setText(empty||m==null?null:m.nameOrFallback());}};} private ListCell<Domain.Device> deviceCell(){return new ListCell<>(){@Override protected void updateItem(Domain.Device d,boolean empty){super.updateItem(d,empty);setText(empty||d==null?null:d.label()+" — "+d.availabilityLabel());}};}
+    private void renderTransfers(){transfersContainer.getChildren().clear();for(FileTransfer t:core.getTransfers())transfersContainer.getChildren().add(transferRow(t));}
+    private HBox transferRow(FileTransfer t){boolean outgoing=t.getDirection()==FileTransferDirection.OUTGOING;HBox row=new HBox(10);row.getStyleClass().add("transfer-history-row");VBox info=new VBox(2,new Label(t.getFileName()),new Label((outgoing?"To device: ":"From device: ")+t.getRemotePeerName()));ProgressBar bar=new ProgressBar(t.getStatus()==FileTransferStatus.TRANSFERRING?t.getProgress():(t.getStatus()==FileTransferStatus.COMPLETED?1:0));bar.setPrefWidth(130);Label status=new Label(t.getStatus().getLabel()+(t.getStatus()==FileTransferStatus.TRANSFERRING?" "+t.getProgressPercent()+"%":""));Region gap=new Region();HBox.setHgrow(gap,Priority.ALWAYS);HBox actions=new HBox(4);if(t.getStatus()==FileTransferStatus.PENDING&&!outgoing){actions.getChildren().addAll(small("Accept",e->core.acceptTransfer(t.getTransferId())),small("Reject",e->core.rejectTransfer(t.getTransferId(),"Declined by user")));}else if(!t.getStatus().isTerminal()&&t.getStatus()!=FileTransferStatus.VERIFYING){actions.getChildren().add(small("Cancel",e->core.cancelTransfer(t.getTransferId())));}row.getChildren().addAll(info,gap,bar,status,actions);return row;}
+    private String uploader(String userId){if(userId.equals(workspaces.currentUserId())&&workspaces.authStateService().user()!=null)return workspaces.authStateService().user().displayName();for(Domain.WorkspaceMember m:workspaces.getActiveMembers())if(userId.equals(m.userId()))return m.nameOrFallback();return "User";} private static String icon(String mime){if(mime!=null&&mime.startsWith("image/"))return "🖼";if(mime!=null&&mime.contains("zip"))return "📦";return "📄";} private static String formatSize(BigInteger bytes){if(bytes.compareTo(BigInteger.valueOf(1024*1024))>=0)return String.format("%.1f MB",bytes.doubleValue()/(1024d*1024));if(bytes.compareTo(BigInteger.valueOf(1024))>=0)return String.format("%.1f KB",bytes.doubleValue()/1024d);return bytes+" B";}
 }

@@ -1,56 +1,12 @@
 <?xml version="1.0" encoding="UTF-8"?>
-
-<?import javafx.geometry.Insets?>
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
-
-<VBox xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
-      fx:controller="com.landrop.ui.controllers.TransfersController"
-      spacing="16.0" VBox.vgrow="ALWAYS" styleClass="page-container">
-
-    <!-- 1. Page Header -->
-    <HBox alignment="CENTER_LEFT" spacing="12.0">
-        <VBox spacing="4.0" HBox.hgrow="ALWAYS">
-            <Label text="File Transfers" styleClass="page-title"/>
-            <Label text="Monitor and manage all incoming and outgoing peer-to-peer file transfers" styleClass="page-subtitle"/>
-        </VBox>
-        <Button fx:id="startMultiPeerDownloadBtn" text="⚡ Multi-Peer Download" onAction="#handleStartMultiPeerDownload"
-                styleClass="primary-button" style="-fx-font-size: 12px; -fx-padding: 8px 14px; -fx-background-color: #7c3aed;"/>
-    </HBox>
-
-    <!-- 2. Transfer Metrics Bar -->
-    <HBox spacing="16.0">
-        <VBox styleClass="metric-card" HBox.hgrow="ALWAYS">
-            <Label text="TOTAL TRANSFERS" styleClass="metric-label"/>
-            <Label fx:id="totalTransfersLabel" text="0" styleClass="metric-value"/>
-        </VBox>
-
-        <VBox styleClass="metric-card" HBox.hgrow="ALWAYS">
-            <Label text="ACTIVE TRANSFERS" styleClass="metric-label"/>
-            <Label fx:id="activeTransfersLabel" text="0" styleClass="metric-value" style="-fx-text-fill: #4f46e5;"/>
-        </VBox>
-
-        <VBox styleClass="metric-card" HBox.hgrow="ALWAYS">
-            <Label text="COMPLETED" styleClass="metric-label"/>
-            <Label fx:id="completedTransfersLabel" text="0" styleClass="metric-value" style="-fx-text-fill: #10b981;"/>
-        </VBox>
-    </HBox>
-
-    <!-- 3. Transfers List Container -->
-    <StackPane VBox.vgrow="ALWAYS">
-        <ScrollPane fx:id="transfersScrollPane" fitToWidth="true" styleClass="chat-messages-scroll" VBox.vgrow="ALWAYS">
-            <VBox fx:id="transfersContainer" spacing="10.0">
-                <padding>
-                    <Insets top="8.0" right="8.0" bottom="8.0" left="8.0"/>
-                </padding>
-            </VBox>
-        </ScrollPane>
-
-        <!-- Empty State Placeholder -->
-        <VBox fx:id="emptyTransfersContainer" styleClass="empty-state-box" alignment="CENTER" maxWidth="450.0" maxHeight="180.0">
-            <Label text="No File Transfers Yet" styleClass="empty-state-title"/>
-            <Label text="When you send or receive files from connected peers, they will appear here with live progress."
-                   styleClass="empty-state-desc" wrapText="true" textAlignment="CENTER"/>
-        </VBox>
-    </StackPane>
+<VBox xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1" fx:controller="com.landrop.ui.controllers.TransfersController" spacing="12" VBox.vgrow="ALWAYS" styleClass="page-container" style="-fx-padding: 16px 24px 20px 24px;">
+  <HBox alignment="CENTER_LEFT" spacing="10"><VBox HBox.hgrow="ALWAYS"><Label fx:id="workspaceNameLabel" text="Files" styleClass="page-title"/><Label text="Workspace files and direct LAN transfers" styleClass="page-subtitle"/></VBox><Button fx:id="selectFileButton" text="Select File &amp; Send" onAction="#onSelectFile" styleClass="primary-button"/><Button fx:id="newFolderButton" text="New Folder" onAction="#onNewFolder" styleClass="secondary-button"/></HBox>
+  <HBox alignment="CENTER_LEFT" spacing="8" styleClass="file-breadcrumb"><Button fx:id="rootButton" text="Files" onAction="#onRoot" styleClass="message-action-button"/><Label fx:id="breadcrumbLabel" text="Files"/></HBox>
+  <Label fx:id="errorLabel" styleClass="chat-error-label"/><Label fx:id="successLabel" styleClass="file-success-label"/>
+  <SplitPane dividerPositions="0.70" VBox.vgrow="ALWAYS"><items>
+    <VBox spacing="8"><ScrollPane fitToWidth="true" VBox.vgrow="ALWAYS" styleClass="chat-messages-scroll"><VBox spacing="6"><Label text="FOLDERS" styleClass="sidebar-heading"/><VBox fx:id="foldersContainer" spacing="4"/><Label text="FILES" styleClass="sidebar-heading"/><VBox fx:id="filesContainer" spacing="4"/><VBox fx:id="emptyFilesContainer" alignment="CENTER" styleClass="empty-state-box"><Label text="This folder is empty" styleClass="empty-state-title"/><Label text="Create a folder or select a file to start." styleClass="empty-state-desc"/></VBox></VBox></ScrollPane></VBox>
+    <VBox spacing="10" styleClass="file-details-pane"><Label text="Details" styleClass="card-title"/><Label fx:id="detailsLabel" text="Select a file to see metadata." wrapText="true"/><Separator/><Label text="Recent LAN transfers" styleClass="card-title"/><ScrollPane fitToWidth="true" VBox.vgrow="ALWAYS"><VBox fx:id="transfersContainer" spacing="6"/></ScrollPane></VBox>
+  </items></SplitPane>
 </VBox>

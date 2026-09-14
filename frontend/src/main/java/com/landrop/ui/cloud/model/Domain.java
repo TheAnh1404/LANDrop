@@ -93,6 +93,14 @@ public final class Domain {
         }
     }
 
+    /** A LAN-capable endpoint belongs to one logical user, never to a peer identity in product UI. */
+    public record Device(String id, String userId, String label, boolean lanAvailable) {
+        public Device {
+            required(id, "id"); required(userId, "userId"); required(label, "label");
+        }
+        public String availabilityLabel() { return lanAvailable ? "LAN available" : "Not reachable"; }
+    }
+
     public record Channel(String id, String workspaceId, String name, String description,
                           Instant createdAt, Instant updatedAt) {
         public Channel {

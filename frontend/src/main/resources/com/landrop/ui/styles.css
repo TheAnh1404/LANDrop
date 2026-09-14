@@ -488,6 +488,13 @@
 .message-action-button:hover { -fx-text-fill: #4338ca; -fx-underline: true; }
 .reply-bar { -fx-background-color: #eef2ff; -fx-padding: 8px 20px; -fx-text-fill: #4338ca; }
 .chat-error-label { -fx-text-fill: #b91c1c; -fx-font-size: 11px; -fx-padding: 4px 20px; }
+.file-row, .transfer-history-row { -fx-background-color: #ffffff; -fx-border-color: #e2e8f0; -fx-border-radius: 6px; -fx-background-radius: 6px; -fx-padding: 8px 10px; }
+.file-name-button { -fx-background-color: transparent; -fx-text-fill: #334155; -fx-font-size: 13px; -fx-font-weight: bold; -fx-padding: 2px; }
+.file-name-button:hover { -fx-text-fill: #4338ca; }
+.file-meta { -fx-font-size: 10px; -fx-text-fill: #64748b; }
+.file-breadcrumb { -fx-background-color: #f8fafc; -fx-padding: 6px 10px; -fx-background-radius: 6px; }
+.file-details-pane { -fx-background-color: #ffffff; -fx-border-color: #e2e8f0; -fx-padding: 14px; }
+.file-success-label { -fx-text-fill: #059669; -fx-font-size: 11px; -fx-padding: 2px 20px; }
 
 /* --------------------------------------------------------------------------
    Empty States
