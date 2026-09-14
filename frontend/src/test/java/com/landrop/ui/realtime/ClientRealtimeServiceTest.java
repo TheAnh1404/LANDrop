@@ -9,6 +9,7 @@ import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
+import java.time.Duration;
 import static org.junit.jupiter.api.Assertions.*;
 
 class ClientRealtimeServiceTest {
@@ -50,6 +51,26 @@ class ClientRealtimeServiceTest {
             transport.receive("not json");
             assertEquals(ConnectionState.CONNECTED, client.state());
         } finally { client.close(); }
+    }
+
+    @Test
+    void requestTimeoutRemovesPendingCorrelation() throws Exception {
+        FakeTransport transport = new FakeTransport();
+        ClientRealtimeService client = new ClientRealtimeService(URI.create("ws://server/api/realtime"),
+                () -> CompletableFuture.completedFuture(null), new ClientInstanceService("timeout-" + System.nanoTime()), () -> "token", () -> "Laptop",
+                (uri, token) -> transport, Duration.ofMillis(50));
+        try {
+            client.start(); RealtimeEnvelope hello = RealtimeEnvelope.parse(transport.sent.getFirst());
+            transport.receive(new RealtimeEnvelope("welcome", null, "2026-01-01T00:00:00Z", RealtimeEnvelope.newPayload().put("protocolVersion", 1)).toJson());
+            assertThrows(Exception.class, () -> client.request("echo", RealtimeEnvelope.newPayload()).get(1, java.util.concurrent.TimeUnit.SECONDS));
+            assertEquals(0, client.pendingRequestCount());
+        } finally { client.close(); }
+    }
+
+    @Test
+    void clientInstanceIdPersistsWithinTheSameProfile() {
+        String profile = "instance-" + System.nanoTime();
+        assertEquals(new ClientInstanceService(profile).clientInstanceId(), new ClientInstanceService(profile).clientInstanceId());
     }
 
     private static final class FakeTransport implements RealtimeTransport {

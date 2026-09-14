@@ -13,7 +13,7 @@ Every control event is JSON:
 }
 ```
 
-On socket open the client sends `hello` with `protocolVersion: 1`, `clientVersion`, `clientInstanceId`, `deviceName`, and `platform` in `payload`. The server must reply with `welcome`, preserving the `requestId`, and with `payload.protocolVersion: 1`. It may provide `payload.heartbeatIntervalMs`; the client defaults to 30000 ms.
+On socket open the client sends `hello` with `protocolVersion: 1`, `clientVersion`, `clientInstanceId`, `deviceName`, and `platform` in `payload` and mirrors those handshake fields at the top level for FOUNDATION-01A compatibility. The server replies with `welcome` (a server-push `welcome` may omit `requestId`) and with `payload.protocolVersion: 1`. It may provide `payload.heartbeatIntervalMs`; the client defaults to 30000 ms.
 
 The client sends `heartbeat` only after `welcome`. A request response must preserve `requestId`; server errors use `type: error` and `payload.message`.
 

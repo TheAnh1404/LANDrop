@@ -41,6 +41,10 @@ public class SettingsController {
 
     @FXML private TextField apiUrlField;
     @FXML private TextField wsUrlField;
+    @FXML private TextField connectionIdField;
+    @FXML private TextField clientInstanceIdField;
+    @FXML private TextField serverProtocolField;
+    @FXML private TextField heartbeatDiagnosticField;
     @FXML private Label serverStatusLabel;
 
     private MainController mainController;
@@ -64,7 +68,13 @@ public class SettingsController {
             ClientRealtimeService server = mainController.getMainApp().getServerRealtimeService();
             if (server != null) {
                 updateServerStatus(server.state());
+                updateDiagnostics(server);
                 server.stateProperty().addListener((obs, old, next) -> Platform.runLater(() -> updateServerStatus(next)));
+                server.connectionIdProperty().addListener((obs, old, next) -> Platform.runLater(() -> updateDiagnostics(server)));
+                server.serverVersionProperty().addListener((obs, old, next) -> Platform.runLater(() -> updateDiagnostics(server)));
+                server.serverProtocolVersionProperty().addListener((obs, old, next) -> Platform.runLater(() -> updateDiagnostics(server)));
+                server.lastHeartbeatProperty().addListener((obs, old, next) -> Platform.runLater(() -> updateDiagnostics(server)));
+                server.reconnectAttemptsProperty().addListener((obs, old, next) -> Platform.runLater(() -> updateDiagnostics(server)));
             }
         }
     }
@@ -84,5 +94,13 @@ public class SettingsController {
     }
     private ClientRealtimeService server() { return mainController == null || mainController.getMainApp() == null ? null : mainController.getMainApp().getServerRealtimeService(); }
     private void updateServerStatus(ConnectionState state) { serverStatusLabel.setText("Server: " + state.name()); }
+    private void updateDiagnostics(ClientRealtimeService server) {
+        clientInstanceIdField.setText(server.clientInstanceId());
+        connectionIdField.setText(server.connectionIdProperty().get());
+        serverProtocolField.setText((server.serverVersionProperty().get().isBlank() ? "Waiting for WELCOME" : server.serverVersionProperty().get())
+                + " / v" + server.serverProtocolVersionProperty().get());
+        heartbeatDiagnosticField.setText((server.lastHeartbeatProperty().get().isBlank() ? "No heartbeat yet" : server.lastHeartbeatProperty().get())
+                + " / retry " + server.reconnectAttemptsProperty().get());
+    }
     private static String message(Throwable error) { Throwable cause = error.getCause() == null ? error : error.getCause(); return cause.getMessage() == null ? "request failed" : cause.getMessage(); }
 }

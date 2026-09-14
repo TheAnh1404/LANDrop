@@ -26,6 +26,14 @@
                 <TextField fx:id="wsUrlField" editable="false" styleClass="form-readonly-value"/>
             </VBox>
             <Label fx:id="serverStatusLabel" text="Server: Disconnected" wrapText="true" style="-fx-text-fill: #64748b;"/>
+            <HBox spacing="16.0">
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="Connection ID" styleClass="form-label"/><TextField fx:id="connectionIdField" editable="false" styleClass="form-readonly-value"/></VBox>
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="Client Instance ID" styleClass="form-label"/><TextField fx:id="clientInstanceIdField" editable="false" styleClass="form-readonly-value"/></VBox>
+            </HBox>
+            <HBox spacing="16.0">
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="Server Version / Protocol" styleClass="form-label"/><TextField fx:id="serverProtocolField" editable="false" styleClass="form-readonly-value"/></VBox>
+                <VBox styleClass="form-group" HBox.hgrow="ALWAYS"><Label text="Last Heartbeat / Retry" styleClass="form-label"/><TextField fx:id="heartbeatDiagnosticField" editable="false" styleClass="form-readonly-value"/></VBox>
+            </HBox>
             <HBox spacing="10.0">
                 <Button text="Check server" styleClass="secondary-button" onAction="#onCheckServerClicked"/>
                 <Button text="Reconnect" styleClass="secondary-button" onAction="#onReconnectClicked"/>

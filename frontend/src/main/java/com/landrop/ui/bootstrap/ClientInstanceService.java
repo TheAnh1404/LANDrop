@@ -10,7 +10,13 @@ public final class ClientInstanceService {
     private final String clientInstanceId;
 
     public ClientInstanceService() {
-        Preferences preferences = Preferences.userNodeForPackage(ClientInstanceService.class);
+        this(Preferences.userNodeForPackage(ClientInstanceService.class));
+    }
+    /** Isolated profile is useful for independent local installations and integration tests. */
+    public ClientInstanceService(String profile) {
+        this(Preferences.userNodeForPackage(ClientInstanceService.class).node(profile == null || profile.isBlank() ? "default" : profile));
+    }
+    private ClientInstanceService(Preferences preferences) {
         String stored = preferences.get(KEY, "");
         if (stored.isBlank()) {
             stored = UUID.randomUUID().toString();

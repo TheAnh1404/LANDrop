@@ -11,6 +11,10 @@ import com.landrop.ui.services.WebSocketRealtimeTransport;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.ReadOnlyObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
+import javafx.beans.property.IntegerProperty;
+import javafx.beans.property.SimpleIntegerProperty;
+import javafx.beans.property.StringProperty;
+import javafx.beans.property.SimpleStringProperty;
 import java.net.URI;
 import java.time.Duration;
 import java.util.Map;
@@ -37,8 +41,14 @@ public final class ClientRealtimeService implements AutoCloseable {
     private final Supplier<String> tokenSupplier;
     private final Supplier<String> deviceNameSupplier;
     private final TransportFactory transports;
+    private final Duration requestTimeout;
     private final ScheduledExecutorService scheduler;
     private final ObjectProperty<ConnectionState> state = new SimpleObjectProperty<>(ConnectionState.IDLE);
+    private final StringProperty connectionId = new SimpleStringProperty("");
+    private final StringProperty serverVersion = new SimpleStringProperty("");
+    private final IntegerProperty serverProtocolVersion = new SimpleIntegerProperty(-1);
+    private final StringProperty lastHeartbeat = new SimpleStringProperty("");
+    private final IntegerProperty reconnectAttempts = new SimpleIntegerProperty();
     private final Map<String, CopyOnWriteArrayList<Consumer<RealtimeEnvelope>>> subscribers = new ConcurrentHashMap<>();
     private final Map<String, CompletableFuture<RealtimeEnvelope>> pending = new ConcurrentHashMap<>();
     private final AtomicBoolean explicitlyClosed = new AtomicBoolean();
@@ -55,12 +65,22 @@ public final class ClientRealtimeService implements AutoCloseable {
     }
     ClientRealtimeService(URI wsUri, HealthProbe health, ClientInstanceService instance,
             Supplier<String> tokenSupplier, Supplier<String> deviceNameSupplier, TransportFactory transports) {
+        this(wsUri, health, instance, tokenSupplier, deviceNameSupplier, transports, REQUEST_TIMEOUT);
+    }
+    ClientRealtimeService(URI wsUri, HealthProbe health, ClientInstanceService instance,
+            Supplier<String> tokenSupplier, Supplier<String> deviceNameSupplier, TransportFactory transports, Duration requestTimeout) {
         this.wsUri = Objects.requireNonNull(wsUri); this.health = Objects.requireNonNull(health);
         this.instance = Objects.requireNonNull(instance); this.tokenSupplier = Objects.requireNonNull(tokenSupplier);
-        this.deviceNameSupplier = Objects.requireNonNull(deviceNameSupplier); this.transports = Objects.requireNonNull(transports);
+        this.deviceNameSupplier = Objects.requireNonNull(deviceNameSupplier); this.transports = Objects.requireNonNull(transports); this.requestTimeout = Objects.requireNonNull(requestTimeout);
         this.scheduler = Executors.newSingleThreadScheduledExecutor(r -> { Thread t = new Thread(r, "landrop-server-control"); t.setDaemon(true); return t; });
     }
     public ReadOnlyObjectProperty<ConnectionState> stateProperty() { return state; }
+    public StringProperty connectionIdProperty() { return connectionId; }
+    public StringProperty serverVersionProperty() { return serverVersion; }
+    public IntegerProperty serverProtocolVersionProperty() { return serverProtocolVersion; }
+    public StringProperty lastHeartbeatProperty() { return lastHeartbeat; }
+    public IntegerProperty reconnectAttemptsProperty() { return reconnectAttempts; }
+    public String clientInstanceId() { return instance.clientInstanceId(); }
     public ConnectionState state() { return state.get(); }
     public boolean isConnected() { return state() == ConnectionState.CONNECTED; }
     public CompletableFuture<Void> checkHealth() { return health.check(); }
@@ -81,7 +101,7 @@ public final class ClientRealtimeService implements AutoCloseable {
         scheduler.schedule(() -> {
             CompletableFuture<RealtimeEnvelope> timedOut = pending.remove(envelope.requestId());
             if (timedOut != null) timedOut.completeExceptionally(new TimeoutException("Timed out waiting for " + type));
-        }, REQUEST_TIMEOUT.toSeconds(), TimeUnit.SECONDS);
+        }, requestTimeout.toMillis(), TimeUnit.MILLISECONDS);
         sendEnvelope(envelope).whenComplete((ignored, error) -> {
             if (error != null) { CompletableFuture<RealtimeEnvelope> failed = pending.remove(envelope.requestId()); if (failed != null) failed.completeExceptionally(error); }
         });
@@ -98,8 +118,8 @@ public final class ClientRealtimeService implements AutoCloseable {
         log("WS_CONNECTING");
         health.check().whenComplete((ignored, healthFailure) -> {
             if (explicitlyClosed.get()) return;
-            if (healthFailure != null) { log("SERVER_HEALTH_FAILED"); update(ConnectionState.ERROR); scheduleReconnect(); return; }
-            log("SERVER_HEALTH_OK"); openSocket();
+            if (healthFailure != null) { log("SERVER_HEALTH_FAILED"); log("HEALTH_CHECK_FAILED"); update(ConnectionState.ERROR); scheduleReconnect(); return; }
+            log("SERVER_HEALTH_OK"); log("HEALTH_CHECK_OK"); openSocket();
         });
     }
     private synchronized void openSocket() {
@@ -119,14 +139,15 @@ public final class ClientRealtimeService implements AutoCloseable {
     }
     private void onSocketOpen(RealtimeTransport source) {
         if (source != transport || explicitlyClosed.get()) return;
-        log("WS_CONNECTED"); update(ConnectionState.HANDSHAKING);
+        log("WS_CONNECTED"); log("HANDSHAKING"); update(ConnectionState.HANDSHAKING);
         var hello = RealtimeEnvelope.newPayload();
         hello.put("protocolVersion", PROTOCOL_VERSION);
         hello.put("clientVersion", clientVersion());
         hello.put("clientInstanceId", instance.clientInstanceId());
         hello.put("deviceName", safeDeviceName());
         hello.put("platform", instance.platform());
-        sendEnvelope(RealtimeEnvelope.create("hello", hello)).whenComplete((ignored, error) -> { if (error != null) handshakeFailed(error); });
+        RealtimeEnvelope helloEvent = RealtimeEnvelope.create("hello", hello);
+        sendHello(helloEvent).whenComplete((ignored, error) -> { if (error != null) handshakeFailed(error); });
         cancel(handshakeTimeout);
         handshakeTimeout = scheduler.schedule(() -> handshakeFailed(new TimeoutException("Server did not send welcome.")), 10, TimeUnit.SECONDS);
     }
@@ -137,19 +158,26 @@ public final class ClientRealtimeService implements AutoCloseable {
         catch (IllegalArgumentException invalid) { log("INVALID_SERVER_EVENT"); return; }
         if ("welcome".equals(event.type())) { welcome(event); return; }
         if ("error".equals(event.type())) {
-            CompletableFuture<RealtimeEnvelope> request = pending.remove(event.requestId());
+            CompletableFuture<RealtimeEnvelope> request = removePending(event.requestId());
             IllegalStateException failure = new IllegalStateException(event.payload().path("message").asText("Server rejected request."));
             if (request != null) request.completeExceptionally(failure); dispatch(event); return;
         }
-        CompletableFuture<RealtimeEnvelope> request = pending.remove(event.requestId());
+        boolean heartbeatAck = "heartbeat_ack".equals(event.type());
+        if (heartbeatAck) lastHeartbeat.set(java.time.Instant.now().toString());
+        CompletableFuture<RealtimeEnvelope> request = removePending(event.requestId());
         if (request != null) request.complete(event);
         boolean delivered = dispatch(event);
-        if (request == null && !delivered) log("UNKNOWN_SERVER_EVENT");
+        if (!heartbeatAck && request == null && !delivered) log("UNKNOWN_SERVER_EVENT");
     }
     private void welcome(RealtimeEnvelope event) {
         int version = event.payload().path("protocolVersion").asInt(-1);
         if (version != PROTOCOL_VERSION) { handshakeFailed(new IllegalStateException("Unsupported server protocol version: " + version)); return; }
-        cancel(handshakeTimeout); reconnectAttempt = 0; update(ConnectionState.CONNECTED); log("HANDSHAKE_OK");
+        cancel(handshakeTimeout);
+        connectionId.set(event.payload().path("connectionId").asText(""));
+        serverVersion.set(event.payload().path("serverVersion").asText(""));
+        serverProtocolVersion.set(version);
+        boolean reconnected = reconnectAttempt > 0;
+        reconnectAttempt = 0; reconnectAttempts.set(0); update(ConnectionState.CONNECTED); log("HANDSHAKE_OK"); if (reconnected) log("RECONNECTED");
         long heartbeatMillis = event.payload().path("heartbeatIntervalMs").asLong(30_000L);
         if (heartbeatMillis < 1_000L) heartbeatMillis = 1_000L;
         startHeartbeat(heartbeatMillis);
@@ -165,14 +193,24 @@ public final class ClientRealtimeService implements AutoCloseable {
     private synchronized void scheduleReconnect() {
         if (explicitlyClosed.get() || reconnectTask != null && !reconnectTask.isDone()) return;
         long delay = BACKOFF_SECONDS[Math.min(reconnectAttempt, BACKOFF_SECONDS.length - 1)]; reconnectAttempt++;
+        reconnectAttempts.set(reconnectAttempt);
         log("RECONNECTING"); update(ConnectionState.RECONNECTING);
         reconnectTask = scheduler.schedule(() -> { reconnectTask = null; connect(true); }, delay, TimeUnit.SECONDS);
     }
     private void startHeartbeat(long intervalMillis) {
         cancel(heartbeatTask);
         heartbeatTask = scheduler.scheduleAtFixedRate(() -> {
-            if (isConnected()) send("heartbeat", RealtimeEnvelope.newPayload()).exceptionally(error -> null);
+            if (isConnected()) {
+                lastHeartbeat.set(java.time.Instant.now().toString());
+                log("HEARTBEAT_SENT");
+                send("heartbeat", RealtimeEnvelope.newPayload()).exceptionally(error -> null);
+            }
         }, intervalMillis, intervalMillis, TimeUnit.MILLISECONDS);
+    }
+    private CompletableFuture<Void> sendHello(RealtimeEnvelope envelope) {
+        RealtimeTransport active = transport;
+        if (active == null || !active.isConnected()) return CompletableFuture.failedFuture(new IllegalStateException("WebSocket is not connected."));
+        return active.send(envelope.toJsonWithFlatPayload());
     }
     private CompletableFuture<Void> sendEnvelope(RealtimeEnvelope envelope) {
         RealtimeTransport active = transport;
@@ -187,6 +225,10 @@ public final class ClientRealtimeService implements AutoCloseable {
         }
         return true;
     }
+    private CompletableFuture<RealtimeEnvelope> removePending(String requestId) {
+        return requestId == null || requestId.isBlank() ? null : pending.remove(requestId);
+    }
+    int pendingRequestCount() { return pending.size(); }
     private void failPending(Throwable error) { pending.values().forEach(future -> future.completeExceptionally(error)); pending.clear(); }
     private void stopTimers() { cancel(heartbeatTask); heartbeatTask = null; cancel(handshakeTimeout); handshakeTimeout = null; }
     private static void cancel(ScheduledFuture<?> task) { if (task != null) task.cancel(false); }

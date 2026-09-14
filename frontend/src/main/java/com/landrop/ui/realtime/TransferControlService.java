@@ -21,6 +21,13 @@ public final class TransferControlService implements AutoCloseable {
         if (receiverDeviceId != null && !receiverDeviceId.isBlank()) payload.put("receiverDeviceId", receiverDeviceId);
         return realtime.request("transfer.request", payload);
     }
+    /** FOUNDATION-01 control-plane request. The receiver connection is server-issued; LAN bytes remain elsewhere. */
+    public CompletableFuture<RealtimeEnvelope> requestToConnection(String receiverConnectionId, String fileName, long fileSize, String sha256) {
+        ObjectNode payload = RealtimeEnvelope.newPayload();
+        payload.put("receiverConnectionId", receiverConnectionId); payload.put("fileName", fileName); payload.put("fileSize", fileSize);
+        if (sha256 != null && !sha256.isBlank()) payload.put("sha256", sha256);
+        return realtime.request("transfer.request", payload);
+    }
     public CompletableFuture<RealtimeEnvelope> accept(String transferId) { return command("transfer.accept", transferId, null); }
     public CompletableFuture<RealtimeEnvelope> reject(String transferId, String reason) { return command("transfer.reject", transferId, reason); }
     public CompletableFuture<RealtimeEnvelope> cancel(String transferId, String reason) { return command("transfer.cancel", transferId, reason); }
