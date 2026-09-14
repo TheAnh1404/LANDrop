@@ -125,6 +125,7 @@ public class AuthHttpServer {
         httpServer.createContext("/api/auth/logout", this::handleLogout);
         httpServer.createContext("/api/auth/me", this::handleMe);
         httpServer.createContext("/api/auth/health", this::handleHealth);
+        httpServer.createContext("/health", this::handleHealth);
         workspaceHttpServer.register(httpServer);
         chatHttpServer.register(httpServer);
         fileHttpServer.register(httpServer);
@@ -274,6 +275,18 @@ public class AuthHttpServer {
 
     private void handleHealth(HttpExchange exchange) throws IOException {
         if (handleCorsPreflight(exchange)) return;
+
+        String path = exchange.getRequestURI().getPath();
+        if ("/health".equals(path)) {
+            long uptimeSeconds = java.lang.management.ManagementFactory.getRuntimeMXBean().getUptime() / 1000;
+            sendJsonResponse(exchange, 200, Map.of(
+                "status", "ok",
+                "serverVersion", com.landrop.server.protocol.ProtocolConstants.SERVER_VERSION,
+                "protocolVersion", com.landrop.server.protocol.ProtocolConstants.PROTOCOL_VERSION,
+                "uptime", uptimeSeconds
+            ));
+            return;
+        }
 
         sendJsonResponse(exchange, 200, Map.of(
             "status", "UP",
