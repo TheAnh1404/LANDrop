@@ -2,7 +2,9 @@ package com.landrop.ui.controllers;
 
 import com.landrop.ui.models.NavigationTab;
 import com.landrop.ui.models.P2PStatus;
+import com.landrop.ui.models.RealtimeConnectionStatus;
 import com.landrop.ui.models.UIMessage;
+import com.landrop.ui.services.RealtimeChatService;
 import com.landrop.ui.services.UIStateService;
 import com.landrop.ui.utils.AlertUtils;
 import javafx.application.Platform;
@@ -76,6 +78,14 @@ public class ChatController {
                 messageInput.textProperty().map(text -> text == null || text.trim().isEmpty())
         );
 
+        // Reactive Realtime connection status updates
+        RealtimeChatService rtService = getRealtimeService();
+        if (rtService != null) {
+            rtService.connectionStatusProperty().addListener((obs, oldVal, newVal) -> {
+                Platform.runLater(this::updateConnectionState);
+            });
+        }
+
         // Reactive P2P connection status updates
         stateService.p2pStatusProperty().addListener((obs, oldVal, newVal) -> {
             Platform.runLater(this::updateConnectionState);
@@ -106,30 +116,59 @@ public class ChatController {
         renderMessages();
     }
 
+    private RealtimeChatService getRealtimeService() {
+        if (mainController != null && mainController.getRealtimeChatService() != null) {
+            return mainController.getRealtimeChatService();
+        }
+        return stateService != null ? stateService.getRealtimeChatService() : null;
+    }
+
     private void updateConnectionState() {
-        boolean connected = stateService.isP2pConnected();
+        RealtimeChatService rtService = getRealtimeService();
+        boolean p2pConnected = stateService != null && stateService.isP2pConnected();
+        boolean rtConnected = rtService != null && rtService.getConnectionStatus() == RealtimeConnectionStatus.CONNECTED;
+        boolean rtConnecting = rtService != null && (rtService.getConnectionStatus() == RealtimeConnectionStatus.CONNECTING ||
+                rtService.getConnectionStatus() == RealtimeConnectionStatus.RECONNECTING);
 
-        disconnectedOverlay.setVisible(!connected);
-        disconnectedOverlay.setManaged(!connected);
+        boolean isOnline = rtConnected || p2pConnected;
 
-        if (connected) {
+        disconnectedOverlay.setVisible(!isOnline && !rtConnecting);
+        disconnectedOverlay.setManaged(!isOnline && !rtConnecting);
+
+        if (rtConnected) {
+            remotePeerNameLabel.setText("Messages");
+            connectionDot.setFill(Color.web(RealtimeConnectionStatus.CONNECTED.getColorHex()));
+            connectionStatusLabel.setText("Connected");
+            messageInput.setDisable(false);
+            attachFileButton.setDisable(!p2pConnected);
+            pingButton.setDisable(!p2pConnected);
+            disconnectButton.setDisable(!p2pConnected);
+        } else if (rtConnecting) {
+            remotePeerNameLabel.setText("Messages");
+            connectionDot.setFill(Color.web(rtService.getConnectionStatus().getColorHex()));
+            connectionStatusLabel.setText(rtService.getConnectionStatus().getLabel());
+            messageInput.setDisable(false);
+            attachFileButton.setDisable(!p2pConnected);
+            pingButton.setDisable(!p2pConnected);
+            disconnectButton.setDisable(!p2pConnected);
+        } else if (p2pConnected) {
             String peerName = stateService.activeRemotePeerNameProperty().get();
             String peerAddr = stateService.activeRemotePeerAddressProperty().get();
 
-            remotePeerNameLabel.setText(peerName != null && !peerName.isBlank() ? peerName : "Peer");
+            remotePeerNameLabel.setText(peerName != null && !peerName.isBlank() ? "Direct: " + peerName : "Direct P2P");
             connectionDot.setFill(Color.web("#10b981"));
-            connectionStatusLabel.setText("Online   " + peerAddr);
-            pingButton.setDisable(false);
-            disconnectButton.setDisable(false);
+            connectionStatusLabel.setText("Connected   " + peerAddr);
             messageInput.setDisable(false);
             attachFileButton.setDisable(false);
+            pingButton.setDisable(false);
+            disconnectButton.setDisable(false);
         } else {
-            remotePeerNameLabel.setText("No Active Peer");
-            connectionDot.setFill(Color.web("#94a3b8"));
+            remotePeerNameLabel.setText("Messages");
+            connectionDot.setFill(Color.web(RealtimeConnectionStatus.DISCONNECTED.getColorHex()));
             connectionStatusLabel.setText("Disconnected");
             pingButton.setDisable(true);
             disconnectButton.setDisable(true);
-            messageInput.setDisable(true);
+            messageInput.setDisable(false);
             attachFileButton.setDisable(true);
         }
     }
@@ -359,18 +398,26 @@ public class ChatController {
     }
 
     private HBox createMessageBubble(UIMessage msg) {
-        HBox row = new HBox();
-        row.getStyleClass().add(msg.isLocal() ? "message-row-local" : "message-row-remote");
+        String currentUserId = null;
+        if (mainController != null && mainController.getAuthStateService() != null &&
+                mainController.getAuthStateService().user() != null) {
+            currentUserId = mainController.getAuthStateService().user().id();
+        }
+        boolean isMine = msg.isMine(currentUserId);
+
+        HBox row = new HBox(8.0);
+        row.getStyleClass().add(isMine ? "message-row-local" : "message-row-remote");
+
+        javafx.scene.layout.StackPane avatarBadge = createAvatarBadge(msg.senderInitials(), isMine);
 
         VBox bubble = new VBox(4.0);
-        bubble.getStyleClass().add(msg.isLocal() ? "message-bubble-local" : "message-bubble-remote");
+        bubble.getStyleClass().add(isMine ? "message-bubble-local" : "message-bubble-remote");
 
-        // Sender header if remote
-        if (!msg.isLocal()) {
-            Label senderLabel = new Label(msg.sender());
-            senderLabel.getStyleClass().add("message-sender");
-            bubble.getChildren().add(senderLabel);
-        }
+        // Sender header: display sender User info (e.g. Ken, Anh, Bob)
+        String senderText = msg.senderLabel() + (isMine ? " (You)" : "");
+        Label senderLabel = new Label(senderText);
+        senderLabel.getStyleClass().add(isMine ? "message-sender-mine" : "message-sender");
+        bubble.getChildren().add(senderLabel);
 
         Label contentLabel = new Label(msg.content());
         contentLabel.getStyleClass().add("message-text");
@@ -380,12 +427,40 @@ public class ChatController {
         timeLabel.getStyleClass().add("message-time");
 
         HBox metaBox = new HBox(timeLabel);
-        metaBox.setAlignment(Pos.BOTTOM_RIGHT);
+        metaBox.setAlignment(isMine ? Pos.BOTTOM_RIGHT : Pos.BOTTOM_LEFT);
 
         bubble.getChildren().addAll(contentLabel, metaBox);
-        row.getChildren().add(bubble);
+
+        if (isMine) {
+            row.getChildren().addAll(bubble, avatarBadge);
+        } else {
+            row.getChildren().addAll(avatarBadge, bubble);
+        }
 
         return row;
+    }
+
+    private javafx.scene.layout.StackPane createAvatarBadge(String initials, boolean isMine) {
+        javafx.scene.layout.StackPane badge = new javafx.scene.layout.StackPane();
+        badge.getStyleClass().add(isMine ? "message-avatar-mine" : "message-avatar");
+        badge.setMinSize(28, 28);
+        badge.setMaxSize(28, 28);
+        badge.setPrefSize(28, 28);
+
+        Label text = new Label(initials != null ? initials : "?");
+        text.getStyleClass().add("message-avatar-text");
+        badge.getChildren().add(text);
+        return badge;
+    }
+
+    @FXML
+    private void onReconnectClicked() {
+        RealtimeChatService rtService = getRealtimeService();
+        if (rtService != null) {
+            connectionStatusLabel.setText("Connecting...");
+            connectionDot.setFill(Color.web(RealtimeConnectionStatus.CONNECTING.getColorHex()));
+            rtService.connect();
+        }
     }
 
     @FXML

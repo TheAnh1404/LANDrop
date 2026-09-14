@@ -9,7 +9,16 @@ public final class PreferencesSessionStore implements SessionStore {
     private final Preferences preferences;
 
     public PreferencesSessionStore() {
-        preferences = Preferences.userNodeForPackage(PreferencesSessionStore.class);
+        this(null);
+    }
+
+    public PreferencesSessionStore(String profile) {
+        Preferences base = Preferences.userNodeForPackage(PreferencesSessionStore.class);
+        if (profile != null && !profile.isBlank()) {
+            this.preferences = base.node("profiles").node(profile.trim());
+        } else {
+            this.preferences = base;
+        }
     }
 
     @Override public Optional<String> loadRefreshToken() {

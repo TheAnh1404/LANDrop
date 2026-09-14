@@ -87,15 +87,15 @@ public class PeersController {
         // Status indicator dot
         Circle statusDot = new Circle(5.0, Color.web("#10b981"));
 
-        // Peer metadata details
+        // Peer metadata details: distinguish Product User vs LAN Peer Device (Phase 15.5B.11)
         VBox infoBox = new VBox(3.0);
         Label nameLabel = new Label(peer.getDisplayName());
         nameLabel.getStyleClass().add("peer-card-name");
 
-        Label addressLabel = new Label(peer.getHost() + ":" + peer.getPort());
+        Label addressLabel = new Label("Device: " + peer.getDisplayName() + "-Node (" + peer.getHost() + ":" + peer.getPort() + ")");
         addressLabel.getStyleClass().add("peer-card-address");
 
-        Label idLabel = new Label("ID: " + peer.getPeerId());
+        Label idLabel = new Label("LAN Transport ID: " + peer.getPeerId());
         idLabel.getStyleClass().add("peer-card-id");
 
         infoBox.getChildren().addAll(nameLabel, addressLabel, idLabel);

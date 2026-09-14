@@ -51,7 +51,14 @@ public class SetupController {
         this.mainApp = mainApp;
         this.stateService = stateService;
 
-        displayNameField.setText(initialDisplayName != null && !initialDisplayName.isBlank() ? initialDisplayName : "Peer A");
+        String fallbackName = "User";
+        if (mainApp != null && mainApp.getAuthStateService() != null && mainApp.getAuthStateService().user() != null) {
+            String name = mainApp.getAuthStateService().user().displayName();
+            if (name != null && !name.isBlank()) {
+                fallbackName = name.trim();
+            }
+        }
+        displayNameField.setText(initialDisplayName != null && !initialDisplayName.isBlank() ? initialDisplayName : fallbackName);
         localPortField.setText(String.valueOf(initialLocalPort > 0 ? initialLocalPort : 5001));
         advertisedHostField.setText(initialAdvertisedHost != null && !initialAdvertisedHost.isBlank() ? initialAdvertisedHost : "127.0.0.1");
         discoveryHostField.setText(initialDiscoveryHost != null && !initialDiscoveryHost.isBlank() ? initialDiscoveryHost : "127.0.0.1");

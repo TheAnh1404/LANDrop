@@ -86,7 +86,7 @@ public class DashboardController {
         Label nameLabel = new Label(peer.getDisplayName());
         nameLabel.getStyleClass().add("peer-card-name");
 
-        Label addressLabel = new Label(peer.getHost() + ":" + peer.getPort());
+        Label addressLabel = new Label("Device: " + peer.getHost() + ":" + peer.getPort());
         addressLabel.getStyleClass().add("peer-card-address");
 
         details.getChildren().addAll(nameLabel, addressLabel);

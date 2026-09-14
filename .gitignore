@@ -6,6 +6,7 @@ target/
 .vscode/
 
 # Environment variables & secrets
+.landrop-session-*
 .env
 .env*.local
 .env.development

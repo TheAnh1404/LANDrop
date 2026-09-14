@@ -108,9 +108,45 @@ public class UIStateService {
 
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Consumer<String> onIncomingConnectionCallback;
+    private volatile RealtimeChatService realtimeChatService;
 
     public UIStateService() {
-        this.identity = new PeerIdentity("Peer A");
+        this.identity = new PeerIdentity("User");
+    }
+
+    public void setAuthenticatedIdentity(String displayName) {
+        if (displayName != null && !displayName.isBlank()) {
+            this.identity = new PeerIdentity(displayName.trim());
+        }
+    }
+
+    public void setRealtimeChatService(RealtimeChatService service) {
+        this.realtimeChatService = service;
+        if (service != null) {
+            service.getMessages().addListener((javafx.collections.ListChangeListener<UIMessage>) c -> {
+                while (c.next()) {
+                    if (c.wasAdded() || c.wasReplaced() || c.wasUpdated()) {
+                        for (UIMessage msg : c.getAddedSubList()) {
+                            Platform.runLater(() -> {
+                                if (!activeChatMessages.contains(msg)) {
+                                    activeChatMessages.add(msg);
+                                    totalMessagesCount.set(totalMessagesCount.get() + 1);
+                                }
+                            });
+                        }
+                    }
+                }
+            });
+            for (UIMessage msg : service.getMessages()) {
+                if (!activeChatMessages.contains(msg)) {
+                    activeChatMessages.add(msg);
+                }
+            }
+        }
+    }
+
+    public RealtimeChatService getRealtimeChatService() {
+        return realtimeChatService;
     }
 
     /**
@@ -458,9 +494,15 @@ public class UIStateService {
      * Sends a chat message over the active P2P connection.
      */
     public CompletableFuture<Void> sendMessage(String text) {
+        if (realtimeChatService != null && realtimeChatService.getConnectionStatus() == com.landrop.ui.models.RealtimeConnectionStatus.CONNECTED) {
+            return realtimeChatService.sendMessage(text).thenAccept(ignored -> {});
+        }
+        if (realtimeChatService != null && (activeChatService == null || !activeChatService.isConnected())) {
+            return realtimeChatService.sendMessage(text).thenAccept(ignored -> {});
+        }
         return CompletableFuture.runAsync(() -> {
             if (activeChatService == null || !activeChatService.isConnected()) {
-                throw new IllegalStateException("No active P2P chat connection");
+                throw new IllegalStateException("No active chat connection");
             }
             try {
                 activeChatService.sendMessage(text);

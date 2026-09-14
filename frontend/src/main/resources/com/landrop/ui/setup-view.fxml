@@ -26,7 +26,7 @@
             
             <VBox styleClass="form-group">
                 <Label text="Display Name" styleClass="form-label"/>
-                <TextField fx:id="displayNameField" promptText="e.g. Peer A" styleClass="text-input-field"/>
+                <TextField fx:id="displayNameField" promptText="e.g. Ken" styleClass="text-input-field"/>
             </VBox>
 
             <HBox spacing="12.0">
