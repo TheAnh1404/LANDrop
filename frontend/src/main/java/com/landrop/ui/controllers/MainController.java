@@ -4,6 +4,7 @@ import com.landrop.ui.MainApp;
 import com.landrop.ui.models.DiscoveryStatus;
 import com.landrop.ui.models.NavigationTab;
 import com.landrop.ui.models.P2PStatus;
+import com.landrop.ui.connection.ConnectionState;
 import com.landrop.ui.services.UIStateService;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
@@ -29,6 +30,12 @@ public class MainController {
 
     @FXML
     private Label topDiscoveryStatusLabel;
+
+    @FXML
+    private Circle topServerDot;
+
+    @FXML
+    private Label topServerStatusLabel;
 
     @FXML
     private Label topWorkspaceBadge;
@@ -68,6 +75,9 @@ public class MainController {
 
     @FXML
     private Label bottomP2pStatusLabel;
+
+    @FXML
+    private Label bottomServerStatusLabel;
 
     @FXML
     private Label bottomProtocolLabel;
@@ -204,6 +214,14 @@ public class MainController {
         });
         updateP2pDisplay(stateService.p2pStatusProperty().get());
 
+        if (mainApp != null && mainApp.getServerRealtimeService() != null) {
+            mainApp.getServerRealtimeService().stateProperty().addListener((obs, old, next) ->
+                    Platform.runLater(() -> updateServerDisplay(next)));
+            updateServerDisplay(mainApp.getServerRealtimeService().state());
+        } else {
+            updateServerDisplay(ConnectionState.DISCONNECTED);
+        }
+
         // Protocol version
         bottomProtocolLabel.setText("Protocol: v" + stateService.getProtocolVersion());
 
@@ -239,7 +257,7 @@ public class MainController {
         topPeerIdentityBadge.setText(userDisplayName);
 
         String deviceName = stateService.getIdentity() != null ? stateService.getIdentity().getDisplayName() : "LAN Device";
-        bottomPeerStatusLabel.setText("User: " + userDisplayName + " | LAN Peer: " + deviceName + " (" + stateService.getAdvertisedHost() + ":" + stateService.getLocalP2pPort() + ")");
+        bottomPeerStatusLabel.setText("User: " + userDisplayName + " | Device: " + deviceName + " (" + stateService.getAdvertisedHost() + ":" + stateService.getLocalP2pPort() + ")");
     }
 
     private void updateDiscoveryDisplay(DiscoveryStatus status) {
@@ -262,6 +280,27 @@ public class MainController {
             case ERROR -> bottomP2pStatusLabel.setText("P2P: Connection Failed");
             case DISCONNECTED -> bottomP2pStatusLabel.setText("P2P: Disconnected");
         }
+    }
+
+    private void updateServerDisplay(ConnectionState state) {
+        ConnectionState safe = state == null ? ConnectionState.DISCONNECTED : state;
+        String label = switch (safe) {
+            case CONNECTED -> "Server: Connected";
+            case CONNECTING -> "Server: Connecting";
+            case HANDSHAKING -> "Server: Handshaking";
+            case RECONNECTING -> "Server: Reconnecting";
+            case ERROR -> "Server: Unavailable";
+            case IDLE, DISCONNECTED -> "Server: Disconnected";
+        };
+        String color = switch (safe) {
+            case CONNECTED -> "#10b981";
+            case CONNECTING, HANDSHAKING, RECONNECTING -> "#f59e0b";
+            case ERROR -> "#ef4444";
+            case IDLE, DISCONNECTED -> "#94a3b8";
+        };
+        if (topServerDot != null) topServerDot.setFill(Color.web(color));
+        if (topServerStatusLabel != null) topServerStatusLabel.setText(label);
+        if (bottomServerStatusLabel != null) bottomServerStatusLabel.setText(label);
     }
 
     public void navigateTo(NavigationTab tab) {

@@ -5,8 +5,11 @@ package com.landrop.ui.models;
  * Kept strictly independent from authenticated user status.
  */
 public enum RealtimeConnectionStatus {
+    IDLE("Idle", "#94a3b8"),
     CONNECTED("Connected", "#10b981"),
     CONNECTING("Connecting...", "#f59e0b"),
+    HANDSHAKING("Handshaking...", "#f59e0b"),
+    ERROR("Connection error", "#ef4444"),
     DISCONNECTED("Disconnected", "#94a3b8"),
     RECONNECTING("Reconnecting...", "#f59e0b");
 

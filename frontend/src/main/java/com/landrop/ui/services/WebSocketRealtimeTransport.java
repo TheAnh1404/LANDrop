@@ -67,9 +67,6 @@ public class WebSocketRealtimeTransport implements RealtimeTransport, WebSocket.
         return builder.buildAsync(targetUri, this).thenAccept(ws -> {
             this.webSocket = ws;
             this.connected.set(true);
-            if (listener != null) {
-                listener.onOpen();
-            }
         });
     }
 
@@ -104,6 +101,7 @@ public class WebSocketRealtimeTransport implements RealtimeTransport, WebSocket.
 
     @Override
     public void onOpen(WebSocket webSocket) {
+        this.webSocket = webSocket;
         this.connected.set(true);
         webSocket.request(1);
         if (listener != null) {

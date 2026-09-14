@@ -124,7 +124,9 @@ public final class WorkspaceChatStateService implements AutoCloseable {
     private void receiveEvent(String payload, String channelId, long token) {
         try { JsonNode root = JSON.readTree(payload); String type = root.path("type").asText();
             if (!("message.created".equals(type) || "message.updated".equals(type) || "message.deleted".equals(type))) return;
-            JsonNode raw = root.has("message") ? root.get("message") : root.path("data"); Domain.Message message = HttpTeamChatApi.message(raw);
+            JsonNode event = root.has("payload") ? root.path("payload") : root;
+            JsonNode raw = event.has("message") ? event.get("message") : (event.has("data") ? event.path("data") : root.path("data"));
+            Domain.Message message = HttpTeamChatApi.message(raw);
             if (token == generation.get() && channelId.equals(message.channelId())) run(() -> merge(List.of(message)));
         } catch (Exception ignored) { }
     }

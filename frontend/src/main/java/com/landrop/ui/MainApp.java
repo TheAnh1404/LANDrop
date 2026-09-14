@@ -21,6 +21,10 @@ import com.landrop.ui.auth.model.AuthModels;
 import com.landrop.ui.config.FrontendConfig;
 import com.landrop.ui.services.RealtimeChatService;
 import com.landrop.ui.workspace.services.WorkspaceStateService;
+import com.landrop.ui.bootstrap.ClientInstanceService;
+import com.landrop.ui.connection.ServerHealthClient;
+import com.landrop.ui.realtime.ClientRealtimeService;
+import com.landrop.ui.realtime.TransferControlService;
 
 import java.io.IOException;
 import java.net.URI;
@@ -46,6 +50,9 @@ public class MainApp extends Application {
     private volatile com.landrop.ui.workspace.chat.services.WorkspaceChatStateService workspaceChatStateService;
     private volatile com.landrop.ui.workspace.files.services.FileManagerStateService fileManagerStateService;
     private volatile com.landrop.ui.realtime.RealtimeGateway realtimeGateway;
+    private volatile ClientRealtimeService serverRealtimeService;
+    private volatile TransferControlService transferControlService;
+    private volatile ClientInstanceService clientInstanceService;
     private volatile com.landrop.ui.lan.UIStateLanServices lanServices;
     private volatile com.landrop.ui.device.CurrentDeviceService currentDeviceService;
     private volatile URI resolvedWsUri;
@@ -69,6 +76,8 @@ public class MainApp extends Application {
 
         this.resolvedApiUri = URI.create(apiBaseUrl);
         this.resolvedWsUri = URI.create(wsUrl);
+        this.clientInstanceService = new ClientInstanceService();
+        System.out.println("[LANDrop Client] CLIENT_STARTED");
         initializeAuth(new HttpAuthApi(resolvedApiUri), new PreferencesSessionStore(sessionProfile));
         parseParameters();
     }
@@ -236,6 +245,10 @@ public class MainApp extends Application {
     public com.landrop.ui.lan.LanDiscoveryService getLanDiscoveryService() { return lanServices; }
     public com.landrop.ui.lan.LanTransferService getLanTransferService() { return lanServices; }
     public com.landrop.ui.device.CurrentDeviceService getCurrentDeviceService() { return currentDeviceService; }
+    public ClientRealtimeService getServerRealtimeService() { return serverRealtimeService; }
+    public TransferControlService getTransferControlService() { return transferControlService; }
+    public URI getResolvedApiUri() { return resolvedApiUri; }
+    public URI getResolvedWsUri() { return resolvedWsUri; }
 
     /** Called only after restore, login, or register has established a valid session. */
     public void onAuthenticated() {
@@ -257,7 +270,16 @@ public class MainApp extends Application {
         // Initialize WorkspaceStateService (Phase 16B)
         if (resolvedApiUri != null) {
             this.currentDeviceService = new com.landrop.ui.device.CurrentDeviceService(resolvedApiUri, authStateService);
-            this.realtimeGateway = new com.landrop.ui.realtime.RealtimeGateway(resolvedWsUri, authStateService);
+            if (clientInstanceService == null) clientInstanceService = new ClientInstanceService();
+            this.serverRealtimeService = new ClientRealtimeService(
+                    resolvedWsUri, new ServerHealthClient(resolvedApiUri), clientInstanceService,
+                    () -> authStateService.accessToken().orElse(null),
+                    () -> currentDeviceService.currentDevice() == null ? configuredDisplayName : currentDeviceService.currentDevice().label());
+            this.realtimeGateway = new com.landrop.ui.realtime.RealtimeGateway(serverRealtimeService);
+            this.transferControlService = new TransferControlService(serverRealtimeService, event -> {
+                // Transfer UI subscribes to the server-owned control state in a later composition pass.
+            });
+            serverRealtimeService.start();
             com.landrop.ui.workspace.api.HttpWorkspaceApi wsApi =
                     new com.landrop.ui.workspace.api.HttpWorkspaceApi(resolvedApiUri, authStateService);
             this.workspaceStateService = new com.landrop.ui.workspace.services.WorkspaceStateService(wsApi, authStateService);
@@ -281,6 +303,14 @@ public class MainApp extends Application {
         if (realtimeGateway != null) {
             try { realtimeGateway.close(); } catch (Exception ignored) { }
             realtimeGateway = null;
+        }
+        if (serverRealtimeService != null) {
+            try { serverRealtimeService.close(); } catch (Exception ignored) { }
+            serverRealtimeService = null;
+        }
+        if (transferControlService != null) {
+            try { transferControlService.close(); } catch (Exception ignored) { }
+            transferControlService = null;
         }
         if (fileManagerStateService != null) {
             try { fileManagerStateService.close(); } catch (Exception ignored) { }
@@ -367,6 +397,12 @@ public class MainApp extends Application {
     public void stop() {
         if (realtimeGateway != null) {
             try { realtimeGateway.close(); } catch (Exception ignored) { }
+        }
+        if (serverRealtimeService != null) {
+            try { serverRealtimeService.close(); } catch (Exception ignored) { }
+        }
+        if (transferControlService != null) {
+            try { transferControlService.close(); } catch (Exception ignored) { }
         }
         if (fileManagerStateService != null) {
             try { fileManagerStateService.close(); } catch (Exception ignored) { }

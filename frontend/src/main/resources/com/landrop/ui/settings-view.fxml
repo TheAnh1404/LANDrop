@@ -12,7 +12,26 @@
         <!-- Header -->
         <VBox styleClass="page-header" spacing="4.0">
             <Label text="Settings" styleClass="page-title"/>
-            <Label text="Local peer identity and networking configurations (read-only for Phase 5)" styleClass="page-subtitle"/>
+            <Label text="User, device, server control, and LAN transport settings" styleClass="page-subtitle"/>
+        </VBox>
+
+        <VBox styleClass="card" spacing="14.0">
+            <Label text="LANDrop Server Connection" styleClass="card-title"/>
+            <VBox styleClass="form-group">
+                <Label text="API URL" styleClass="form-label"/>
+                <TextField fx:id="apiUrlField" editable="false" styleClass="form-readonly-value"/>
+            </VBox>
+            <VBox styleClass="form-group">
+                <Label text="WebSocket URL" styleClass="form-label"/>
+                <TextField fx:id="wsUrlField" editable="false" styleClass="form-readonly-value"/>
+            </VBox>
+            <Label fx:id="serverStatusLabel" text="Server: Disconnected" wrapText="true" style="-fx-text-fill: #64748b;"/>
+            <HBox spacing="10.0">
+                <Button text="Check server" styleClass="secondary-button" onAction="#onCheckServerClicked"/>
+                <Button text="Reconnect" styleClass="secondary-button" onAction="#onReconnectClicked"/>
+                <Button text="Send echo test" styleClass="secondary-button" onAction="#onEchoClicked"/>
+            </HBox>
+            <Label text="Set API_URL and WS_URL (or --api-url and --ws-url) before launch to connect to a LAN server." wrapText="true" styleClass="page-subtitle"/>
         </VBox>
 
         <!-- Identity Card -->

@@ -11,7 +11,9 @@ public final class FrontendConfig {
 
     /** Development-only defaults; deployment uses CLI, system properties, or environment variables. */
     public static final String DEFAULT_API_BASE_URL = "http://localhost:3000/api";
-    public static final String DEFAULT_WS_URL = "ws://localhost:3001";
+    public static final String DEFAULT_WS_URL = "ws://localhost:3001/api/realtime";
+    public static final int PROTOCOL_VERSION = 1;
+    public static final String CLIENT_VERSION = "0.1.0";
     public static final String DEFAULT_DISCOVERY_HOST = "127.0.0.1";
     public static final String DEFAULT_ADVERTISED_HOST = "127.0.0.1";
     public static final int DEFAULT_DISCOVERY_PORT = 8888;
@@ -54,7 +56,7 @@ public final class FrontendConfig {
      * 1. CLI named parameter: {@code --ws-url=...}
      * 2. JVM system property: {@code -Dlandrop.ws.url=...}
      * 3. Environment variables: {@code LANDROP_WS_URL}, {@code VITE_WS_URL}, {@code WS_URL}
-     * 4. Derived automatically from the resolved API base URL (e.g. {@code http://host:port/api} -> {@code ws://host:port/ws})
+     * 4. Derived automatically from the resolved API base URL (e.g. {@code http://host:port/api} -> {@code ws://host:port/api/realtime})
      */
     public static String resolveWsUrl(Map<String, String> namedArgs, String apiBaseUrl) {
         if (namedArgs != null && namedArgs.containsKey("ws-url")) {
@@ -104,7 +106,7 @@ public final class FrontendConfig {
 
     /**
      * Derives a WebSocket URL from an HTTP(S) API base URL.
-     * Example: {@code http://192.168.1.10:3000/api} -> {@code ws://192.168.1.10:3000/ws}
+     * Example: {@code http://192.168.1.10:3000/api} -> {@code ws://192.168.1.10:3001/api/realtime}
      */
     public static String deriveWsUrl(String apiBaseUrl) {
         try {
@@ -116,7 +118,7 @@ public final class FrontendConfig {
             // Deployments with a gateway should provide WS_URL explicitly.
             int port = uri.getPort() == 3000 ? 3001 : uri.getPort();
             String authority = (port > 0) ? host + ":" + port : host;
-            return wsScheme + "://" + authority + "/ws";
+            return wsScheme + "://" + authority + "/api/realtime";
         } catch (Exception e) {
             return DEFAULT_WS_URL;
         }
