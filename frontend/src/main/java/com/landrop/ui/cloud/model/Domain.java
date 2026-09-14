@@ -13,7 +13,18 @@ public final class Domain {
 
     private Domain() {}
 
-    public enum MemberRole { OWNER, ADMIN, MEMBER }
+    public enum MemberRole {
+        OWNER, ADMIN, MEMBER, GUEST;
+
+        public static MemberRole fromString(String role) {
+            if (role == null) return MEMBER;
+            try {
+                return MemberRole.valueOf(role.trim().toUpperCase());
+            } catch (IllegalArgumentException e) {
+                return MEMBER;
+            }
+        }
+    }
 
     public enum MessageType { TEXT, FILE }
 
@@ -36,16 +47,49 @@ public final class Domain {
             required(ownerId, "ownerId");
             timestamps(createdAt, updatedAt);
         }
+
+        public boolean isOwner(String userId) {
+            return userId != null && userId.equals(ownerId);
+        }
     }
 
     public record WorkspaceMember(String id, String workspaceId, String userId, MemberRole role,
+                                  String displayName, String email, String avatarUrl,
                                   Instant createdAt, Instant updatedAt) {
         public WorkspaceMember {
             required(id, "id");
             required(workspaceId, "workspaceId");
             required(userId, "userId");
             present(role, "role");
+            optional(displayName, "displayName");
+            optional(email, "email");
+            optional(avatarUrl, "avatarUrl");
             timestamps(createdAt, updatedAt);
+        }
+
+        public WorkspaceMember(String id, String workspaceId, String userId, MemberRole role,
+                               Instant createdAt, Instant updatedAt) {
+            this(id, workspaceId, userId, role, null, null, null, createdAt, updatedAt);
+        }
+
+        public String nameOrFallback() {
+            if (displayName != null && !displayName.isBlank()) return displayName;
+            if (email != null && !email.isBlank()) return email;
+            return userId;
+        }
+
+        public String roleBadge() {
+            return role != null ? role.name() : "MEMBER";
+        }
+
+        public String initials() {
+            String name = nameOrFallback();
+            if (name == null || name.isBlank()) return "??";
+            String[] parts = name.trim().split("\\s+");
+            if (parts.length == 1) {
+                return parts[0].substring(0, Math.min(2, parts[0].length())).toUpperCase();
+            }
+            return ("" + parts[0].charAt(0) + parts[parts.length - 1].charAt(0)).toUpperCase();
         }
     }
 

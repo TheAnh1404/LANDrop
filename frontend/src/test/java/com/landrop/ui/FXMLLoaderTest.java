@@ -137,6 +137,16 @@ public class FXMLLoaderTest {
     }
 
     @Test
+    void testLoadWorkspaceView() throws IOException {
+        FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/workspace-view.fxml"));
+        Node root = loader.load();
+        assertNotNull(root);
+
+        WorkspaceController controller = loader.getController();
+        assertNotNull(controller);
+    }
+
+    @Test
     void testLoadMainView() throws IOException {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/main-view.fxml"));
         Parent root = loader.load();

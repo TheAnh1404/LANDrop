@@ -11,8 +11,10 @@ LANDrop sử dụng Discovery Server để các máy tìm thấy nhau. Sau khi k
 | **Core — Phase 1–13** | Đã hoàn thành: discovery, chat, truyền file, tải từ nhiều peer và giao diện JavaFX |
 | **Frontend — Phase 14B** | Đã hoàn thành nền tảng domain, DTO, mapper, API client và mock data bằng Java |
 | **Backend cloud — Phase 14A** | Neon/PostgreSQL, schema SQL, migration, seed, model và repository layer đã có trong `backend/` |
+| **Backend — Phase 15.5A** | Authenticated WebSocket, nhiều kết nối mỗi User, chat lưu PostgreSQL; [hướng dẫn nhiều máy](docs/PHASE-15.5A-MULTI-DEVICE.md) |
+| **Backend — Phase 16A** | Workspace và membership API, vai trò OWNER/ADMIN/MEMBER, kiểm tra quyền tập trung; [API contract](docs/PHASE-16A-API-CONTRACT.md) |
 | **Frontend — Phase 15B** | Authentication UI, centralized session state, session restore, logout và access-token refresh/retry đã có |
-| **Tích hợp API/database thực tế** | Auth HTTP contract đang chờ đối chiếu với Phase 15A; API server chưa có trong checkout này |
+| **Tích hợp API/database thực tế** | Backend Auth HTTP + WebSocket đã kiểm thử với Neon trong schema tạm; frontend tích hợp theo [contract realtime](docs/PHASE-15.5A-REALTIME-CONTRACT.md) |
 
 Phase 14B là một lớp dữ liệu frontend độc lập, chưa được đưa vào luồng khởi động hoặc các màn hình Core. Phase 15B bổ sung auth gate trước khi vào setup/application; dữ liệu cloud vẫn chưa được đưa vào màn hình workspace.
 
@@ -453,7 +455,7 @@ Các test tích hợp cần quyền mở socket localhost; test JavaFX cần phi
 
 Core tập trung vào giao tiếp trong mạng LAN. SHA-256 dùng để kiểm tra toàn vẹn file; Core chưa triển khai xác thực người dùng, mã hóa đường truyền hoặc NAT traversal để hoạt động qua Internet.
 
-Repository đã có login/register frontend và session handling Phase 15B. Backend Phase 15A auth API chưa có trong checkout này nên live login, refresh và `/auth/me` chưa được xác minh. Repository chưa triển khai quản lý workspace trên giao diện, task, notification, search, activity log hoặc production deployment. Những nội dung trong [roadmap](docs/PRODUCTION_ROADMAP.md) là định hướng phát triển, không phải tính năng đã có. Phase 16 chưa được triển khai.
+Repository đã có login/register frontend và session handling Phase 15B. Backend có Auth HTTP, WebSocket realtime và Phase 16A workspace/member API; các test PostgreSQL dùng schema tạm để không ảnh hưởng dữ liệu thật. Frontend chưa triển khai giao diện quản lý workspace, task, notification, search, activity log hoặc production deployment. Những nội dung trong [roadmap](docs/PRODUCTION_ROADMAP.md) là định hướng phát triển, không phải tính năng đã có.
 
 ## Tài liệu tham khảo trong project
 
@@ -469,4 +471,5 @@ Repository đã có login/register frontend và session handling Phase 15B. Back
 | [API contract Phase 14B](docs/PHASE-14B-API-CONTRACT.md) | Domain, DTO, route, phân trang và lỗi |
 | [Bàn giao Phase 14B](docs/PHASE-14B-DELIVERY.md) | File thay đổi, kết quả xác minh và lệnh đã chạy |
 | [Authentication Phase 15B](docs/PHASE-15B-AUTH.md) | Auth API shape, session state, UI flow, refresh và phạm vi |
+| [Workspace Phase 16A](docs/PHASE-16A-API-CONTRACT.md) | Workspace/member routes, role rules, validation và transaction behavior |
 | [Roadmap](docs/PRODUCTION_ROADMAP.md) | Các hướng phát triển sau Core |

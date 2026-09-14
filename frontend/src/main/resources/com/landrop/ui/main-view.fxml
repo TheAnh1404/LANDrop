@@ -28,6 +28,7 @@
                     <Label fx:id="topDiscoveryStatusLabel" text="Discovery Connecting..." styleClass="status-text"/>
                 </HBox>
 
+                <Label fx:id="topWorkspaceBadge" text="Workspace" styleClass="topbar-workspace-badge" onMouseClicked="#onWorkspaceBadgeClicked"/>
                 <Label fx:id="topPeerIdentityBadge" text="Peer" styleClass="topbar-identity-badge"/>
                 <Button fx:id="logoutButton" text="Sign out" styleClass="secondary-button" onAction="#onLogoutClicked"/>
             </HBox>
@@ -44,6 +45,9 @@
                     
                     <Button fx:id="dashboardNavBtn" text="⊞  Dashboard" maxWidth="Infinity"
                             styleClass="sidebar-btn" onAction="#onDashboardNavClicked"/>
+
+                    <Button fx:id="workspacesNavBtn" text="🏢  Workspaces" maxWidth="Infinity"
+                            styleClass="sidebar-btn" onAction="#onWorkspacesNavClicked"/>
 
                     <Button fx:id="peersNavBtn" text="👥  Peers" maxWidth="Infinity"
                             styleClass="sidebar-btn" onAction="#onPeersNavClicked"/>

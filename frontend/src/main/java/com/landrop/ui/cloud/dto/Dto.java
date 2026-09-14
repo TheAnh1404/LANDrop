@@ -16,7 +16,25 @@ public final class Dto {
                                     String createdAt, String updatedAt) {}
 
     public record WorkspaceMemberResponse(String id, String workspaceId, String userId, String role,
-                                          String createdAt, String updatedAt) {}
+                                          String displayName, String email, String avatarUrl,
+                                          String createdAt, String updatedAt) {
+        public WorkspaceMemberResponse(String id, String workspaceId, String userId, String role,
+                                       String createdAt, String updatedAt) {
+            this(id, workspaceId, userId, role, null, null, null, createdAt, updatedAt);
+        }
+    }
+
+    public record CreateWorkspaceRequest(String name, String description) {}
+
+    public record UpdateWorkspaceRequest(String name, String description) {}
+
+    public record AddWorkspaceMemberRequest(String email, String userId, String role) {
+        public AddWorkspaceMemberRequest(String email, String role) {
+            this(email, null, role);
+        }
+    }
+
+    public record UpdateMemberRoleRequest(String role) {}
 
     public record ChannelResponse(String id, String workspaceId, String name, String description,
                                   String createdAt, String updatedAt) {}

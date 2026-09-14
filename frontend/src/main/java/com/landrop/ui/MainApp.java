@@ -17,8 +17,14 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.stage.Stage;
 
+import com.landrop.ui.auth.model.AuthModels;
+import com.landrop.ui.config.FrontendConfig;
+import com.landrop.ui.services.RealtimeChatService;
+import com.landrop.ui.workspace.services.WorkspaceStateService;
+
 import java.io.IOException;
 import java.net.URI;
+import java.util.Collections;
 import java.util.Map;
 import java.util.Objects;
 
@@ -35,9 +41,13 @@ public class MainApp extends Application {
     private Stage primaryStage;
     private UIStateService stateService;
     private AuthStateService authStateService;
+    private volatile RealtimeChatService realtimeChatService;
+    private volatile WorkspaceStateService workspaceStateService;
+    private volatile URI resolvedWsUri;
+    private volatile URI resolvedApiUri;
 
     // Parsed configuration
-    private String configuredDisplayName = "Peer A";
+    private String configuredDisplayName = null;
     private int configuredLocalPort = 5001;
     private String configuredDiscoveryHost = "127.0.0.1";
     private int configuredDiscoveryPort = 8888;
@@ -47,8 +57,14 @@ public class MainApp extends Application {
     @Override
     public void init() {
         this.stateService = new UIStateService();
-        initializeAuth(new HttpAuthApi(URI.create(System.getProperty(
-                "landrop.auth.base-url", "http://localhost:3000/api"))), new PreferencesSessionStore());
+        Map<String, String> named = (getParameters() != null) ? getParameters().getNamed() : Collections.emptyMap();
+        String apiBaseUrl = FrontendConfig.resolveApiBaseUrl(named);
+        String wsUrl = FrontendConfig.resolveWsUrl(named, apiBaseUrl);
+        String sessionProfile = FrontendConfig.resolveSessionProfile(named);
+
+        this.resolvedApiUri = URI.create(apiBaseUrl);
+        this.resolvedWsUri = URI.create(wsUrl);
+        initializeAuth(new HttpAuthApi(resolvedApiUri), new PreferencesSessionStore(sessionProfile));
         parseParameters();
     }
 
@@ -206,15 +222,57 @@ public class MainApp extends Application {
     }
 
     public AuthStateService getAuthStateService() { return authStateService; }
+    public RealtimeChatService getRealtimeChatService() { return realtimeChatService; }
+    public void setRealtimeChatService(RealtimeChatService service) { this.realtimeChatService = service; }
+    public com.landrop.ui.workspace.services.WorkspaceStateService getWorkspaceStateService() { return workspaceStateService; }
+    public void setWorkspaceStateService(com.landrop.ui.workspace.services.WorkspaceStateService service) { this.workspaceStateService = service; }
 
     /** Called only after restore, login, or register has established a valid session. */
     public void onAuthenticated() {
         if (stateService != null) stateService.shutdown();
         stateService = new UIStateService();
+
+        AuthModels.AuthUser user = authStateService.user();
+        if (user != null) {
+            stateService.setAuthenticatedIdentity(user.displayName());
+            if (configuredDisplayName == null || configuredDisplayName.isBlank() || "Peer A".equalsIgnoreCase(configuredDisplayName)) {
+                configuredDisplayName = user.displayName();
+            }
+        }
+
+        // Initialize and connect RealtimeChatService
+        if (resolvedWsUri != null) {
+            this.realtimeChatService = new RealtimeChatService(resolvedWsUri, authStateService);
+            stateService.setRealtimeChatService(realtimeChatService);
+            realtimeChatService.connect().exceptionally(ex -> {
+                System.out.println("[LANDrop] Realtime connection attempt: " + ex.getMessage());
+                return null;
+            });
+        }
+
+        // Initialize WorkspaceStateService (Phase 16B)
+        if (resolvedApiUri != null) {
+            com.landrop.ui.workspace.api.HttpWorkspaceApi wsApi =
+                    new com.landrop.ui.workspace.api.HttpWorkspaceApi(resolvedApiUri, authStateService);
+            this.workspaceStateService = new com.landrop.ui.workspace.services.WorkspaceStateService(wsApi, authStateService);
+            workspaceStateService.loadWorkspaces().exceptionally(ex -> {
+                System.out.println("[LANDrop] Workspaces load notice: " + ex.getMessage());
+                return java.util.Collections.emptyList();
+            });
+        }
+
         showSetupView();
     }
 
     public void logout() {
+        if (realtimeChatService != null) {
+            try {
+                realtimeChatService.close();
+            } catch (Exception ignored) {
+            }
+            realtimeChatService = null;
+        }
+        this.workspaceStateService = null;
         if (stateService != null) stateService.shutdown();
         authStateService.logout().whenComplete((ignored, failure) -> Platform.runLater(this::showLoginView));
     }
@@ -280,6 +338,12 @@ public class MainApp extends Application {
 
     @Override
     public void stop() {
+        if (realtimeChatService != null) {
+            try {
+                realtimeChatService.close();
+            } catch (Exception ignored) {
+            }
+        }
         if (stateService != null) {
             stateService.shutdown();
         }

@@ -23,7 +23,7 @@ public final class CloudJson {
     private static final Map<Class<?>, Set<String>> NULLABLE = Map.of(
             Dto.UserResponse.class, Set.of("email", "avatarUrl"),
             Dto.WorkspaceResponse.class, Set.of("description"),
-            Dto.WorkspaceMemberResponse.class, Set.of(),
+            Dto.WorkspaceMemberResponse.class, Set.of("displayName", "email", "avatarUrl"),
             Dto.ChannelResponse.class, Set.of("description"),
             Dto.MessageResponse.class, Set.of("replyToId", "fileId"),
             Dto.FolderResponse.class, Set.of("parentId"),

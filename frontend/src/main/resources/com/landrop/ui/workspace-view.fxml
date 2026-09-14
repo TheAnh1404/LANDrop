@@ -1,0 +1,167 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<StackPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+           fx:controller="com.landrop.ui.controllers.WorkspaceController"
+           styleClass="workspace-view-root">
+
+    <!-- Main Content Area: Split Master-Detail Layout -->
+    <BorderPane>
+        <!-- Status / Alert Banners at the Top -->
+        <top>
+            <VBox spacing="4.0">
+                <!-- Error Banner -->
+                <HBox fx:id="errorBanner" styleClass="alert-banner-error" alignment="CENTER_LEFT" visible="false" managed="false">
+                    <Label fx:id="errorMessageLabel" text="Error message here" styleClass="alert-text-error" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
+                    <Button text="✕" styleClass="alert-dismiss-btn" onAction="#onDismissAlertClicked"/>
+                </HBox>
+
+                <!-- Success Banner -->
+                <HBox fx:id="successBanner" styleClass="alert-banner-success" alignment="CENTER_LEFT" visible="false" managed="false">
+                    <Label fx:id="successMessageLabel" text="Success message here" styleClass="alert-text-success" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
+                    <Button text="✕" styleClass="alert-dismiss-btn" onAction="#onDismissAlertClicked"/>
+                </HBox>
+            </VBox>
+        </top>
+
+        <center>
+            <SplitPane dividerPositions="0.28" styleClass="workspace-split-pane">
+                <!-- Left Pane: Workspace List / Selector -->
+                <VBox styleClass="workspace-sidebar" spacing="12.0">
+                    <padding>
+                        <Insets top="16.0" right="14.0" bottom="16.0" left="16.0"/>
+                    </padding>
+
+                    <HBox alignment="CENTER_LEFT" spacing="8.0">
+                        <Label text="WORKSPACES" styleClass="sidebar-heading" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
+                        <Button fx:id="openCreateDialogBtn" text="+ New" styleClass="primary-button-small" onAction="#onOpenCreateWorkspaceClicked"/>
+                    </HBox>
+
+                    <!-- Workspace List Scrollable Container -->
+                    <ScrollPane fitToWidth="true" styleClass="workspace-list-scroll" VBox.vgrow="ALWAYS">
+                        <VBox fx:id="workspaceListContainer" spacing="6.0"/>
+                    </ScrollPane>
+                </VBox>
+
+                <!-- Right Pane: Active Workspace Details or Empty State -->
+                <StackPane styleClass="workspace-detail-area">
+                    <!-- Active Workspace View -->
+                    <ScrollPane fx:id="activeWorkspaceDetailScroll" fitToWidth="true" styleClass="workspace-detail-scroll">
+                        <VBox spacing="20.0">
+                            <padding>
+                                <Insets top="24.0" right="28.0" bottom="32.0" left="28.0"/>
+                            </padding>
+
+                            <!-- Header Card: Overview (16B.6) -->
+                            <VBox styleClass="workspace-card" spacing="12.0">
+                                <HBox alignment="TOP_LEFT" spacing="16.0">
+                                    <VBox spacing="4.0" HBox.hgrow="ALWAYS">
+                                        <HBox alignment="CENTER_LEFT" spacing="10.0">
+                                            <Label fx:id="workspaceTitleLabel" text="Workspace Name" styleClass="workspace-title"/>
+                                            <Label fx:id="currentUserRoleBadge" text="MEMBER" styleClass="role-badge-member"/>
+                                            <Label fx:id="memberCountBadge" text="0 members" styleClass="count-badge"/>
+                                        </HBox>
+                                        <Label fx:id="workspaceDescriptionLabel" text="No description provided." styleClass="workspace-description"/>
+                                    </VBox>
+
+                                    <!-- Quick Actions -->
+                                    <HBox spacing="8.0" alignment="CENTER_RIGHT">
+                                        <Button fx:id="leaveWorkspaceBtn" text="Leave Workspace" styleClass="secondary-button" onAction="#onLeaveWorkspaceClicked"/>
+                                        <Button fx:id="deleteWorkspaceBtn" text="Delete Workspace" styleClass="danger-button" onAction="#onDeleteWorkspaceClicked"/>
+                                    </HBox>
+                                </HBox>
+                            </VBox>
+
+                            <!-- Member Management Card (16B.7 - 16B.10) -->
+                            <VBox styleClass="workspace-card" spacing="16.0">
+                                <HBox alignment="CENTER_LEFT" spacing="8.0">
+                                    <Label text="Workspace Members" styleClass="card-section-title" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
+                                </HBox>
+
+                                <!-- Invite / Add Member Form (16B.8) - visible only for Admin/Owner -->
+                                <VBox fx:id="inviteMemberContainer" styleClass="invite-form-container" spacing="10.0">
+                                    <Label text="Add or Invite Member" styleClass="form-subtitle"/>
+                                    <HBox spacing="10.0" alignment="CENTER_LEFT">
+                                        <TextField fx:id="inviteIdentifierField" promptText="Member email address or username..." HBox.hgrow="ALWAYS" styleClass="text-input"/>
+                                        <ComboBox fx:id="inviteRoleComboBox" prefWidth="120.0" styleClass="role-combo-box"/>
+                                        <Button fx:id="inviteSubmitBtn" text="Add Member" styleClass="primary-button" onAction="#onAddMemberClicked"/>
+                                    </HBox>
+                                </VBox>
+
+                                <!-- Member List Items (16B.7) -->
+                                <VBox fx:id="memberListContainer" spacing="8.0"/>
+                            </VBox>
+
+                            <!-- Basic Settings Card (16B.12) - enabled only for Admin/Owner -->
+                            <VBox fx:id="settingsContainer" styleClass="workspace-card" spacing="14.0">
+                                <Label text="Workspace Settings" styleClass="card-section-title"/>
+
+                                <VBox spacing="6.0">
+                                    <Label text="Workspace Name" styleClass="field-label"/>
+                                    <TextField fx:id="settingsNameField" promptText="Workspace name" styleClass="text-input"/>
+                                </VBox>
+
+                                <VBox spacing="6.0">
+                                    <Label text="Description" styleClass="field-label"/>
+                                    <TextArea fx:id="settingsDescriptionField" promptText="Brief description of this workspace..."
+                                              prefRowCount="3" wrapText="true" styleClass="text-area-input"/>
+                                </VBox>
+
+                                <HBox alignment="CENTER_RIGHT" spacing="10.0">
+                                    <Label fx:id="settingsRoleNoteLabel" text="Only Owners and Admins can modify settings." styleClass="role-note-text" visible="false"/>
+                                    <Button fx:id="saveSettingsBtn" text="Save Changes" styleClass="primary-button" onAction="#onSaveSettingsClicked"/>
+                                </HBox>
+                            </VBox>
+                        </VBox>
+                    </ScrollPane>
+
+                    <!-- Empty State (16B.13) -->
+                    <VBox fx:id="emptyStateContainer" styleClass="workspace-empty-state" alignment="CENTER" spacing="16.0" visible="false">
+                        <Label text="🏢" style="-fx-font-size: 48px;"/>
+                        <Label text="No Workspace Selected" styleClass="empty-title"/>
+                        <Label text="Select a workspace from the sidebar or create a new one to collaborate." styleClass="empty-subtitle"/>
+                        <Button text="+ Create Workspace" styleClass="primary-button" onAction="#onOpenCreateWorkspaceClicked"/>
+                    </VBox>
+                </StackPane>
+            </SplitPane>
+        </center>
+    </BorderPane>
+
+    <!-- Create Workspace Modal / Overlay Dialog (16B.4) -->
+    <StackPane fx:id="createModalOverlay" styleClass="modal-backdrop" visible="false" managed="false">
+        <VBox styleClass="modal-card" spacing="16.0" maxWidth="480.0">
+            <HBox alignment="CENTER_LEFT">
+                <Label text="Create New Workspace" styleClass="modal-title" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
+                <Button text="✕" styleClass="alert-dismiss-btn" onAction="#onCloseCreateDialogClicked"/>
+            </HBox>
+
+            <VBox spacing="6.0">
+                <Label text="Workspace Name *" styleClass="field-label"/>
+                <TextField fx:id="createNameField" promptText="e.g. Core Engineering" styleClass="text-input"/>
+            </VBox>
+
+            <VBox spacing="6.0">
+                <Label text="Description (Optional)" styleClass="field-label"/>
+                <TextArea fx:id="createDescriptionField" promptText="What is this workspace for?" prefRowCount="3" wrapText="true" styleClass="text-area-input"/>
+            </VBox>
+
+            <Label fx:id="createModalErrorLabel" text="" styleClass="auth-error" visible="false" managed="false"/>
+
+            <HBox alignment="CENTER_RIGHT" spacing="10.0">
+                <Button text="Cancel" styleClass="secondary-button" onAction="#onCloseCreateDialogClicked"/>
+                <Button fx:id="createSubmitBtn" text="Create Workspace" styleClass="primary-button" onAction="#onSubmitCreateWorkspaceClicked"/>
+            </HBox>
+        </VBox>
+    </StackPane>
+
+    <!-- Loading Indicator Overlay -->
+    <StackPane fx:id="loadingOverlay" styleClass="loading-backdrop" visible="false" managed="false">
+        <VBox alignment="CENTER" spacing="12.0">
+            <ProgressIndicator prefWidth="42.0" prefHeight="42.0"/>
+            <Label text="Loading workspace data..." styleClass="loading-text"/>
+        </VBox>
+    </StackPane>
+</StackPane>

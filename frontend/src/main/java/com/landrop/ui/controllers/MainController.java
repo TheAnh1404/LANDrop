@@ -31,6 +31,9 @@ public class MainController {
     private Label topDiscoveryStatusLabel;
 
     @FXML
+    private Label topWorkspaceBadge;
+
+    @FXML
     private Label topPeerIdentityBadge;
 
     @FXML
@@ -38,6 +41,9 @@ public class MainController {
 
     @FXML
     private Button dashboardNavBtn;
+
+    @FXML
+    private Button workspacesNavBtn;
 
     @FXML
     private Button peersNavBtn;
@@ -73,6 +79,7 @@ public class MainController {
     private final Map<NavigationTab, Button> navButtonMap = new EnumMap<>(NavigationTab.class);
 
     private DashboardController dashboardController;
+    private WorkspaceController workspaceController;
     private PeersController peersController;
     private ChatController chatController;
     private TransfersController transfersController;
@@ -84,6 +91,7 @@ public class MainController {
 
         // Map navigation buttons
         navButtonMap.put(NavigationTab.DASHBOARD, dashboardNavBtn);
+        navButtonMap.put(NavigationTab.WORKSPACES, workspacesNavBtn);
         navButtonMap.put(NavigationTab.PEERS, peersNavBtn);
         navButtonMap.put(NavigationTab.CHAT, chatNavBtn);
         navButtonMap.put(NavigationTab.TRANSFERS, transfersNavBtn);
@@ -112,28 +120,37 @@ public class MainController {
         dashboardController.init(stateService, this);
         viewCache.put(NavigationTab.DASHBOARD, dashNode);
 
-        // 2. Peers View
+        // 2. Workspaces View (Phase 16B)
+        FXMLLoader wsLoader = new FXMLLoader(getClass().getResource("/com/landrop/ui/workspace-view.fxml"));
+        Node wsNode = wsLoader.load();
+        this.workspaceController = wsLoader.getController();
+        if (mainApp != null && mainApp.getWorkspaceStateService() != null) {
+            workspaceController.init(mainApp.getWorkspaceStateService(), this);
+        }
+        viewCache.put(NavigationTab.WORKSPACES, wsNode);
+
+        // 3. Peers View
         FXMLLoader peersLoader = new FXMLLoader(getClass().getResource("/com/landrop/ui/peers-view.fxml"));
         Node peersNode = peersLoader.load();
         this.peersController = peersLoader.getController();
         peersController.init(stateService, this);
         viewCache.put(NavigationTab.PEERS, peersNode);
 
-        // 3. Chat View
+        // 4. Chat View
         FXMLLoader chatLoader = new FXMLLoader(getClass().getResource("/com/landrop/ui/chat-view.fxml"));
         Node chatNode = chatLoader.load();
         this.chatController = chatLoader.getController();
         chatController.init(stateService, this);
         viewCache.put(NavigationTab.CHAT, chatNode);
 
-        // 4. Transfers View
+        // 5. Transfers View
         FXMLLoader transfersLoader = new FXMLLoader(getClass().getResource("/com/landrop/ui/transfers-view.fxml"));
         Node transfersNode = transfersLoader.load();
         this.transfersController = transfersLoader.getController();
         transfersController.init(stateService, this);
         viewCache.put(NavigationTab.TRANSFERS, transfersNode);
 
-        // 5. Settings View
+        // 6. Settings View
         FXMLLoader settingsLoader = new FXMLLoader(getClass().getResource("/com/landrop/ui/settings-view.fxml"));
         Node settingsNode = settingsLoader.load();
         this.settingsController = settingsLoader.getController();
@@ -141,11 +158,34 @@ public class MainController {
         viewCache.put(NavigationTab.SETTINGS, settingsNode);
     }
 
+    public MainApp getMainApp() {
+        return mainApp;
+    }
+
+    public com.landrop.ui.auth.services.AuthStateService getAuthStateService() {
+        return mainApp != null ? mainApp.getAuthStateService() : null;
+    }
+
+    public com.landrop.ui.services.RealtimeChatService getRealtimeChatService() {
+        return mainApp != null ? mainApp.getRealtimeChatService() : null;
+    }
+
+    public com.landrop.ui.workspace.services.WorkspaceStateService getWorkspaceStateService() {
+        return mainApp != null ? mainApp.getWorkspaceStateService() : null;
+    }
+
+    public WorkspaceController getWorkspaceController() {
+        return workspaceController;
+    }
+
     private void bindStatusProperties() {
-        // Peer identity badges
-        String displayName = stateService.getIdentity() != null ? stateService.getIdentity().getDisplayName() : "Peer";
-        topPeerIdentityBadge.setText(displayName);
-        bottomPeerStatusLabel.setText("Peer: " + displayName + " (" + stateService.getAdvertisedHost() + ":" + stateService.getLocalP2pPort() + ")");
+        // User identity from auth state
+        updateUserIdentityDisplay();
+        if (getAuthStateService() != null) {
+            getAuthStateService().userProperty().addListener((obs, oldVal, newVal) -> {
+                Platform.runLater(this::updateUserIdentityDisplay);
+            });
+        }
 
         // Discovery status bindings
         stateService.discoveryStatusProperty().addListener((obs, oldVal, newVal) -> {
@@ -164,6 +204,40 @@ public class MainController {
 
         // Protocol version
         bottomProtocolLabel.setText("Protocol: v" + stateService.getProtocolVersion());
+
+        // Workspace bindings
+        if (getWorkspaceStateService() != null) {
+            updateWorkspaceDisplay(getWorkspaceStateService().getActiveWorkspace());
+            getWorkspaceStateService().activeWorkspaceProperty().addListener((obs, oldVal, newVal) -> {
+                Platform.runLater(() -> updateWorkspaceDisplay(newVal));
+            });
+        }
+    }
+
+    private void updateWorkspaceDisplay(com.landrop.ui.cloud.model.Domain.Workspace ws) {
+        if (topWorkspaceBadge != null) {
+            if (ws != null) {
+                topWorkspaceBadge.setText("🏢 " + ws.name());
+            } else {
+                topWorkspaceBadge.setText("🏢 No Workspace");
+            }
+        }
+    }
+
+    private void updateUserIdentityDisplay() {
+        var auth = getAuthStateService();
+        String userDisplayName = (auth != null && auth.user() != null) ? auth.user().displayName() : null;
+        if (userDisplayName == null || userDisplayName.isBlank()) {
+            userDisplayName = (auth != null && auth.user() != null) ? auth.user().username() : null;
+        }
+        if (userDisplayName == null || userDisplayName.isBlank()) {
+            userDisplayName = stateService.getIdentity() != null ? stateService.getIdentity().getDisplayName() : "User";
+        }
+
+        topPeerIdentityBadge.setText(userDisplayName);
+
+        String deviceName = stateService.getIdentity() != null ? stateService.getIdentity().getDisplayName() : "LAN Device";
+        bottomPeerStatusLabel.setText("User: " + userDisplayName + " | LAN Peer: " + deviceName + " (" + stateService.getAdvertisedHost() + ":" + stateService.getLocalP2pPort() + ")");
     }
 
     private void updateDiscoveryDisplay(DiscoveryStatus status) {
@@ -209,6 +283,16 @@ public class MainController {
     @FXML
     private void onDashboardNavClicked() {
         navigateTo(NavigationTab.DASHBOARD);
+    }
+
+    @FXML
+    private void onWorkspacesNavClicked() {
+        navigateTo(NavigationTab.WORKSPACES);
+    }
+
+    @FXML
+    private void onWorkspaceBadgeClicked() {
+        navigateTo(NavigationTab.WORKSPACES);
     }
 
     @FXML

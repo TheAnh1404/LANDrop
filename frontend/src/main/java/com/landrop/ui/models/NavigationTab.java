@@ -5,6 +5,7 @@ package com.landrop.ui.models;
  */
 public enum NavigationTab {
     DASHBOARD("Dashboard"),
+    WORKSPACES("Workspaces"),
     PEERS("Peers"),
     CHAT("Chat"),
     TRANSFERS("Transfers"),
