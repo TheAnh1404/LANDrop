@@ -18,6 +18,8 @@ import com.landrop.auth.security.JwtService;
 import com.landrop.auth.service.AuthService;
 import com.landrop.database.DatabaseManager;
 import com.landrop.database.repository.UserRepository;
+import com.landrop.database.service.WorkspaceService;
+import com.landrop.workspace.http.WorkspaceHttpServer;
 import com.landrop.util.AppLogger;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -43,22 +45,30 @@ public class AuthHttpServer {
     private final int port;
     private final AuthService authService;
     private final AuthMiddleware authMiddleware;
+    private final WorkspaceHttpServer workspaceHttpServer;
     private final ObjectMapper objectMapper;
     private HttpServer httpServer;
 
     public AuthHttpServer(AuthService authService, AuthMiddleware authMiddleware) {
-        this(AuthConfig.getAuthPort(), authService, authMiddleware);
+        this(AuthConfig.getAuthPort(), authService, authMiddleware, new WorkspaceService());
     }
 
     public AuthHttpServer(int port, AuthService authService, AuthMiddleware authMiddleware) {
+        this(port, authService, authMiddleware, new WorkspaceService());
+    }
+
+    public AuthHttpServer(int port, AuthService authService, AuthMiddleware authMiddleware,
+                          WorkspaceService workspaceService) {
         this.port = port;
         this.authService = authService;
         this.authMiddleware = authMiddleware;
         this.objectMapper = createObjectMapper();
+        this.workspaceHttpServer = new WorkspaceHttpServer(authMiddleware, workspaceService, objectMapper);
     }
 
     public static ObjectMapper createObjectMapper() {
         ObjectMapper mapper = new ObjectMapper();
+        mapper.getFactory().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION);
         SimpleModule timeModule = new SimpleModule();
         timeModule.addSerializer(Instant.class, new JsonSerializer<>() {
             @Override
@@ -82,7 +92,7 @@ public class AuthHttpServer {
             return;
         }
 
-        httpServer = HttpServer.create(new InetSocketAddress(port), 0);
+        httpServer = HttpServer.create(new InetSocketAddress(AuthConfig.getBindHost(), port), 0);
         httpServer.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
         // Configure REST endpoints
@@ -92,6 +102,7 @@ public class AuthHttpServer {
         httpServer.createContext("/api/auth/logout", this::handleLogout);
         httpServer.createContext("/api/auth/me", this::handleMe);
         httpServer.createContext("/api/auth/health", this::handleHealth);
+        workspaceHttpServer.register(httpServer);
 
         httpServer.start();
         AppLogger.info(TAG, "Auth HTTP Server started on port " + getPort() + " (Virtual Threads enabled)");
@@ -324,20 +335,35 @@ public class AuthHttpServer {
 
             int port = AuthConfig.getAuthPort();
             AuthHttpServer server = new AuthHttpServer(port, authService, authMiddleware);
-            server.start();
+            var realtime = new com.landrop.realtime.RealtimeServer(
+                new InetSocketAddress(AuthConfig.getBindHost(), AuthConfig.getRealtimePort()),
+                com.landrop.realtime.SocketAuthenticator.jwt(jwtService, userRepository),
+                new com.landrop.realtime.JdbcRealtimeStore(dbManager));
+            realtime.start();
+            try {
+                realtime.awaitReady();
+                server.start();
+            } catch (Exception startupFailure) {
+                realtime.stop(1000);
+                dbManager.close();
+                throw startupFailure;
+            }
 
             System.out.println("==================================================");
             System.out.println("  LANDrop Authentication Server (Phase 15A)");
             System.out.println("  Listening on http://localhost:" + server.getPort());
+            System.out.println("  Bind: " + AuthConfig.getBindHost() + "; realtime port: " + realtime.getPort());
             System.out.println("==================================================");
 
             Runtime.getRuntime().addShutdownHook(new Thread(() -> {
                 System.out.println("Stopping Auth Server...");
                 server.stop(0);
+                try { realtime.stop(1000); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
                 try {
                     dbManager.close();
                 } catch (Exception ignored) {}
             }));
+            new java.util.concurrent.CountDownLatch(1).await();
         } catch (Exception e) {
             AppLogger.error(TAG, "Failed to start Auth HTTP Server", e);
             System.err.println("Fatal: " + e.getMessage());

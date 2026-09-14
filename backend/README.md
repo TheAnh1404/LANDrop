@@ -1,6 +1,8 @@
 # LANDrop — Backend
 
-## Current Phase: Phase 11 — Production Hardening & Observability
+## Current Phase: Phase 16A — Workspace & Members backend
+
+The shared backend hosts Phase 15A HTTP authentication, authenticated WebSocket chat with PostgreSQL persistence, and the Phase 16A workspace/member API. Read the [workspace contract](../docs/PHASE-16A-API-CONTRACT.md) and the [multi-machine realtime guide](../docs/PHASE-15.5A-MULTI-DEVICE.md). Run `bash start-auth.sh` (or `start-auth.bat`) from the repository root after applying the existing migrations. The Core sections below describe the separate LAN transport.
 
 ### Overview
 LANDrop Backend provides high-performance peer-to-peer (P2P) networking, centralized discovery, real-time messaging, resumable chunked file transfers, and multi-peer parallel swarm downloads using Java 21 virtual threads and standard Java TCP sockets (`java.net.Socket`, `java.net.ServerSocket`).
