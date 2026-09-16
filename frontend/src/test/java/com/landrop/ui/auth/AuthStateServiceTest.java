@@ -39,8 +39,8 @@ class AuthStateServiceTest {
         AuthStateService state = new AuthStateService(api, new InMemorySessionStore());
 
         assertThrows(CompletionException.class,
-                () -> state.login(new AuthModels.LoginRequest("bad", "password")).join());
-        assertEquals("Enter a valid email address.", state.authError());
+                () -> state.login(new AuthModels.LoginRequest("bad input", "password")).join());
+        assertEquals("Enter a valid email or username.", state.authError());
         assertEquals(0, api.loginCalls.get());
 
         api.loginFailure = new ApiException(401, "INTERNAL_DETAIL", "database stack trace");
@@ -109,6 +109,26 @@ class AuthStateServiceTest {
         assertNull(state.user());
         assertTrue(state.accessToken().isEmpty());
         assertEquals("", state.authError());
+    }
+
+    @Test void delayedRefreshCannotResurrectSessionAfterLogout() {
+        FakeAuthApi api = new FakeAuthApi();
+        InMemorySessionStore store = new InMemorySessionStore();
+        AuthStateService state = new AuthStateService(api, store);
+        state.login(new AuthModels.LoginRequest("ada@example.com", "password")).join();
+        api.deferRefresh = true;
+        var refresh = state.refreshAccessToken();
+        state.logout().join();
+        api.pendingRefresh.complete(new AuthDto.RefreshResponse("late-access", "late-refresh", "Bearer", 3600));
+        assertTrue(refresh.isCompletedExceptionally());
+        assertFalse(state.isAuthenticated()); assertTrue(store.loadRefreshToken().isEmpty()); assertTrue(state.accessToken().isEmpty());
+    }
+    @Test void transientRestoreFailurePreservesRefreshCredential() {
+        FakeAuthApi api = new FakeAuthApi(); api.refreshFailure = new ApiException(0, "NETWORK_ERROR", "private detail");
+        InMemorySessionStore store = new InMemorySessionStore(); store.saveRefreshToken("stored");
+        AuthStateService state = new AuthStateService(api, store);
+        assertThrows(Exception.class, () -> state.restoreSession().join());
+        assertEquals("stored", store.loadRefreshToken().orElseThrow()); assertFalse(state.authError().contains("private"));
     }
 
     private static final class FakeAuthApi implements AuthApi {

@@ -32,9 +32,14 @@ public final class AuthenticatedApiTransport implements ApiTransport {
         return delegate.get(path, query, Map.of("Authorization", "Bearer " + accessToken))
                 .handle((body, failure) -> {
                     Throwable error = unwrap(failure);
+                    if (error instanceof ApiException api && com.landrop.ui.bootstrap.BootstrapErrors.invalidAuth(api.code())) {
+                        authState.invalidate(api.code());
+                        return CompletableFuture.<String>failedFuture(error);
+                    }
                     if (!retried && error instanceof ApiException apiError && apiError.statusCode() == 401) {
                         return authState.refreshAccessToken().thenCompose(ignored -> request(path, query, true));
                     }
+                    if (retried && error instanceof ApiException api && api.statusCode() == 401) authState.invalidate("SESSION_EXPIRED");
                     return failure == null ? CompletableFuture.completedFuture(body) : CompletableFuture.<String>failedFuture(error);
                 }).thenCompose(Function.identity());
     }

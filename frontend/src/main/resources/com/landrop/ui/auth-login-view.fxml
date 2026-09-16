@@ -12,8 +12,8 @@
         <VBox styleClass="card" spacing="14.0" maxWidth="440.0">
             <Label text="Welcome back" styleClass="card-title"/>
             <VBox styleClass="form-group">
-                <Label text="Email" styleClass="form-label"/>
-                <TextField fx:id="emailField" promptText="you@example.com" styleClass="text-input-field"/>
+                <Label text="Email or username" styleClass="form-label"/>
+                <TextField fx:id="emailField" promptText="you@example.com or username" styleClass="text-input-field"/>
             </VBox>
             <VBox styleClass="form-group">
                 <Label text="Password" styleClass="form-label"/>
@@ -22,8 +22,7 @@
             <Label fx:id="errorLabel" wrapText="true" styleClass="auth-error"/>
             <Button fx:id="submitButton" text="Sign in" maxWidth="Infinity" styleClass="primary-button" onAction="#onSubmit"/>
             <HBox alignment="CENTER" spacing="4.0">
-                <Label text="New to LANDrop?" styleClass="page-subtitle"/>
-                <Hyperlink fx:id="registerLink" text="Create an account" onAction="#onRegister"/>
+                <Hyperlink fx:id="registerLink" text="Change server" onAction="#onRegister"/>
             </HBox>
         </VBox>
     </VBox>

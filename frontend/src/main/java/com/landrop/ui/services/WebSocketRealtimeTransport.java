@@ -21,6 +21,7 @@ public class WebSocketRealtimeTransport implements RealtimeTransport, WebSocket.
     private final HttpClient httpClient;
     private final StringBuilder messageBuffer = new StringBuilder();
     private final AtomicBoolean connected = new AtomicBoolean(false);
+    private final AtomicBoolean closed = new AtomicBoolean(false);
 
     private volatile WebSocket webSocket;
     private volatile Listener listener;
@@ -41,21 +42,6 @@ public class WebSocketRealtimeTransport implements RealtimeTransport, WebSocket.
     @Override
     public CompletableFuture<Void> connect() {
         URI targetUri = baseWsUri;
-        if (bearerToken != null && !bearerToken.isBlank()) {
-            String query = (targetUri.getQuery() != null && !targetUri.getQuery().isBlank())
-                    ? targetUri.getQuery() + "&token=" + URLEncoder.encode(bearerToken, StandardCharsets.UTF_8)
-                    : "token=" + URLEncoder.encode(bearerToken, StandardCharsets.UTF_8);
-            try {
-                targetUri = new URI(
-                        targetUri.getScheme(),
-                        targetUri.getAuthority(),
-                        targetUri.getPath(),
-                        query,
-                        targetUri.getFragment()
-                );
-            } catch (Exception ignored) {
-            }
-        }
 
         WebSocket.Builder builder = httpClient.newWebSocketBuilder()
                 .connectTimeout(Duration.ofSeconds(10));
@@ -65,8 +51,7 @@ public class WebSocketRealtimeTransport implements RealtimeTransport, WebSocket.
         }
 
         return builder.buildAsync(targetUri, this).thenAccept(ws -> {
-            this.webSocket = ws;
-            this.connected.set(true);
+            if (closed.get()) { ws.abort(); return; }
         });
     }
 
@@ -81,6 +66,7 @@ public class WebSocketRealtimeTransport implements RealtimeTransport, WebSocket.
 
     @Override
     public void close() {
+        closed.set(true);
         connected.set(false);
         WebSocket ws = this.webSocket;
         this.webSocket = null;
@@ -101,6 +87,7 @@ public class WebSocketRealtimeTransport implements RealtimeTransport, WebSocket.
 
     @Override
     public void onOpen(WebSocket webSocket) {
+        if (closed.get()) { webSocket.abort(); return; }
         this.webSocket = webSocket;
         this.connected.set(true);
         webSocket.request(1);

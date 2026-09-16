@@ -23,6 +23,9 @@ class HttpAuthApiTest {
     private ExecutorService executor;
     private final List<String> requests = new ArrayList<>();
     private URI baseUri;
+    private boolean foundationResponse;
+    private String errorCode;
+    private String loginBody;
 
     @BeforeEach
     void startServer() throws IOException {
@@ -35,6 +38,7 @@ class HttpAuthApiTest {
                         + exchange.getRequestHeaders().getFirst("Authorization"));
             }
             String path = exchange.getRequestURI().getPath();
+            if (path.endsWith("/login")) loginBody = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             String response;
             if (path.endsWith("/login") || path.endsWith("/register")) {
                 response = "{\"data\":{\"accessToken\":\"access\",\"refreshToken\":\"refresh\","
@@ -52,9 +56,11 @@ class HttpAuthApiTest {
             } else {
                 response = "{\"data\":{}}";
             }
+            if (foundationResponse) response = new com.fasterxml.jackson.databind.ObjectMapper().readTree(response).path("data").toString();
+            if (errorCode != null) response = "{\"code\":\"" + errorCode + "\",\"error\":\"Forbidden\",\"message\":\"private backend detail\",\"status\":403}";
             byte[] bytes = response.getBytes(StandardCharsets.UTF_8);
             exchange.getResponseHeaders().set("Content-Type", "application/json");
-            exchange.sendResponseHeaders(200, bytes.length);
+            exchange.sendResponseHeaders(errorCode == null ? 200 : 403, bytes.length);
             exchange.getResponseBody().write(bytes);
             exchange.close();
         });
@@ -66,6 +72,20 @@ class HttpAuthApiTest {
     void stopServer() {
         if (server != null) server.stop(0);
         if (executor != null) executor.shutdownNow();
+    }
+
+    @Test
+    void foundationFlatResponsesAndUsernameLoginUseExistingAuthService() throws Exception {
+        foundationResponse = true;
+        var api = new HttpAuthApi(baseUri);
+        assertEquals("access", api.login(new AuthDto.LoginRequest("ada", "password")).join().accessToken());
+        var body = new com.fasterxml.jackson.databind.ObjectMapper().readTree(loginBody);
+        assertEquals("ada", body.path("identifier").asText()); assertFalse(body.has("userId"));
+        assertEquals("u1", api.me("access").join().id());
+        errorCode = "ACCOUNT_DISABLED";
+        var state = new com.landrop.ui.auth.services.AuthStateService(api, new com.landrop.ui.auth.api.InMemorySessionStore());
+        assertThrows(Exception.class, () -> state.login(new com.landrop.ui.auth.model.AuthModels.LoginRequest("ada", "password")).join());
+        assertTrue(state.authError().contains("disabled")); assertFalse(state.authError().contains("private"));
     }
 
     @Test

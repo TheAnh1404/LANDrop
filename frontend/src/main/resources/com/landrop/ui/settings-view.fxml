@@ -16,6 +16,13 @@
         </VBox>
 
         <VBox styleClass="card" spacing="14.0">
+            <Label fx:id="signedInLabel" text="Signed in as:"/>
+            <Label fx:id="enrolledDeviceLabel" text="Device:" wrapText="true"/>
+            <TextField fx:id="renameDeviceField" promptText="Device name"/>
+            <Button fx:id="renameDeviceButton" text="Rename device" onAction="#onRenameDevice"/>
+        </VBox>
+
+        <VBox styleClass="card" spacing="14.0">
             <Label text="LANDrop Server Connection" styleClass="card-title"/>
             <VBox styleClass="form-group">
                 <Label text="API URL" styleClass="form-label"/>

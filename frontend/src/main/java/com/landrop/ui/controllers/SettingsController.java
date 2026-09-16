@@ -49,6 +49,10 @@ public class SettingsController {
     @FXML private TextField serverProtocolField;
     @FXML private TextField heartbeatDiagnosticField;
     @FXML private Label serverStatusLabel;
+    @FXML private Label signedInLabel;
+    @FXML private Label enrolledDeviceLabel;
+    @FXML private TextField renameDeviceField;
+    @FXML private javafx.scene.control.Button renameDeviceButton;
 
     private MainController mainController;
 
@@ -66,6 +70,12 @@ public class SettingsController {
         protocolVersionField.setText("v" + stateService.getProtocolVersion());
         heartbeatIntervalField.setText(DiscoveryClient.DEFAULT_HEARTBEAT_INTERVAL_SEC + " seconds");
         if (mainController.getMainApp() != null) {
+            var app = mainController.getMainApp();
+            var user = app.getAuthStateService() == null ? null : app.getAuthStateService().getCurrentUser();
+            signedInLabel.setText("Signed in as: " + (user == null ? "" : user.displayName()));
+            var device = app.getCurrentDeviceService() == null ? null : app.getCurrentDeviceService().currentDevice();
+            enrolledDeviceLabel.setText(device == null ? "Device not enrolled" : "Device: " + device.label() + " | Device ID: " + device.id());
+            renameDeviceField.setText(device == null ? "" : device.label());
             apiUrlField.setText(String.valueOf(mainController.getMainApp().getResolvedApiUri()));
             wsUrlField.setText(String.valueOf(mainController.getMainApp().getResolvedWsUri()));
             ClientRealtimeService server = mainController.getMainApp().getServerRealtimeService();
@@ -85,6 +95,24 @@ public class SettingsController {
                 server.disconnectReasonProperty().addListener((obs, old, next) -> Platform.runLater(() -> updateDiagnostics(server)));
             }
         }
+    }
+
+    @FXML private void onRenameDevice() {
+        var app = mainController.getMainApp();
+        if (app.getBootstrap() == null || !app.getBootstrap().isReady()) return;
+        renameDeviceButton.setDisable(true);
+        app.getCurrentDeviceService().rename(renameDeviceField.getText()).whenComplete((device, error) -> Platform.runLater(() -> {
+            renameDeviceButton.setDisable(false);
+            if (error == null) {
+                enrolledDeviceLabel.setText("Device: " + device.label() + " | Device ID: " + device.id());
+                deviceNameField.setText(device.label());
+                serverStatusLabel.setText("Device name updated.");
+            } else {
+                String code = com.landrop.ui.bootstrap.BootstrapErrors.code(error);
+                serverStatusLabel.setText("HTTP_ERROR".equals(code) ? "This server does not support device rename."
+                        : com.landrop.ui.bootstrap.BootstrapErrors.message(code));
+            }
+        }));
     }
 
     @FXML private void onApplyServerClicked() {
@@ -114,6 +142,7 @@ public class SettingsController {
     private void updateServerStatus(ConnectionState state) {
         ClientRealtimeService server = server();
         String reason = server == null ? "" : server.disconnectReasonProperty().get();
+        if (reason != null && !reason.isBlank()) reason = com.landrop.ui.bootstrap.BootstrapErrors.message(reason.split(":", 2)[0]);
         serverStatusLabel.setText("Server: " + state.name() + (reason == null || reason.isBlank() ? "" : " (" + reason + ")"));
     }
     private void updateDiagnostics(ClientRealtimeService server) {

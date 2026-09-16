@@ -3,32 +3,69 @@ package com.landrop.ui.device;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.json.JsonMapper;
 import com.landrop.ui.auth.services.AuthStateService;
+import com.landrop.ui.bootstrap.ClientInstanceService;
 import com.landrop.ui.cloud.api.ApiClient;
+import com.landrop.ui.cloud.api.ApiException;
 import com.landrop.ui.cloud.model.Domain;
-import com.landrop.ui.services.UIStateService;
-import javafx.beans.property.ObjectProperty;
-import javafx.beans.property.SimpleObjectProperty;
+import com.landrop.ui.config.FrontendConfig;
+import javafx.beans.property.ReadOnlyObjectProperty;
+import javafx.beans.property.ReadOnlyObjectWrapper;
 import java.net.URI;
 import java.util.Map;
-import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-import java.util.prefs.Preferences;
 
-/** Maintains this installation's device identity; it never becomes the product-user identity. */
+/** Server-owned device identity, resolved independently of LAN discovery. */
 public final class CurrentDeviceService {
-    private static final JsonMapper JSON=JsonMapper.builder().build();
-    private final AuthStateService auth; private final ApiClient api; private final String deviceId;
-    private final ObjectProperty<Domain.Device> currentDevice=new SimpleObjectProperty<>();
-    public CurrentDeviceService(URI apiBase,AuthStateService auth){this.auth=auth;this.api=new ApiClient(apiBase,auth);Preferences p=Preferences.userNodeForPackage(CurrentDeviceService.class);deviceId=p.get("landrop.device.id",null)==null?store(p):p.get("landrop.device.id",null);}
-    private static String store(Preferences p){String id=UUID.randomUUID().toString();p.put("landrop.device.id",id);return id;}
-    public ObjectProperty<Domain.Device> currentDeviceProperty(){return currentDevice;}
-    public Domain.Device currentDevice(){return currentDevice.get();}
-    /** Registers current endpoint after Discovery is connected. Server remains the authority for mapping device to user. */
-    public CompletableFuture<Domain.Device> register(UIStateService lan){
-        String name=lan.getIdentity().getDisplayName();String peerId=lan.getIdentity().getPeerId();
-        try {String body=JSON.writeValueAsString(Map.of("deviceId",deviceId,"deviceName",name,"peerId",peerId,"ipAddress",lan.getAdvertisedHost(),"port",lan.getLocalP2pPort()));
-            return api.request("POST","devices",body).thenApply(this::map);
-        }catch(Exception error){return CompletableFuture.failedFuture(error);}
+    private static final JsonMapper JSON = JsonMapper.builder().build();
+    private final AuthStateService auth;
+    private final ApiClient api;
+    private final ClientInstanceService instance;
+    private final ReadOnlyObjectWrapper<Domain.Device> currentDevice = new ReadOnlyObjectWrapper<>();
+    private long generation;
+
+    public CurrentDeviceService(URI base, AuthStateService auth) { this(base, auth, new ClientInstanceService()); }
+    public CurrentDeviceService(URI base, AuthStateService auth, ClientInstanceService instance) {
+        this.auth = auth; this.api = new ApiClient(base, auth); this.instance = instance;
     }
-    private Domain.Device map(String body){try{JsonNode n=JSON.readTree(body).path("data");String id=n.path("deviceId").asText(deviceId);String label=n.path("deviceName").asText("Device");Domain.Device device=new Domain.Device(id,n.path("userId").asText(auth.user().id()),label,n.path("isOnline").asBoolean(false));currentDevice.set(device);return device;}catch(Exception e){throw new IllegalArgumentException("Invalid device registration response",e);}}
+    public ReadOnlyObjectProperty<Domain.Device> currentDeviceProperty() { return currentDevice.getReadOnlyProperty(); }
+    public Domain.Device currentDevice() { return currentDevice.get(); }
+    public synchronized void clear() { generation++; currentDevice.set(null); }
+    public synchronized CompletableFuture<Domain.Device> enroll() {
+        return send("POST", "devices/enroll", Map.of("clientInstanceId", instance.clientInstanceId(),
+                "deviceName", instance.deviceName(), "platform", instance.platform(), "clientVersion", FrontendConfig.CLIENT_VERSION));
+    }
+    public synchronized CompletableFuture<Domain.Device> rename(String name) {
+        if (name == null || name.isBlank() || name.trim().length() > 100 || name.chars().anyMatch(Character::isISOControl)) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Enter a device name of 1 to 100 characters."));
+        }
+        Domain.Device device = currentDevice();
+        if (device == null) return CompletableFuture.failedFuture(new IllegalStateException("Enroll this device first."));
+        return send("PATCH", "devices/" + java.net.URLEncoder.encode(device.id(), java.nio.charset.StandardCharsets.UTF_8),
+                Map.of("deviceName", name.trim()));
+    }
+    private CompletableFuture<Domain.Device> send(String method, String path, Map<String, String> payload) {
+        long expected = generation;
+        String userId = auth.user() == null ? null : auth.user().id();
+        try {
+            return api.request(method, path, JSON.writeValueAsString(payload)).thenApply(body -> {
+                synchronized (this) {
+                    if (expected != generation || auth.user() == null || !auth.user().id().equals(userId)) throw new java.util.concurrent.CancellationException();
+                    try {
+                        JsonNode root = JSON.readTree(body);
+                        JsonNode data = root.has("data") ? root.path("data") : root;
+                        String id = data.path("id").asText(data.path("deviceId").asText(""));
+                        if (id.isBlank() || !userId.equals(data.path("userId").asText())
+                                || !instance.clientInstanceId().equals(data.path("clientInstanceId").asText())) {
+                            throw new ApiException(0, "PROTOCOL_INCOMPATIBLE", "Device enrollment response does not establish identity.");
+                        }
+                        Domain.Device device = new Domain.Device(id, userId, data.path("name").asText(data.path("deviceName").asText()), data.path("isOnline").asBoolean());
+                        currentDevice.set(device);
+                        instance.setDeviceName(device.label());
+                        return device;
+                    } catch (ApiException error) { throw error; }
+                    catch (Exception error) { throw new ApiException(0, "PROTOCOL_INCOMPATIBLE", "Invalid device enrollment response."); }
+                }
+            });
+        } catch (Exception error) { return CompletableFuture.failedFuture(error); }
+    }
 }

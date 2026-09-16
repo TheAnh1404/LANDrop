@@ -194,42 +194,43 @@ public class UIStateService {
                     this.fileTransferService.scanSharedDirectoryAsync();
                 }
 
-                // 4. Connect to Discovery Server
-                if (discoveryClient != null) {
-                    try {
-                        discoveryClient.close();
-                    } catch (Exception ignored) {
-                    }
-                }
+                // Discovery is an optional LAN enhancement. The authenticated Server
+                // client must remain usable when the standalone port 8888 service is offline.
                 try {
+                    if (discoveryClient != null) {
+                        try { discoveryClient.close(); } catch (Exception ignored) { }
+                    }
                     this.discoveryClient = new DiscoveryClient(this.discoveryHost, this.discoveryPort);
                     this.discoveryClient.connect(5000);
-                } catch (IOException e) {
-                    throw new RuntimeException("Cannot connect to Discovery Server at " + this.discoveryHost + ":" + this.discoveryPort + ". Please ensure DiscoveryServer is running on port " + this.discoveryPort + ".", e);
+
+                    PeerInfo myInfo = new PeerInfo(
+                            identity.getPeerId(),
+                            identity.getDisplayName(),
+                            this.advertisedHost,
+                            this.peerListener.getPort()
+                    );
+                    boolean registered = discoveryClient.register(myInfo);
+                    if (!registered) throw new IOException("Discovery Server rejected peer registration");
+                    discoveryClient.startHeartbeat(DiscoveryClient.DEFAULT_HEARTBEAT_INTERVAL_SEC);
+                    List<PeerInfo> peers = discoveryClient.requestPeerList();
+                    Platform.runLater(() -> {
+                        discoveryStatus.set(DiscoveryStatus.CONNECTED);
+                        updateDiscoveredPeersList(peers);
+                        future.complete(null);
+                    });
+                } catch (Exception discoveryFailure) {
+                    System.err.println("[LANDrop] LAN Discovery unavailable; continuing with Server client: "
+                            + discoveryFailure.getMessage());
+                    if (discoveryClient != null) {
+                        try { discoveryClient.close(); } catch (Exception ignored) { }
+                        discoveryClient = null;
+                    }
+                    Platform.runLater(() -> {
+                        discoveryStatus.set(DiscoveryStatus.ERROR);
+                        updateDiscoveredPeersList(List.of());
+                        future.complete(null);
+                    });
                 }
-
-                // 4. Register peer
-                PeerInfo myInfo = new PeerInfo(
-                        identity.getPeerId(),
-                        identity.getDisplayName(),
-                        this.advertisedHost,
-                        this.peerListener.getPort()
-                );
-                boolean registered = discoveryClient.register(myInfo);
-                if (!registered) {
-                    throw new IOException("Discovery Server rejected peer registration");
-                }
-
-                // 5. Start heartbeat loop
-                discoveryClient.startHeartbeat(DiscoveryClient.DEFAULT_HEARTBEAT_INTERVAL_SEC);
-
-                // 6. Fetch initial peer list
-                List<PeerInfo> peers = discoveryClient.requestPeerList();
-                Platform.runLater(() -> {
-                    discoveryStatus.set(DiscoveryStatus.CONNECTED);
-                    updateDiscoveredPeersList(peers);
-                    future.complete(null);
-                });
 
             } catch (Throwable t) {
                 System.err.println("[LANDrop ERROR] connectAndRegister failed: " + t.getMessage());

@@ -21,7 +21,6 @@ import java.util.concurrent.CompletionException;
 public final class AuthStateService {
     private final AuthApi api;
     private final SessionStore sessionStore;
-    private final Object refreshLock = new Object();
 
     private final ObjectProperty<AuthModels.AuthUser> user = new SimpleObjectProperty<>();
     private final BooleanProperty authenticated = new SimpleBooleanProperty(false);
@@ -29,6 +28,30 @@ public final class AuthStateService {
     private final StringProperty authError = new SimpleStringProperty("");
     private volatile AuthModels.AuthSession session;
     private CompletableFuture<String> refreshInFlight;
+    private long generation;
+    private volatile String invalidationCode = "SESSION_EXPIRED";
+    public String invalidationCode() { return invalidationCode; }
+
+    public synchronized void invalidate(String code) {
+        generation++;
+        refreshInFlight = null;
+        invalidationCode = code;
+        clearSession();
+        authError.set(com.landrop.ui.bootstrap.BootstrapErrors.message(code));
+    }
+    public AuthModels.AuthUser getCurrentUser() { return user(); }
+    public CompletableFuture<String> validAccessToken() {
+        AuthModels.AuthSession current = session;
+        if (current != null && current.expiresAt().isAfter(java.time.Instant.now().plusSeconds(30))) {
+            return CompletableFuture.completedFuture(current.accessToken());
+        }
+        return refreshAccessToken();
+    }
+    private synchronized long epoch() { return generation; }
+    private synchronized AuthModels.AuthUser acceptIfCurrent(long expected, AuthModels.AuthSession accepted) {
+        if (expected != generation) throw new java.util.concurrent.CancellationException();
+        return acceptSession(accepted);
+    }
 
     public AuthStateService(AuthApi api, SessionStore sessionStore) {
         this.api = java.util.Objects.requireNonNull(api, "api");
@@ -52,28 +75,31 @@ public final class AuthStateService {
         String validation = validateLogin(request);
         if (validation != null) return rejected(validation);
         beginOperation();
+        long expected = epoch();
         return api.login(new AuthDto.LoginRequest(request.email().trim(), request.password()))
                 .thenApply(AuthMapper::session)
                 .thenCompose(this::verifyCurrentUser)
-                .thenApply(this::acceptSession)
-                .whenComplete((ignored, failure) -> finishOperation(failure, "login"));
+                .thenApply(accepted -> acceptIfCurrent(expected, accepted))
+                .whenComplete((ignored, failure) -> finishIfCurrent(expected, failure, "login"));
     }
 
     public CompletableFuture<AuthModels.AuthUser> register(AuthModels.RegisterRequest request) {
         String validation = validateRegister(request);
         if (validation != null) return rejected(validation);
         beginOperation();
+        long expected = epoch();
         return api.register(new AuthDto.RegisterRequest(request.username().trim(), request.displayName().trim(),
                         request.email().trim(), request.password()))
                 .thenApply(AuthMapper::session)
                 .thenCompose(this::verifyCurrentUser)
-                .thenApply(this::acceptSession)
-                .whenComplete((ignored, failure) -> finishOperation(failure, "register"));
+                .thenApply(accepted -> acceptIfCurrent(expected, accepted))
+                .whenComplete((ignored, failure) -> finishIfCurrent(expected, failure, "register"));
     }
 
     /** Restores a stored refresh-token session, then verifies identity with /auth/me. */
     public CompletableFuture<AuthModels.AuthUser> restoreSession() {
         beginOperation();
+        long expected = epoch();
         Optional<String> stored = sessionStore.loadRefreshToken();
         if (stored.isEmpty()) {
             clearSession();
@@ -84,19 +110,23 @@ public final class AuthStateService {
                 .thenApply(AuthMapper::refresh)
                 .thenCompose(tokens -> api.me(tokens.accessToken())
                         .thenApply(AuthMapper::user)
-                        .thenApply(currentUser -> acceptRefreshedSession(currentUser, tokens, stored.get())))
-                .whenComplete((ignored, failure) -> finishOperation(failure, "restore"));
+                        .thenApply(currentUser -> acceptIfCurrent(expected, new AuthModels.AuthSession(currentUser,
+                                tokens.accessToken(), tokens.refreshToken() == null ? stored.get() : tokens.refreshToken(),
+                                tokens.tokenType(), tokens.expiresAt()))))
+                .whenComplete((ignored, failure) -> finishIfCurrent(expected, failure, "restore"));
     }
 
     public CompletableFuture<Void> logout() {
         AuthModels.AuthSession current = session;
-        CompletableFuture<Void> request = (current == null && sessionStore.loadRefreshToken().isEmpty())
+        String stored = sessionStore.loadRefreshToken().orElse(null);
+        invalidate("SESSION_EXPIRED");
+        long expected = epoch();
+        CompletableFuture<Void> request = (current == null && stored == null)
                 ? CompletableFuture.completedFuture(null)
                 : api.logout(current == null ? null : current.accessToken(),
-                        current == null ? sessionStore.loadRefreshToken().orElse(null) : current.refreshToken());
+                        current == null ? stored : current.refreshToken());
         return request.handle((ignored, failure) -> {
-            clearSession();
-            authError.set("");
+            if (expected == epoch()) authError.set("");
             if (failure != null) throw new CompletionException(safeException(failure, "logout"));
             return null;
         });
@@ -104,29 +134,36 @@ public final class AuthStateService {
 
     /** Called by an authenticated data transport after a 401. Concurrent callers share one refresh. */
     public CompletableFuture<String> refreshAccessToken() {
-        synchronized (refreshLock) {
+        synchronized (this) {
             if (refreshInFlight != null) return refreshInFlight;
             AuthModels.AuthSession current = session;
+            long expected = epoch();
             if (current == null || current.refreshToken() == null) {
                 return CompletableFuture.failedFuture(new ApiException(401, "SESSION_EXPIRED", "Your session has expired."));
             }
             CompletableFuture<String> started = api.refresh(new AuthDto.RefreshRequest(current.refreshToken()))
                     .thenApply(AuthMapper::refresh)
                     .thenApply(tokens -> {
+                        synchronized (this) {
+                        if (expected != generation) throw new java.util.concurrent.CancellationException();
                         AuthModels.AuthSession updated = new AuthModels.AuthSession(current.user(), tokens.accessToken(),
                                 tokens.refreshToken() == null ? current.refreshToken() : tokens.refreshToken(),
                                 tokens.tokenType(), tokens.expiresAt());
                         session = updated;
                         if (updated.refreshToken() != null) sessionStore.saveRefreshToken(updated.refreshToken());
                         return updated.accessToken();
+                        }
                     });
             refreshInFlight = started;
             started.whenComplete((ignored, failure) -> {
-                synchronized (refreshLock) {
-                    refreshInFlight = null;
-                    if (failure != null) clearSession();
+                synchronized (this) {
+                    if (refreshInFlight == started) refreshInFlight = null;
+                    if (failure != null && expected == epoch() && !isNetworkFailure(failure)) {
+                        String code = com.landrop.ui.bootstrap.BootstrapErrors.code(failure);
+                        invalidate(com.landrop.ui.bootstrap.BootstrapErrors.invalidAuth(code) ? code : "SESSION_EXPIRED");
+                    }
                 }
-                if (failure != null) setError("Your session expired. Please sign in again.");
+                if (failure != null && expected == epoch()) setError(userMessage(failure, "refresh"));
             });
             return started;
         }
@@ -147,19 +184,6 @@ public final class AuthStateService {
                         accepted.refreshToken(), accepted.tokenType(), accepted.expiresAt()));
     }
 
-    private AuthModels.AuthUser acceptRefreshedSession(AuthModels.AuthUser accepted,
-                                                       AuthModels.RefreshTokens tokens, String previousRefresh) {
-        String refreshToken = tokens.refreshToken() == null ? previousRefresh : tokens.refreshToken();
-        AuthModels.AuthSession restored = new AuthModels.AuthSession(accepted, tokens.accessToken(), refreshToken,
-                tokens.tokenType(), tokens.expiresAt());
-        session = restored;
-        sessionStore.saveRefreshToken(refreshToken);
-        user.set(accepted);
-        authenticated.set(true);
-        authError.set("");
-        return accepted;
-    }
-
     private void clearSession() {
         session = null;
         user.set(null);
@@ -175,9 +199,16 @@ public final class AuthStateService {
     private void finishOperation(Throwable failure, String operation) {
         loading.set(false);
         if (failure != null) {
-            if ("restore".equals(operation)) clearSession();
+            if ("restore".equals(operation) && !isNetworkFailure(failure)) clearSession();
             setError(userMessage(failure, operation));
         }
+    }
+
+    private synchronized void finishIfCurrent(long expected, Throwable failure, String operation) {
+        if (expected == generation) finishOperation(failure, operation);
+    }
+    private static boolean isNetworkFailure(Throwable failure) {
+        return java.util.Set.of("NETWORK_ERROR", "TIMEOUT", "SERVER_UNREACHABLE").contains(com.landrop.ui.bootstrap.BootstrapErrors.code(failure));
     }
 
     private void setError(String message) { authError.set(message); }
@@ -188,8 +219,8 @@ public final class AuthStateService {
     }
 
     private static String validateLogin(AuthModels.LoginRequest request) {
-        if (request == null || request.email() == null || request.email().isBlank()) return "Enter your email address.";
-        if (!validEmail(request.email())) return "Enter a valid email address.";
+        if (request == null || request.email() == null || request.email().isBlank()) return "Enter your email or username.";
+        if (request.email().trim().chars().anyMatch(Character::isWhitespace)) return "Enter a valid email or username.";
         if (request.password() == null || request.password().isEmpty()) return "Enter your password.";
         return null;
     }
@@ -207,6 +238,10 @@ public final class AuthStateService {
 
     private static String userMessage(Throwable failure, String operation) {
         Throwable error = safeException(failure, operation);
+        if (error instanceof ApiException api && (com.landrop.ui.bootstrap.BootstrapErrors.invalidAuth(api.code())
+                || java.util.Set.of("SERVER_UNREACHABLE", "NETWORK_ERROR", "TIMEOUT").contains(api.code()))) {
+            return com.landrop.ui.bootstrap.BootstrapErrors.message(api.code());
+        }
         if ("restore".equals(operation) || "refresh".equals(operation)) {
             return "Your session expired. Please sign in again.";
         }

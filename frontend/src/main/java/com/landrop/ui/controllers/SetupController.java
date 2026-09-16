@@ -115,9 +115,6 @@ public class SetupController {
         statusLabel.setStyle("-fx-text-fill: #4f46e5;");
 
         stateService.connectAndRegister(displayName, localPort, discHost, discPort, advHost)
-                .thenCompose(ignored -> mainApp.getCurrentDeviceService() == null
-                        ? java.util.concurrent.CompletableFuture.completedFuture(null)
-                        : mainApp.getCurrentDeviceService().register(stateService).exceptionally(error -> null))
                 .thenRun(() -> Platform.runLater(() -> {
                     statusLabel.setText("");
                     mainApp.showMainView();

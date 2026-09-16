@@ -59,6 +59,14 @@ public class MainApp extends Application {
     private volatile URI resolvedWsUri;
     private volatile URI resolvedApiUri;
     private ServerConnectionPreferences serverConnectionPreferences;
+    private com.landrop.ui.bootstrap.ClientBootstrapService bootstrap;
+    private String sessionProfile;
+    private boolean featuresMounted;
+    private Scene readyScene;
+    private String configurationError;
+    private boolean showServerConfiguration;
+    public com.landrop.ui.bootstrap.ClientBootstrapService getBootstrap() { return bootstrap; }
+
 
     // Parsed configuration
     private String configuredDisplayName = null;
@@ -83,13 +91,22 @@ public class MainApp extends Application {
         } else if (!FrontendConfig.hasExplicitWsConfiguration(named)) {
             wsUrl = FrontendConfig.resolveWsUrl(named, apiBaseUrl);
         }
-        String sessionProfile = FrontendConfig.resolveSessionProfile(named);
+        sessionProfile = FrontendConfig.resolveSessionProfile(named);
 
-        this.resolvedApiUri = URI.create(apiBaseUrl);
-        this.resolvedWsUri = URI.create(wsUrl);
+        try {
+            this.resolvedApiUri = URI.create(FrontendConfig.validateApiBaseUrl(apiBaseUrl));
+            this.resolvedWsUri = URI.create(FrontendConfig.validateWsUrl(wsUrl));
+            validateEndpointPair(resolvedApiUri, resolvedWsUri);
+        } catch (IllegalArgumentException invalid) {
+            this.resolvedApiUri = URI.create(FrontendConfig.DEFAULT_API_BASE_URL);
+            this.resolvedWsUri = URI.create(FrontendConfig.DEFAULT_WS_URL);
+            configurationError = "INVALID_SERVER_CONFIG";
+        }
         this.clientInstanceService = new ClientInstanceService();
         System.out.println("[LANDrop Client] CLIENT_STARTED");
-        initializeAuth(new HttpAuthApi(resolvedApiUri), new PreferencesSessionStore(sessionProfile));
+        // Legacy credentials had no server scope and cannot be safely migrated to an arbitrary endpoint.
+        new PreferencesSessionStore(sessionProfile).clear();
+        initializeAuth(new HttpAuthApi(resolvedApiUri), new com.landrop.ui.auth.api.ServerSessionStore(resolvedApiUri, sessionProfile));
         parseParameters();
     }
 
@@ -189,6 +206,7 @@ public class MainApp extends Application {
     @Override
     public void start(Stage stage) throws Exception {
         this.primaryStage = stage;
+        this.showServerConfiguration = false;
 
         stage.setTitle("LANDrop");
         stage.setMinWidth(MIN_WIDTH);
@@ -200,27 +218,104 @@ public class MainApp extends Application {
         stage.show();
         stage.toFront();
         stage.requestFocus();
-        authStateService.restoreSession().whenComplete((user, failure) -> Platform.runLater(() -> {
-            if (authStateService.isAuthenticated()) {
-                onAuthenticated();
-            } else {
-                showLoginView();
+        initializeBootstrap();
+        if (configurationError == null) bootstrap.start();
+        else bootstrap.configurationError(configurationError);
+    }
+
+    private void initializeBootstrap() {
+        currentDeviceService = new com.landrop.ui.device.CurrentDeviceService(resolvedApiUri, authStateService, clientInstanceService);
+        var devices = currentDeviceService;
+        var health = new ServerHealthClient(resolvedApiUri);
+        bootstrap = new com.landrop.ui.bootstrap.ClientBootstrapService(authStateService, health::check,
+                new com.landrop.ui.bootstrap.ClientBootstrapService.DeviceEnrollment() {
+                    public java.util.concurrent.CompletableFuture<com.landrop.ui.cloud.model.Domain.Device> enroll() { return devices.enroll(); }
+                    public void clear() { devices.clear(); }
+                }, new com.landrop.ui.bootstrap.ClientBootstrapService.RealtimeBinding() {
+                    public void bind(AuthModels.AuthUser user, com.landrop.ui.cloud.model.Domain.Device device) {
+                        if (serverRealtimeService != null) serverRealtimeService.dispose();
+                        var owner = bootstrap;
+                        var server = new ClientRealtimeService(resolvedWsUri, health, clientInstanceService,
+                                () -> authStateService.accessToken().orElse(null), () -> devices.currentDevice() == null ? clientInstanceService.deviceName() : devices.currentDevice().label());
+                        server.requireAuthenticatedBinding(user.id(), device.id(), authStateService::validAccessToken);
+                        serverRealtimeService = server;
+                        server.stateProperty().addListener((obs, old, next) -> {
+                            String reason = server.disconnectReasonProperty().get();
+                            Platform.runLater(() -> { if (bootstrap == owner && serverRealtimeService == server) owner.connectionChanged(next, reason); });
+                        });
+                        server.start();
+                    }
+                    public void close() {
+                        var server = serverRealtimeService;
+                        serverRealtimeService = null;
+                        if (server != null) server.dispose();
+                    }
+                });
+        var owner = bootstrap;
+        var ownerAuth = authStateService;
+        authStateService.isAuthenticatedProperty().addListener((obs, old, authenticated) -> {
+            if (!authenticated) Platform.runLater(() -> {
+                if (bootstrap == owner && !ownerAuth.isAuthenticated() && owner.state() != com.landrop.ui.bootstrap.BootstrapState.AUTH_REQUIRED
+                        && owner.state() != com.landrop.ui.bootstrap.BootstrapState.SESSION_EXPIRED) {
+                    owner.expire(ownerAuth.invalidationCode());
+                }
+            });
+        });
+        bootstrap.stateProperty().addListener((obs, old, next) -> Platform.runLater(() -> {
+            if (bootstrap != owner || owner.state() != next) return;
+            switch (next) {
+                case READY -> { if (!featuresMounted) onAuthenticated(); else if (readyScene != null) primaryStage.setScene(readyScene); }
+                case AUTH_REQUIRED -> { cleanupFeatures(); showLoginView(); }
+                case AUTHENTICATING -> { }
+                default -> showAuthLoadingView();
             }
         }));
     }
 
+    public void showServerConnectionView() {
+        showServerConfiguration = true;
+        showAuthLoadingView();
+    }
     private void showAuthLoadingView() {
-        var root = new javafx.scene.layout.StackPane();
+        if (primaryStage == null) return;
+        var root = new javafx.scene.layout.VBox(14);
+        root.setAlignment(javafx.geometry.Pos.CENTER);
         root.getStyleClass().add("auth-page");
-        var label = new javafx.scene.control.Label("Checking your LANDrop session...");
-        label.getStyleClass().add("page-subtitle");
-        root.getChildren().add(label);
+        String code = bootstrap == null ? "" : bootstrap.errorCode();
+        var bootstrapState = bootstrap == null ? com.landrop.ui.bootstrap.BootstrapState.INITIALIZING : bootstrap.state();
+        boolean editable = showServerConfiguration
+                || bootstrapState == com.landrop.ui.bootstrap.BootstrapState.SERVER_UNREACHABLE
+                || bootstrapState == com.landrop.ui.bootstrap.BootstrapState.ERROR;
+        var title = new javafx.scene.control.Label(editable ? "Connect to LANDrop Server" : "Connecting to LANDrop Server");
+        title.getStyleClass().add("card-title");
+        var label = new javafx.scene.control.Label(code.isBlank()
+                ? (editable ? "Server is unavailable. Check the address and retry." : "Checking server and restoring your session...")
+                : com.landrop.ui.bootstrap.BootstrapErrors.message(code));
+        label.setWrapText(true);
+        root.getChildren().addAll(title, label);
+        if (editable) {
+            var api = new javafx.scene.control.TextField(resolvedApiUri == null ? FrontendConfig.DEFAULT_API_BASE_URL : resolvedApiUri.toString());
+            api.setPromptText("http://server:3000/api");
+            api.setMaxWidth(440);
+            var connect = new javafx.scene.control.Button("Connect & retry");
+            connect.setOnAction(event -> {
+                try {
+                    showServerConfiguration = false;
+                    configureServerConnection(api.getText(), "");
+                } catch (IllegalArgumentException error) {
+                    showServerConfiguration = true;
+                    label.setText("Enter a valid server address, for example http://192.168.1.10:3000/api.");
+                }
+            });
+            root.getChildren().addAll(new javafx.scene.control.Label("Server address"), api, connect);
+        }
         var scene = new Scene(root, DEFAULT_WIDTH, DEFAULT_HEIGHT);
         applyStylesheets(scene);
         primaryStage.setScene(scene);
     }
 
     public void showLoginView() {
+        showServerConfiguration = false;
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/auth-login-view.fxml"));
             Parent root = loader.load();
@@ -261,23 +356,49 @@ public class MainApp extends Application {
     public URI getResolvedApiUri() { return resolvedApiUri; }
     public URI getResolvedWsUri() { return resolvedWsUri; }
 
-    /** Applies a user-edited server endpoint without rebuilding auth or LAN services. */
+    /** A server switch replaces all server-bound auth, device and transport state. */
     public synchronized void configureServerConnection(String apiUrl, String wsUrl) {
+        showServerConfiguration = false;
         String api = FrontendConfig.validateApiBaseUrl(apiUrl);
-        String ws = (wsUrl == null || wsUrl.isBlank())
-                ? FrontendConfig.deriveWsUrl(api)
-                : FrontendConfig.validateWsUrl(wsUrl);
-        resolvedApiUri = URI.create(api);
-        resolvedWsUri = URI.create(ws);
+        String ws = wsUrl == null || wsUrl.isBlank() ? FrontendConfig.deriveWsUrl(api) : FrontendConfig.validateWsUrl(wsUrl);
+        URI nextApi = URI.create(api), nextWs = URI.create(ws);
+        validateEndpointPair(nextApi, nextWs);
+        configurationError = null;
+        if (nextApi.equals(resolvedApiUri) && nextWs.equals(resolvedWsUri) && bootstrap != null) {
+            bootstrap.close();
+            cleanupFeatures();
+            initializeBootstrap();
+            showAuthLoadingView();
+            bootstrap.start();
+            return;
+        }
+        if (bootstrap != null) bootstrap.close();
+        cleanupFeatures();
+        if (authStateService != null) authStateService.invalidate("SESSION_EXPIRED");
+        resolvedApiUri = nextApi;
+        resolvedWsUri = nextWs;
         if (serverConnectionPreferences == null) serverConnectionPreferences = new ServerConnectionPreferences();
         serverConnectionPreferences.save(api, ws);
-        if (serverRealtimeService != null) {
-            serverRealtimeService.reconfigure(resolvedWsUri, new ServerHealthClient(resolvedApiUri)::check);
+        var store = new com.landrop.ui.auth.api.ServerSessionStore(resolvedApiUri, sessionProfile);
+        store.clear();
+        initializeAuth(new HttpAuthApi(resolvedApiUri), store);
+        if (clientInstanceService == null) clientInstanceService = new ClientInstanceService();
+        initializeBootstrap();
+        showAuthLoadingView();
+        bootstrap.start();
+    }
+
+    private static void validateEndpointPair(URI api, URI ws) {
+        if (!api.getHost().equalsIgnoreCase(ws.getHost())
+                || ("https".equals(api.getScheme()) && !"wss".equals(ws.getScheme()))) {
+            throw new IllegalArgumentException("API and WebSocket must use the same server host and transport security.");
         }
     }
 
     /** Called only after restore, login, or register has established a valid session. */
     public void onAuthenticated() {
+        if (bootstrap == null || !bootstrap.isReady() || featuresMounted) return;
+        featuresMounted = true;
         if (stateService != null) stateService.shutdown();
         stateService = new UIStateService();
         lanServices = new com.landrop.ui.lan.UIStateLanServices(stateService);
@@ -286,7 +407,7 @@ public class MainApp extends Application {
         if (user != null) {
             stateService.setAuthenticatedIdentity(user.displayName());
             if (configuredDisplayName == null || configuredDisplayName.isBlank() || "Peer A".equalsIgnoreCase(configuredDisplayName)) {
-                configuredDisplayName = user.displayName();
+                configuredDisplayName = clientInstanceService.deviceName();
             }
         }
 
@@ -295,17 +416,11 @@ public class MainApp extends Application {
 
         // Initialize WorkspaceStateService (Phase 16B)
         if (resolvedApiUri != null) {
-            this.currentDeviceService = new com.landrop.ui.device.CurrentDeviceService(resolvedApiUri, authStateService);
-            if (clientInstanceService == null) clientInstanceService = new ClientInstanceService();
-            this.serverRealtimeService = new ClientRealtimeService(
-                    resolvedWsUri, new ServerHealthClient(resolvedApiUri), clientInstanceService,
-                    () -> authStateService.accessToken().orElse(null),
-                    () -> currentDeviceService.currentDevice() == null ? clientInstanceService.deviceName() : currentDeviceService.currentDevice().label());
             this.realtimeGateway = new com.landrop.ui.realtime.RealtimeGateway(serverRealtimeService);
             this.transferControlService = new TransferControlService(serverRealtimeService, event -> {
                 // Transfer UI subscribes to the server-owned control state in a later composition pass.
             });
-            serverRealtimeService.start();
+
             com.landrop.ui.workspace.api.HttpWorkspaceApi wsApi =
                     new com.landrop.ui.workspace.api.HttpWorkspaceApi(resolvedApiUri, authStateService);
             this.workspaceStateService = new com.landrop.ui.workspace.services.WorkspaceStateService(wsApi, authStateService);
@@ -322,21 +437,42 @@ public class MainApp extends Application {
             });
         }
 
-        showSetupView();
+        // Server authentication is the primary client flow. Start the local LAN
+        // listener in the background, but do not block the client on Discovery:8888.
+        startLocalClientRuntime();
+    }
+
+    private void startLocalClientRuntime() {
+        if (stateService == null) {
+            showMainView();
+            return;
+        }
+        String displayName = configuredDisplayName;
+        if (displayName == null || displayName.isBlank() || "Peer A".equalsIgnoreCase(displayName)) {
+            displayName = clientInstanceService == null ? "LANDrop Client" : clientInstanceService.deviceName();
+        }
+        String finalDisplayName = displayName;
+        stateService.connectAndRegister(finalDisplayName, configuredLocalPort,
+                configuredDiscoveryHost, configuredDiscoveryPort, configuredAdvertisedHost)
+                .whenComplete((ignored, error) -> Platform.runLater(this::showMainView));
     }
 
     public void logout() {
-        if (realtimeGateway != null) {
-            try { realtimeGateway.close(); } catch (Exception ignored) { }
-            realtimeGateway = null;
-        }
-        if (serverRealtimeService != null) {
-            try { serverRealtimeService.close(); } catch (Exception ignored) { }
-            serverRealtimeService = null;
-        }
+        if (bootstrap != null) bootstrap.logout();
+        cleanupFeatures();
+        showLoginView();
+    }
+
+    private void cleanupFeatures() {
+        featuresMounted = false;
+        readyScene = null;
         if (transferControlService != null) {
             try { transferControlService.close(); } catch (Exception ignored) { }
             transferControlService = null;
+        }
+        if (realtimeGateway != null) {
+            try { realtimeGateway.close(); } catch (Exception ignored) { }
+            realtimeGateway = null;
         }
         if (fileManagerStateService != null) {
             try { fileManagerStateService.close(); } catch (Exception ignored) { }
@@ -355,15 +491,16 @@ public class MainApp extends Application {
         }
         this.workspaceStateService = null;
         this.lanServices = null;
-        this.currentDeviceService = null;
+
         if (stateService != null) stateService.shutdown();
-        authStateService.logout().whenComplete((ignored, failure) -> Platform.runLater(this::showLoginView));
+
     }
 
     /**
      * Displays the initial peer setup and network connection view.
      */
     public void showSetupView() {
+        if (bootstrap == null || !bootstrap.isReady()) return;
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/setup-view.fxml"));
             Parent root = loader.load();
@@ -382,6 +519,7 @@ public class MainApp extends Application {
 
             Scene scene = new Scene(root, DEFAULT_WIDTH, DEFAULT_HEIGHT);
             applyStylesheets(scene);
+            readyScene = scene;
             primaryStage.setScene(scene);
         } catch (IOException e) {
             e.printStackTrace();
@@ -392,6 +530,7 @@ public class MainApp extends Application {
      * Transitions from setup to the 3-section Main Dashboard interface.
      */
     public void showMainView() {
+        if (bootstrap == null || !bootstrap.isReady()) return;
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/main-view.fxml"));
             Parent root = loader.load();
@@ -401,6 +540,7 @@ public class MainApp extends Application {
 
             Scene scene = new Scene(root, DEFAULT_WIDTH, DEFAULT_HEIGHT);
             applyStylesheets(scene);
+            readyScene = scene;
             primaryStage.setScene(scene);
             primaryStage.show();
             primaryStage.toFront();
@@ -421,6 +561,7 @@ public class MainApp extends Application {
 
     @Override
     public void stop() {
+        if (bootstrap != null) bootstrap.close();
         if (realtimeGateway != null) {
             try { realtimeGateway.close(); } catch (Exception ignored) { }
         }

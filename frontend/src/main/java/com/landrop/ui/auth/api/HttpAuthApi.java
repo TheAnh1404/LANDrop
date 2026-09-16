@@ -47,7 +47,7 @@ public final class HttpAuthApi implements AuthApi {
     }
 
     @Override public CompletableFuture<AuthDto.AuthResponse> login(AuthDto.LoginRequest request) {
-        return post("login", AuthJson.write(request), null).thenApply(AuthJson::readAuthResponse);
+        return post("login", AuthJson.write(Map.of("identifier", request.email(), "password", request.password())), null).thenApply(AuthJson::readAuthResponse);
     }
 
     @Override public CompletableFuture<AuthDto.RefreshResponse> refresh(AuthDto.RefreshRequest request) {
@@ -87,7 +87,7 @@ public final class HttpAuthApi implements AuthApi {
                         String code = cause instanceof HttpTimeoutException ? "TIMEOUT" : "NETWORK_ERROR";
                         throw new ApiException(0, code, "The authentication service is unavailable", cause);
                     }
-                    if (response.statusCode() != 200 && response.statusCode() != 204) {
+                    if (response.statusCode() != 200 && response.statusCode() != 201 && response.statusCode() != 204) {
                         throw parseError(response);
                     }
                     if (response.statusCode() == 204) return "{\"data\":{}}";
@@ -104,6 +104,9 @@ public final class HttpAuthApi implements AuthApi {
         try {
             JsonNode root = JSON.readTree(response.body());
             JsonNode error = root == null ? null : root.get("error");
+            if (root != null && root.path("code").isTextual()) {
+                return new ApiException(response.statusCode(), root.path("code").asText(), "Authentication request failed.");
+            }
             if (error != null && error.isObject() && error.path("code").isTextual()
                     && error.path("message").isTextual()) {
                 return new ApiException(response.statusCode(), error.path("code").asText(),

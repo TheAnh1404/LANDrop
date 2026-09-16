@@ -62,6 +62,16 @@ public final class ClientRealtimeService implements AutoCloseable {
     private volatile ScheduledFuture<?> heartbeatTask;
     private volatile ScheduledFuture<?> handshakeTimeout;
     private volatile int reconnectAttempt;
+    private long connectionGeneration;
+    private volatile String expectedUserId;
+    private volatile String enrolledDeviceId;
+    private volatile Supplier<CompletableFuture<String>> tokenProvider;
+
+    public void requireAuthenticatedBinding(String userId, String deviceId, Supplier<CompletableFuture<String>> provider) {
+        expectedUserId = Objects.requireNonNull(userId);
+        enrolledDeviceId = Objects.requireNonNull(deviceId);
+        tokenProvider = Objects.requireNonNull(provider);
+    }
 
     public ClientRealtimeService(URI wsUri, ServerHealthClient health, ClientInstanceService instance,
             Supplier<String> tokenSupplier, Supplier<String> deviceNameSupplier) {
@@ -134,13 +144,27 @@ public final class ClientRealtimeService implements AutoCloseable {
     }
 
     private synchronized void connect(boolean manual) {
-        if (explicitlyClosed.get() || state() == ConnectionState.CONNECTING || state() == ConnectionState.HANDSHAKING || state() == ConnectionState.CONNECTED) return;
+        if (explicitlyClosed.get() || state() == ConnectionState.CONNECTING || state() == ConnectionState.HANDSHAKING || state() == ConnectionState.CONNECTED || (state() == ConnectionState.RECONNECTING && transport != null)) return;
+        long expected = ++connectionGeneration;
         update(manual || reconnectAttempt > 0 ? ConnectionState.RECONNECTING : ConnectionState.CONNECTING);
         log("WS_CONNECTING");
         health.check().whenComplete((ignored, healthFailure) -> {
-            if (explicitlyClosed.get()) return;
+            if (explicitlyClosed.get() || expected != connectionGeneration) return;
             if (healthFailure != null) { log("SERVER_HEALTH_FAILED"); log("HEALTH_CHECK_FAILED"); update(ConnectionState.ERROR); scheduleReconnect(); return; }
-            log("SERVER_HEALTH_OK"); log("HEALTH_CHECK_OK"); openSocket();
+            log("SERVER_HEALTH_OK"); log("HEALTH_CHECK_OK");
+            CompletableFuture<String> token = tokenProvider == null ? CompletableFuture.completedFuture(tokenSupplier.get()) : tokenProvider.get();
+            token.whenComplete((access, failure) -> {
+                synchronized (this) {
+                    if (explicitlyClosed.get() || expected != connectionGeneration) return;
+                    if (failure != null) {
+                        String code = com.landrop.ui.bootstrap.BootstrapErrors.code(failure);
+                        if (com.landrop.ui.bootstrap.BootstrapErrors.invalidAuth(code)) markExplicitDisconnect(code, "Sign in again.");
+                        else { update(ConnectionState.ERROR); scheduleReconnect(); }
+                        return;
+                    }
+                    openSocket();
+                }
+            });
         });
     }
     private synchronized void openSocket() {
@@ -165,6 +189,7 @@ public final class ClientRealtimeService implements AutoCloseable {
         hello.put("protocolVersion", PROTOCOL_VERSION);
         hello.put("clientVersion", clientVersion());
         hello.put("clientInstanceId", instance.clientInstanceId());
+        if (enrolledDeviceId != null) hello.put("deviceId", enrolledDeviceId);
         hello.put("deviceName", safeDeviceName());
         hello.put("platform", instance.platform());
         hello.put("osVersion", instance.osVersion());
@@ -205,10 +230,19 @@ public final class ClientRealtimeService implements AutoCloseable {
         if (!heartbeatAck && request == null && !delivered) log("UNKNOWN_SERVER_EVENT");
     }
     private void welcome(RealtimeEnvelope event) {
+        if (state() != ConnectionState.HANDSHAKING) return;
         int version = event.payload().path("protocolVersion").asInt(-1);
         if (version != PROTOCOL_VERSION) {
             markExplicitDisconnect("PROTOCOL_VERSION_UNSUPPORTED", "Unsupported server protocol version: " + version);
             update(ConnectionState.ERROR); closeTransport(); return;
+        }
+        if (enrolledDeviceId != null && (!event.payload().path("authenticated").asBoolean(false)
+                || !expectedUserId.equals(event.payload().path("userId").asText())
+                || !enrolledDeviceId.equals(event.payload().path("deviceId").asText())
+                || event.payload().path("sessionId").asText().isBlank()
+                || event.payload().path("connectionId").asText().isBlank())) {
+            markExplicitDisconnect("AUTH_BINDING_REQUIRED", "Authenticated session and device binding required.");
+            closeTransport(); return;
         }
         cancel(handshakeTimeout);
         connectionId.set(event.payload().path("connectionId").asText(""));
@@ -228,6 +262,12 @@ public final class ClientRealtimeService implements AutoCloseable {
     private void onSocketLost(RealtimeTransport source, Throwable error) { onSocketLost(source, error, ""); }
     private synchronized void onSocketLost(RealtimeTransport source, Throwable error, String closeReason) {
         if (source != transport) return;
+        Throwable cause = error;
+        while (cause instanceof CompletionException && cause.getCause() != null) cause = cause.getCause();
+        if (cause instanceof java.net.http.WebSocketHandshakeException handshake
+                && (handshake.getResponse().statusCode() == 401 || handshake.getResponse().statusCode() == 403)) {
+            markExplicitDisconnect("SESSION_EXPIRED", "Sign in again.");
+        }
         classifyCloseReason(closeReason);
         closeTransport(); stopTimers(); failPending(error);
         if (explicitlyClosed.get()) { update(ConnectionState.DISCONNECTED); return; }
@@ -272,7 +312,7 @@ public final class ClientRealtimeService implements AutoCloseable {
     }
     int pendingRequestCount() { return pending.size(); }
     private void failPending(Throwable error) { pending.values().forEach(future -> future.completeExceptionally(error)); pending.clear(); }
-    private void stopTimers() { cancel(heartbeatTask); heartbeatTask = null; cancel(handshakeTimeout); handshakeTimeout = null; }
+    private void stopTimers() { cancel(reconnectTask); reconnectTask = null; cancel(heartbeatTask); heartbeatTask = null; cancel(handshakeTimeout); handshakeTimeout = null; }
     private static void cancel(ScheduledFuture<?> task) { if (task != null) task.cancel(false); }
     private void closeTransport() { RealtimeTransport current = transport; transport = null; if (current != null) current.close(); }
     private void markExplicitDisconnect(String code, String message) {
@@ -302,7 +342,7 @@ public final class ClientRealtimeService implements AutoCloseable {
     }
     private static final String[] TERMINAL_CODES = {
             "ADMIN_DISCONNECT", "SERVER_SHUTDOWN", "SESSION_REVOKED",
-            "ACCOUNT_DISABLED", "PROTOCOL_VERSION_UNSUPPORTED"
+            "ACCOUNT_DISABLED", "PROTOCOL_VERSION_UNSUPPORTED", "SESSION_EXPIRED", "UNAUTHENTICATED", "UNAUTHORIZED", "AUTH_BINDING_REQUIRED", "DEVICE_CONFLICT"
     };
     // This is a state model, not a scene node. Controllers marshal their UI work to the FX thread.
     // Keeping it synchronous also makes WELCOME atomically establish CONNECTED before dispatching subscribers.
@@ -310,5 +350,6 @@ public final class ClientRealtimeService implements AutoCloseable {
     private String safeDeviceName() { String name = deviceNameSupplier.get(); return name == null || name.isBlank() ? instance.defaultDeviceName() : name.trim(); }
     private static String clientVersion() { Package p = ClientRealtimeService.class.getPackage(); return p.getImplementationVersion() == null ? FrontendConfig.CLIENT_VERSION : p.getImplementationVersion(); }
     private static void log(String event) { System.out.println("[LANDrop Client] " + event); }
-    @Override public synchronized void close() { explicitlyClosed.set(true); cancel(reconnectTask); reconnectTask = null; stopTimers(); closeTransport(); failPending(new CancellationException("Realtime client closed.")); update(ConnectionState.DISCONNECTED); }
+    @Override public synchronized void close() { connectionGeneration++; explicitlyClosed.set(true); cancel(reconnectTask); reconnectTask = null; stopTimers(); closeTransport(); failPending(new CancellationException("Realtime client closed.")); update(ConnectionState.DISCONNECTED); }
+    public synchronized void dispose() { close(); scheduler.shutdownNow(); subscribers.clear(); }
 }

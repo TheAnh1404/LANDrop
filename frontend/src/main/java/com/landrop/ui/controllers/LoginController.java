@@ -26,20 +26,27 @@ public final class LoginController {
         this.mainApp = mainApp;
         this.authState = authState;
         errorLabel.setText(authState.authError());
-        authState.authErrorProperty().addListener((obs, oldValue, newValue) ->
-                Platform.runLater(() -> errorLabel.setText(newValue == null ? "" : newValue)));
+        if (mainApp.getBootstrap() != null && !mainApp.getBootstrap().errorCode().isBlank()
+                && !"ERROR".equals(mainApp.getBootstrap().errorCode())) {
+            errorLabel.setText(com.landrop.ui.bootstrap.BootstrapErrors.message(mainApp.getBootstrap().errorCode()));
+        }
     }
 
     @FXML private void onSubmit() {
         submitButton.setDisable(true);
         submitButton.setText("Signing in...");
-        authState.login(new AuthModels.LoginRequest(emailField.getText(), passwordField.getText()))
+        registerLink.setDisable(true);
+        var request = new AuthModels.LoginRequest(emailField.getText(), passwordField.getText());
+        passwordField.clear();
+        var operation = mainApp.getBootstrap() == null ? authState.login(request) : mainApp.getBootstrap().login(request);
+        operation
                 .whenComplete((user, failure) -> Platform.runLater(() -> {
                     submitButton.setDisable(false);
                     submitButton.setText("Sign in");
-                    if (failure == null) mainApp.onAuthenticated();
+                    registerLink.setDisable(false);
+                    errorLabel.setText(authState.authError());
                 }));
     }
 
-    @FXML private void onRegister() { mainApp.showRegisterView(); }
+    @FXML private void onRegister() { mainApp.showServerConnectionView(); }
 }
