@@ -2,6 +2,18 @@
 
 A peer-to-peer (P2P) desktop application for local network file sharing and real-time messaging built with Java 21, JavaFX 21, and Maven multi-module architecture.
 
+## LANDrop Client development startup
+
+With Node.js 20+ and a JDK installed, start the native JavaFX client from the repository root:
+
+```bash
+npm run client
+```
+
+The command loads only client-facing `LANDROP_*` settings from `.env`/`.env.local`, builds the frontend dependencies, and opens the LANDrop native window. It does not start the server. If the configured server is offline, the client still opens its Server Unreachable screen so the address can be changed or retried. Press `Ctrl+C` in the same terminal to close the UI process tree.
+
+Optional commands: `npm run client:ui` skips the preparation build, and `npm run client:test` checks the launcher behavior without opening a window. The startup build deliberately skips tests; use Maven test commands separately in CI or during development.
+
 ---
 
 ## 🚀 Hướng Dẫn Cách Chạy (Quick Start Guide)
