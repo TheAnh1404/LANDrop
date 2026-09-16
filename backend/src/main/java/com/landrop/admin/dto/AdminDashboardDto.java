@@ -18,6 +18,8 @@ public record AdminDashboardDto(
     long activeSessions,
     long totalSessions,
     long systemAdmins,
+    long registeredDevices,
+    long workspaceCount,
     long activeTransfers,
     boolean requiresRestart,
     @JsonFormat(shape = JsonFormat.Shape.STRING)

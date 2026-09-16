@@ -123,6 +123,8 @@ public class AdminHttpServer {
         server.createContext("/api/admin/dashboard", this::handleDashboard);
         server.createContext("/api/admin/users", this::handleUsers);
         server.createContext("/api/admin/users/", this::handleUsers);
+        server.createContext("/api/admin/workspaces", this::handleWorkspaces);
+        server.createContext("/api/admin/workspaces/", this::handleWorkspaces);
         server.createContext("/api/admin/sessions", this::handleSessions);
         server.createContext("/api/admin/sessions/", this::handleSessions);
         server.createContext("/api/admin/clients", this::handleClients);
@@ -272,7 +274,17 @@ public class AdminHttpServer {
                         sendJsonResponse(exchange, 200, userOpt.get());
                         return;
                     }
-                    sendMethodNotAllowed(exchange, "GET");
+                    if ("PATCH".equals(method) || "PUT".equals(method)) {
+                        Map<String, Object> updates = readJsonObject(exchange);
+                        sendJsonResponse(exchange, 200, service.updateUser(targetUserId, adminClaims.userId(), updates, adminClaims.username()));
+                        return;
+                    }
+                    if ("DELETE".equals(method)) {
+                        boolean deleted = service.deleteUser(targetUserId, adminClaims.userId(), adminClaims.username());
+                        sendJsonResponse(exchange, 200, Map.of("success", deleted, "userId", targetUserId));
+                        return;
+                    }
+                    sendMethodNotAllowed(exchange, "GET, PATCH, PUT, DELETE");
                     return;
                 }
 
@@ -302,7 +314,84 @@ public class AdminHttpServer {
     }
 
     // =========================================================================
-    // 4. Session Management APIs
+    // 4. Workspace (group) management APIs
+    // =========================================================================
+
+    private void handleWorkspaces(HttpExchange exchange) throws IOException {
+        if (handleCorsPreflight(exchange)) return;
+        String path = exchange.getRequestURI().getPath();
+        String method = exchange.getRequestMethod().toUpperCase(Locale.ROOT);
+        final String root = "/api/admin/workspaces";
+
+        try {
+            JwtClaims adminClaims = authMiddleware.requireSystemAdmin(exchange);
+            if (root.equals(path) || (root + "/").equals(path)) {
+                if ("GET".equals(method)) {
+                    String search = parseQueryParams(exchange.getRequestURI().getQuery()).get("search");
+                    sendJsonResponse(exchange, 200, service.listWorkspaces(search));
+                    return;
+                }
+                if ("POST".equals(method)) {
+                    sendJsonResponse(exchange, 201, service.createWorkspace(readJsonObject(exchange), adminClaims.username()));
+                    return;
+                }
+                sendMethodNotAllowed(exchange, "GET, POST");
+                return;
+            }
+
+            String[] parts = path.substring((root + "/").length()).split("/");
+            UUID workspaceId = parseUuid(parts[0], "workspace UUID");
+            if (parts.length == 1) {
+                if ("PATCH".equals(method) || "PUT".equals(method)) {
+                    sendJsonResponse(exchange, 200, service.updateWorkspace(workspaceId, readJsonObject(exchange), adminClaims.username()));
+                    return;
+                }
+                if ("DELETE".equals(method)) {
+                    boolean deleted = service.deleteWorkspace(workspaceId, adminClaims.username());
+                    sendJsonResponse(exchange, 200, Map.of("success", deleted, "workspaceId", workspaceId));
+                    return;
+                }
+                sendMethodNotAllowed(exchange, "PATCH, PUT, DELETE");
+                return;
+            }
+
+            if (!"members".equalsIgnoreCase(parts[1])) {
+                sendJsonResponse(exchange, 404, new ErrorResponse("Not Found", "Endpoint not found", 404));
+                return;
+            }
+            if (parts.length == 2) {
+                if ("GET".equals(method)) {
+                    sendJsonResponse(exchange, 200, service.listWorkspaceMembers(workspaceId));
+                    return;
+                }
+                if ("POST".equals(method)) {
+                    sendJsonResponse(exchange, 200, service.upsertWorkspaceMember(workspaceId, readJsonObject(exchange), adminClaims.username()));
+                    return;
+                }
+                sendMethodNotAllowed(exchange, "GET, POST");
+                return;
+            }
+
+            UUID memberUserId = parseUuid(parts[2], "member user UUID");
+            if ("PATCH".equals(method) || "PUT".equals(method)) {
+                Map<String, Object> body = new HashMap<>(readJsonObject(exchange));
+                body.put("userId", memberUserId.toString());
+                sendJsonResponse(exchange, 200, service.upsertWorkspaceMember(workspaceId, body, adminClaims.username()));
+                return;
+            }
+            if ("DELETE".equals(method)) {
+                boolean removed = service.removeWorkspaceMember(workspaceId, memberUserId, adminClaims.username());
+                sendJsonResponse(exchange, 200, Map.of("success", removed, "workspaceId", workspaceId, "userId", memberUserId));
+                return;
+            }
+            sendMethodNotAllowed(exchange, "PATCH, PUT, DELETE");
+        } catch (Exception e) {
+            handleError(exchange, e);
+        }
+    }
+
+    // =========================================================================
+    // 5. Session Management APIs
     // =========================================================================
 
     private void handleSessions(HttpExchange exchange) throws IOException {
@@ -519,6 +608,19 @@ public class AdminHttpServer {
         try (InputStream is = exchange.getRequestBody()) {
             return is.readNBytes(MAX_BODY_BYTES);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readJsonObject(HttpExchange exchange) throws IOException {
+        byte[] body = readRequestBody(exchange);
+        if (body.length == 0) throw new ValidationException("Request body cannot be empty");
+        Map<String, Object> value = objectMapper.readValue(body, Map.class);
+        return value != null ? value : Map.of();
+    }
+
+    private UUID parseUuid(String value, String label) {
+        try { return UUID.fromString(value); }
+        catch (IllegalArgumentException e) { throw new ValidationException("Invalid " + label + " format"); }
     }
 
     private void sendJsonResponse(HttpExchange exchange, int statusCode, Object body) throws IOException {

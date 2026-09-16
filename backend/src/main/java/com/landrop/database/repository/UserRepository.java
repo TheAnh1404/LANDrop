@@ -171,6 +171,17 @@ public class UserRepository {
         }
     }
 
+    public boolean updateDisplayName(UUID id, String displayName) throws SQLException {
+        String sql = "UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?";
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, displayName);
+            ps.setTimestamp(2, Timestamp.from(Instant.now()));
+            ps.setObject(3, id);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
     public long countAll() throws SQLException {
         String sql = "SELECT COUNT(*) FROM users";
         try (Connection conn = databaseManager.getConnection();

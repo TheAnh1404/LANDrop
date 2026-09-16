@@ -249,12 +249,13 @@
 
   <!-- Navigation Tabs -->
   <nav class="nav-tabs">
-    <div class="nav-tab active" onclick="switchTab('dashboard')">Dashboard</div>
-    <div class="nav-tab" onclick="switchTab('users')">Users</div>
-    <div class="nav-tab" onclick="switchTab('clients')">Connected Clients</div>
-    <div class="nav-tab" onclick="switchTab('sessions')">Sessions</div>
-    <div class="nav-tab" onclick="switchTab('server')">Server & Network</div>
-    <div class="nav-tab" onclick="switchTab('logs')">Operational Logs</div>
+    <div class="nav-tab active" data-tab="dashboard" onclick="switchTab('dashboard')">Dashboard</div>
+    <div class="nav-tab" data-tab="users" onclick="switchTab('users')">Users</div>
+    <div class="nav-tab" data-tab="workspaces" onclick="switchTab('workspaces')">Groups & Data</div>
+    <div class="nav-tab" data-tab="clients" onclick="switchTab('clients')">Connected Clients</div>
+    <div class="nav-tab" data-tab="sessions" onclick="switchTab('sessions')">Sessions</div>
+    <div class="nav-tab" data-tab="server" onclick="switchTab('server')">Server & Network</div>
+    <div class="nav-tab" data-tab="logs" onclick="switchTab('logs')">Operational Logs</div>
   </nav>
 
   <!-- Main Content Area -->
@@ -291,6 +292,11 @@
           <span class="kpi-label">Active Transfers</span>
           <span class="kpi-value" id="kpi-transfers">0</span>
           <span class="kpi-sub">File Coordination Plane</span>
+        </div>
+        <div class="card-kpi">
+          <span class="kpi-label">Groups / Workspaces</span>
+          <span class="kpi-value" id="kpi-workspaces">0</span>
+          <span class="kpi-sub" id="kpi-devices">0 registered devices</span>
         </div>
       </div>
 
@@ -344,7 +350,41 @@
       </div>
     </div>
 
-    <!-- 3. CONNECTED CLIENTS TAB -->
+    <!-- 3. GROUPS & DATABASE TAB -->
+    <div id="tab-workspaces" class="tab-content">
+      <div class="section-card">
+        <div class="card-header">
+          <span class="card-title">Group / Workspace Data Management</span>
+          <span style="font-size:0.8rem; color:var(--text-muted);">Changes are applied to the database immediately and recorded in the audit log.</span>
+        </div>
+        <div class="card-body">
+          <div class="toolbar">
+            <input type="text" id="workspace-search" placeholder="Search group name or slug..." style="width:250px" onkeyup="if(event.key==='Enter')loadWorkspaces()">
+            <button class="btn btn-primary btn-sm" onclick="createWorkspace()">Create Group</button>
+            <button class="btn btn-secondary btn-sm" onclick="loadWorkspaces()">Refresh</button>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead><tr><th>Group</th><th>Slug</th><th>Owner</th><th>Members</th><th>Updated</th><th>Actions</th></tr></thead>
+              <tbody id="workspaces-tbody"><tr><td colspan="6" class="empty-state">Loading groups...</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+      <div class="section-card" id="workspace-members-card" style="display:none">
+        <div class="card-header"><span class="card-title" id="workspace-members-title">Group Members</span><button class="btn btn-secondary btn-sm" onclick="closeWorkspaceMembers()">Close</button></div>
+        <div class="card-body">
+          <div class="toolbar">
+            <input type="text" id="member-user-id" placeholder="User UUID" style="width:330px">
+            <select id="member-role"><option value="MEMBER">MEMBER</option><option value="ADMIN">ADMIN</option><option value="OWNER">OWNER</option></select>
+            <button class="btn btn-primary btn-sm" onclick="saveWorkspaceMember()">Add / Update Member</button>
+          </div>
+          <div class="table-container"><table><thead><tr><th>User</th><th>Display Name</th><th>Role</th><th>Joined</th><th>Actions</th></tr></thead><tbody id="workspace-members-tbody"></tbody></table></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. CONNECTED CLIENTS TAB -->
     <div id="tab-clients" class="tab-content">
       <div class="section-card">
         <div class="card-header">
@@ -558,6 +598,11 @@
     let currentTab = 'dashboard';
     let authToken = localStorage.getItem('landrop_admin_token') || '';
     let currentAdminUser = JSON.parse(localStorage.getItem('landrop_admin_user') || 'null');
+    let selectedWorkspace = null;
+
+    function escapeHtml(value) {
+      return String(value ?? '').replace(/[&<>'"]/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[ch]));
+    }
 
     function checkAuth() {
       if (!authToken || !currentAdminUser) {
@@ -637,9 +682,7 @@
 
     function switchTab(tab) {
       currentTab = tab;
-      document.querySelectorAll('.nav-tab').forEach((el, idx) => {
-        el.classList.toggle('active', el.textContent.toLowerCase().includes(tab.substring(0, 4)));
-      });
+      document.querySelectorAll('.nav-tab').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
       document.querySelectorAll('.tab-content').forEach(el => {
         el.classList.toggle('active', el.id === 'tab-' + tab);
       });
@@ -649,6 +692,7 @@
     function refreshCurrentTab() {
       if (currentTab === 'dashboard') loadDashboard();
       else if (currentTab === 'users') loadUsers();
+      else if (currentTab === 'workspaces') loadWorkspaces();
       else if (currentTab === 'clients') loadClients();
       else if (currentTab === 'sessions') loadSessions();
       else if (currentTab === 'server') { loadNetworkInterfaces(); loadConfig(); }
@@ -666,6 +710,8 @@
         document.getElementById('kpi-users').textContent = d.registeredUsers;
         document.getElementById('kpi-admin-users').textContent = d.systemAdmins + ' System Admins';
         document.getElementById('kpi-transfers').textContent = d.activeTransfers;
+        document.getElementById('kpi-workspaces').textContent = d.workspaceCount ?? 0;
+        document.getElementById('kpi-devices').textContent = (d.registeredDevices ?? 0) + ' registered devices';
 
         const banner = document.getElementById('restart-banner');
         if (d.requiresRestart) {
@@ -721,7 +767,7 @@
 
           return `
             <tr>
-              <td><strong>${u.username}</strong> ${isCurrent ? '<span style="font-size:0.7rem; color:var(--accent-primary);">(You)</span>' : ''}</td>
+              <td><strong>${u.username}</strong> ${isCurrent ? '<span style="font-size:0.7rem; color:var(--accent-primary);">(You)</span>' : ''}<br><small style="color:var(--text-muted);"><code title="Copy this UUID when assigning group owners or members">${u.id}</code></small></td>
               <td>${u.email}</td>
               <td>${roleBadge}</td>
               <td>${statusBadge}</td>
@@ -729,7 +775,9 @@
               <td>${new Date(u.createdAt).toLocaleDateString()}</td>
               <td style="display:flex; gap:0.4rem;">
                 ${toggleAction}
+                <button class="btn btn-secondary btn-sm" onclick="editUser('${u.id}', '${escapeHtml(u.displayName || u.username)}', '${u.systemRole}')">Edit</button>
                 <button class="btn btn-secondary btn-sm" onclick="revokeUserSessions('${u.id}', '${u.username}')" title="Revoke all active sessions">Revoke Sessions</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteUser('${u.id}', '${u.username}')" ${isCurrent ? 'disabled title="Cannot delete your own admin account"' : ''}>Delete</button>
               </td>
             </tr>
           `;
@@ -767,6 +815,100 @@
       } catch (err) {
         alert(err.message);
       }
+    }
+
+    async function editUser(userId, currentName, currentRole) {
+      const displayName = prompt('Display name:', currentName);
+      if (displayName === null) return;
+      const systemRole = prompt('System role (USER or SYSTEM_ADMIN):', currentRole);
+      if (systemRole === null) return;
+      try {
+        await apiFetch(`/api/admin/users/${userId}`, { method: 'PATCH', body: { displayName, systemRole } });
+        loadUsers();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function deleteUser(userId, username) {
+      if (!confirm(`Permanently delete user '${username}' and related data? This cannot be undone.`)) return;
+      try {
+        await apiFetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
+        loadUsers(); loadDashboard();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function loadWorkspaces() {
+      const tbody = document.getElementById('workspaces-tbody');
+      try {
+        const search = document.getElementById('workspace-search').value.trim();
+        const groups = await apiFetch(`/api/admin/workspaces?search=${encodeURIComponent(search)}`);
+        if (!groups || groups.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="6" class="empty-state">No groups found</td></tr>';
+          return;
+        }
+        tbody.innerHTML = groups.map(w => `
+          <tr>
+            <td><strong>${escapeHtml(w.name)}</strong><br><small style="color:var(--text-muted)">${escapeHtml(w.description || '')}</small></td>
+            <td><code>${escapeHtml(w.slug)}</code></td><td>${escapeHtml(w.ownerUsername || w.ownerId)}</td>
+            <td>${w.memberCount}</td><td>${new Date(w.updatedAt).toLocaleString()}</td>
+            <td style="display:flex;gap:0.4rem"><button class="btn btn-secondary btn-sm" onclick="openWorkspaceMembers('${w.id}', '${escapeHtml(w.name)}')">Members</button><button class="btn btn-secondary btn-sm" onclick="editWorkspace('${w.id}', '${escapeHtml(w.name)}', '${escapeHtml(w.description || '')}')">Edit</button><button class="btn btn-danger btn-sm" onclick="deleteWorkspace('${w.id}', '${escapeHtml(w.name)}')">Delete</button></td>
+          </tr>`).join('');
+      } catch (err) { tbody.innerHTML = `<tr><td colspan="6" class="empty-state" style="color:var(--accent-danger)">Error: ${escapeHtml(err.message)}</td></tr>`; }
+    }
+
+    async function createWorkspace() {
+      const name = prompt('Group name:'); if (!name) return;
+      const ownerId = prompt('Owner user UUID:'); if (!ownerId) return;
+      const description = prompt('Description (optional):', '') ?? '';
+      const slug = prompt('Slug (optional; generated from name when blank):', '') ?? '';
+      try {
+        await apiFetch('/api/admin/workspaces', { method: 'POST', body: { name, ownerId, description, slug } });
+        loadWorkspaces(); loadDashboard();
+      } catch (err) { alert(err.message); }
+    }
+
+    async function editWorkspace(id, currentName, currentDescription) {
+      const name = prompt('Group name:', currentName); if (name === null) return;
+      const description = prompt('Description:', currentDescription); if (description === null) return;
+      try { await apiFetch(`/api/admin/workspaces/${id}`, { method: 'PATCH', body: { name, description } }); loadWorkspaces(); }
+      catch (err) { alert(err.message); }
+    }
+
+    async function deleteWorkspace(id, name) {
+      if (!confirm(`Permanently delete group '${name}' and its related records? This cannot be undone.`)) return;
+      try { await apiFetch(`/api/admin/workspaces/${id}`, { method: 'DELETE' }); closeWorkspaceMembers(); loadWorkspaces(); loadDashboard(); }
+      catch (err) { alert(err.message); }
+    }
+
+    async function openWorkspaceMembers(id, name) {
+      selectedWorkspace = id;
+      document.getElementById('workspace-members-card').style.display = 'block';
+      document.getElementById('workspace-members-title').textContent = `Members: ${name}`;
+      await loadWorkspaceMembers();
+    }
+    function closeWorkspaceMembers() { selectedWorkspace = null; document.getElementById('workspace-members-card').style.display = 'none'; }
+    async function loadWorkspaceMembers() {
+      if (!selectedWorkspace) return;
+      const tbody = document.getElementById('workspace-members-tbody');
+      try {
+        const members = await apiFetch(`/api/admin/workspaces/${selectedWorkspace}/members`);
+        tbody.innerHTML = members.length ? members.map(m => `<tr><td><code>${m.userId}</code><br><small>${escapeHtml(m.username)}</small></td><td>${escapeHtml(m.displayName || '')}</td><td><select onchange="changeWorkspaceMemberRole('${m.userId}', this.value)"><option ${m.role==='MEMBER'?'selected':''}>MEMBER</option><option ${m.role==='ADMIN'?'selected':''}>ADMIN</option><option ${m.role==='OWNER'?'selected':''}>OWNER</option></select></td><td>${new Date(m.joinedAt).toLocaleString()}</td><td><button class="btn btn-danger btn-sm" onclick="removeWorkspaceMember('${m.userId}', '${escapeHtml(m.username)}')">Remove</button></td></tr>`).join('') : '<tr><td colspan="5" class="empty-state">No members</td></tr>';
+      } catch (err) { tbody.innerHTML = `<tr><td colspan="5" class="empty-state" style="color:var(--accent-danger)">${escapeHtml(err.message)}</td></tr>`; }
+    }
+    async function saveWorkspaceMember() {
+      const userId = document.getElementById('member-user-id').value.trim();
+      const role = document.getElementById('member-role').value;
+      if (!userId) return alert('Enter a user UUID.');
+      try { await apiFetch(`/api/admin/workspaces/${selectedWorkspace}/members`, { method: 'POST', body: { userId, role } }); document.getElementById('member-user-id').value = ''; loadWorkspaceMembers(); loadWorkspaces(); }
+      catch (err) { alert(err.message); }
+    }
+    async function changeWorkspaceMemberRole(userId, role) {
+      try { await apiFetch(`/api/admin/workspaces/${selectedWorkspace}/members/${userId}`, { method: 'PATCH', body: { role } }); loadWorkspaceMembers(); }
+      catch (err) { alert(err.message); loadWorkspaceMembers(); }
+    }
+    async function removeWorkspaceMember(userId, username) {
+      if (!confirm(`Remove ${username} from this group?`)) return;
+      try { await apiFetch(`/api/admin/workspaces/${selectedWorkspace}/members/${userId}`, { method: 'DELETE' }); loadWorkspaceMembers(); loadWorkspaces(); }
+      catch (err) { alert(err.message); }
     }
 
     async function loadClients() {

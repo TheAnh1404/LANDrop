@@ -341,6 +341,75 @@ public class AdminControlCenterTest {
         assertTrue(activeUser.isActive());
     }
 
+    @Test
+    @DisplayName("03A.25: System admin can manage groups and memberships through the control service")
+    void testWorkspaceDatabaseManagement() throws Exception {
+        ServerConfig config = new ServerConfig("127.0.0.1", 0, 0, 1, 1000L, 3000L, "test", "INFO");
+        bootstrap = new ServerBootstrap(config);
+        bootstrap.start();
+        org.junit.jupiter.api.Assumptions.assumeTrue(bootstrap.getUserRepository() != null, "PostgreSQL repository required for DB lifecycle test");
+
+        UserRepository users = bootstrap.getUserRepository();
+        String suffix = Long.toString(System.currentTimeMillis());
+        User owner = users.create(new User("group-owner-" + suffix + "@landrop.local", "group_owner_" + suffix,
+                "Group Owner", null, PasswordHasher.hash("pass123")));
+        User member = users.create(new User("group-member-" + suffix + "@landrop.local", "group_member_" + suffix,
+                "Group Member", null, PasswordHasher.hash("pass123")));
+        AdminControlCenterService control = bootstrap.getAdminControlCenterService();
+
+        AdminWorkspaceDto created = control.createWorkspace(Map.of(
+                "name", "Admin Managed Group " + suffix,
+                "slug", "admin-managed-group-" + suffix,
+                "description", "Created by the system-admin data manager",
+                "ownerId", owner.id().toString()), "system-admin");
+        assertEquals(1, created.memberCount());
+        assertEquals(owner.id(), created.ownerId());
+        assertTrue(control.getDashboard().workspaceCount() >= 1);
+
+        AdminWorkspaceDto updated = control.updateWorkspace(created.id(), Map.of("name", "Renamed Admin Group", "description", "Updated"), "system-admin");
+        assertEquals("Renamed Admin Group", updated.name());
+        AdminWorkspaceMemberDto added = control.upsertWorkspaceMember(created.id(), Map.of("userId", member.id().toString(), "role", "ADMIN"), "system-admin");
+        assertEquals("ADMIN", added.role());
+        assertEquals(2, control.listWorkspaceMembers(created.id()).size());
+        assertThrows(ValidationException.class, () -> control.removeWorkspaceMember(created.id(), owner.id(), "system-admin"));
+        assertTrue(control.removeWorkspaceMember(created.id(), member.id(), "system-admin"));
+        assertTrue(control.deleteWorkspace(created.id(), "system-admin"));
+    }
+
+    @Test
+    @DisplayName("03A.26: Workspace CRUD routes require a system-admin token and persist changes")
+    void testWorkspaceManagementHttpRoutes() throws Exception {
+        ServerConfig config = new ServerConfig("127.0.0.1", 0, 0, 1, 1000L, 3000L, "test", "INFO");
+        bootstrap = new ServerBootstrap(config);
+        bootstrap.start();
+        org.junit.jupiter.api.Assumptions.assumeTrue(bootstrap.getUserRepository() != null, "PostgreSQL repository required for DB route test");
+
+        UserRepository users = bootstrap.getUserRepository();
+        User admin = users.findAll().stream().filter(User::isSystemAdmin).findFirst().orElseThrow();
+        String suffix = Long.toString(System.currentTimeMillis());
+        User owner = users.create(new User("route-owner-" + suffix + "@landrop.local", "route_owner_" + suffix,
+                "Route Owner", null, PasswordHasher.hash("pass123")));
+        String token = bootstrap.getJwtService().generateAccessToken(admin);
+        String baseUrl = "http://127.0.0.1:" + bootstrap.getHttpServer().getPort();
+
+        String payload = JSON.writeValueAsString(Map.of("name", "Route Managed Group", "slug", "route-group-" + suffix,
+                "ownerId", owner.id().toString()));
+        HttpResponse<String> created = httpClient.send(HttpRequest.newBuilder(URI.create(baseUrl + "/api/admin/workspaces"))
+                .header("Authorization", "Bearer " + token).header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(payload)).build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(201, created.statusCode());
+        UUID workspaceId = UUID.fromString(JSON.readTree(created.body()).path("id").asText());
+
+        HttpResponse<String> listed = httpClient.send(HttpRequest.newBuilder(URI.create(baseUrl + "/api/admin/workspaces?search=route-group"))
+                .header("Authorization", "Bearer " + token).GET().build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, listed.statusCode());
+        assertTrue(JSON.readTree(listed.body()).toString().contains("route-group-" + suffix));
+
+        HttpResponse<String> deleted = httpClient.send(HttpRequest.newBuilder(URI.create(baseUrl + "/api/admin/workspaces/" + workspaceId))
+                .header("Authorization", "Bearer " + token).DELETE().build(), HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, deleted.statusCode());
+    }
+
     // =========================================================================
     // 6. End-to-End Server Control Center Integration with ServerBootstrap (03A.8–03A.24)
     // =========================================================================

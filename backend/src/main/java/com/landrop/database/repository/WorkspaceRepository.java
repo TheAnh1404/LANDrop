@@ -73,6 +73,13 @@ public class WorkspaceRepository {
     public List<Workspace> findAll() throws SQLException {
         return query("SELECT * FROM workspaces ORDER BY created_at,id",this::mapRow);
     }
+    public long countAll() throws SQLException {
+        return connection(c -> {
+            try (var ps = c.prepareStatement("SELECT COUNT(*) FROM workspaces"); var rs = ps.executeQuery()) {
+                return rs.next() ? rs.getLong(1) : 0L;
+            }
+        });
+    }
     public List<Workspace> findByUserId(UUID user) throws SQLException {
         return query("SELECT w.* FROM workspaces w JOIN workspace_members m ON w.id=m.workspace_id WHERE m.user_id=? ORDER BY w.created_at,w.id",this::mapRow,user);
     }

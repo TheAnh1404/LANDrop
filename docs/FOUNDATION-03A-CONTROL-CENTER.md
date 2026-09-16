@@ -122,6 +122,8 @@ Aggregated operational telemetry:
   "startedAt": "2026-09-15T01:00:00Z",
   "connectedClients": 4,
   "registeredUsers": 12,
+  "registeredDevices": 18,
+  "workspaceCount": 4,
   "activeSessions": 6,
   "activeTransfers": 0,
   "httpPort": 3000,
@@ -137,7 +139,11 @@ Aggregated operational telemetry:
 
 ### Endpoints
 - `GET /api/admin/users`: List registered users with pagination, role, and status.
-- `POST /api/admin/users/{id}/status`: Toggle user status (`ACTIVE` vs `DISABLED`).
+- `PATCH /api/admin/users/{id}`: Update display name, account status, or system role.
+- `DELETE /api/admin/users/{id}`: Permanently delete a user after their dependent data has been transferred or deleted.
+  - Never permits self-deletion or removal/demotion of the final `SYSTEM_ADMIN`.
+  - Rejects deletion where foreign-key protected data remains, rather than corrupting relationships.
+- `POST /api/admin/users/{id}/disable` and `POST /api/admin/users/{id}/enable`: Change account status.
   - Disabling a user terminates all their active refresh token sessions immediately.
   - Protects against self-disablement.
   - Prevents disabling the last remaining `SYSTEM_ADMIN`.
@@ -146,7 +152,23 @@ Aggregated operational telemetry:
 
 ---
 
-## 6. Realtime Client Control
+## 6. Group / Workspace Data Administration
+
+System administrators can manage collaboration groups directly from the Control Center; raw SQL execution is intentionally not exposed.
+
+- `GET /api/admin/workspaces?search=`: List groups with owner and member count.
+- `POST /api/admin/workspaces`: Create a group with `name`, optional `slug`/`description`, and an existing `ownerId`; the owner is added as `OWNER` automatically.
+- `PATCH /api/admin/workspaces/{id}`: Change name or description.
+- `DELETE /api/admin/workspaces/{id}`: Permanently delete the group and its cascade-owned workspace data.
+- `GET /api/admin/workspaces/{id}/members`: List group membership.
+- `POST /api/admin/workspaces/{id}/members`: Add a member or update their role.
+- `PATCH /api/admin/workspaces/{id}/members/{userId}` and `DELETE /api/admin/workspaces/{id}/members/{userId}`: Update or remove a member.
+
+The original owner keeps the `OWNER` role and cannot be removed through the member editor. Every mutation emits an operational audit event.
+
+---
+
+## 7. Realtime Client Control
 
 ### Endpoints
 - `GET /api/admin/clients`: List connected WebSocket clients from `ClientRegistry` (remote address, connection ID, device name, client instance ID, handshake time, last heartbeat).
@@ -157,7 +179,7 @@ Aggregated operational telemetry:
 
 ---
 
-## 7. Operational Audit Logging
+## 8. Operational Audit Logging
 
 ### Architecture
 - Fixed-capacity circular ring buffer (1,000 entries) managed by `OperationalLogService`.
@@ -170,7 +192,7 @@ Aggregated operational telemetry:
 
 ---
 
-## 8. Embedded Administrative Web Console
+## 9. Embedded Administrative Web Console
 
 Served directly from the HTTP server at `/admin`:
 - Single-page vanilla HTML5, CSS3, and JavaScript app with zero external CDN dependencies.
@@ -179,14 +201,16 @@ Served directly from the HTTP server at `/admin`:
 - Responsive live tabs:
   1. **Dashboard**: Metrics cards, server status, quick action links.
   2. **Users**: User list, filter, enable/disable toggle.
-  3. **Clients**: Connected devices table, metadata, disconnect button.
-  4. **Sessions**: Active session explorer, revoke action.
-  5. **Server & Network**: Active interfaces, current vs pending configuration editor, restart warning banner.
-  6. **Logs**: Live audit log viewer with search, level filtering, and pagination.
+  3. **Groups & Data**: Group CRUD and membership editor with database-backed counts.
+  4. **Clients**: Connected devices table, metadata, disconnect button.
+  5. **Sessions**: Active session explorer, revoke action.
+  6. **Server & Network**: Active interfaces, current vs pending configuration editor, restart warning banner.
+  7. **Logs**: Live audit log viewer with search, level filtering, and pagination.
 
 ---
 
 ## Verification & Test Matrix
 
-- `AdminControlCenterTest`: 8 unit and integration test suites covering all 03A requirements with 100% pass rate.
-- Full project regression: 102 frontend and backend integration tests pass with 0 failures, 0 errors.
+- `AdminControlCenterTest` includes lifecycle and HTTP-route coverage for system-admin group CRUD and membership management.
+- Targeted validation: `mvn -pl backend "-Dtest=AdminControlCenterTest#testWorkspaceDatabaseManagement,AdminControlCenterTest#testWorkspaceManagementHttpRoutes" test`.
+- The broader legacy WebSocket test suite still needs its unauthenticated test clients migrated to the authenticated realtime contract before it can be treated as a release gate.

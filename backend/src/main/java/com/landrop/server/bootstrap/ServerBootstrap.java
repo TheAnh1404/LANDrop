@@ -15,6 +15,7 @@ import com.landrop.database.DatabaseConfig;
 import com.landrop.database.DatabaseManager;
 import com.landrop.database.repository.DeviceRepository;
 import com.landrop.database.repository.UserRepository;
+import com.landrop.database.repository.WorkspaceRepository;
 import com.landrop.device.server.DeviceHttpHandler;
 import com.landrop.device.service.DeviceService;
 import com.landrop.database.service.WorkspaceService;
@@ -57,6 +58,7 @@ public class ServerBootstrap {
     private UserRepository userRepository;
     private RefreshTokenRepository refreshTokenRepository;
     private DeviceRepository deviceRepository;
+    private WorkspaceRepository workspaceRepository;
     private JwtService jwtService;
     private AuthService authService;
     private DeviceService deviceService;
@@ -107,6 +109,9 @@ public class ServerBootstrap {
                 }
                 if (this.deviceRepository == null) {
                     this.deviceRepository = new DeviceRepository(db);
+                }
+                if (this.workspaceRepository == null) {
+                    this.workspaceRepository = new WorkspaceRepository(db);
                 }
                 if (this.jwtService == null) {
                     this.jwtService = new JwtService();
@@ -160,6 +165,7 @@ public class ServerBootstrap {
             this.userRepository,
             this.refreshTokenRepository,
             this.deviceRepository,
+            this.workspaceRepository,
             this.clientRegistry,
             this.transferCoordinator,
             this.serverConfigManager,
