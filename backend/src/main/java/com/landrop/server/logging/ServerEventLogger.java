@@ -20,10 +20,19 @@ public final class ServerEventLogger {
         String detailPart = (details != null && !details.isBlank()) ? sanitize(details) : "";
         String line = String.format("[%s] [%s] %s%s", timestamp, event.name(), connPart, detailPart);
 
+        String level = "INFO";
         switch (event) {
-            case CLIENT_HANDSHAKE_FAILED, HEARTBEAT_TIMEOUT, TRANSFER_FAILED -> AppLogger.warn(TAG, line);
+            case CLIENT_HANDSHAKE_FAILED, HEARTBEAT_TIMEOUT, TRANSFER_FAILED -> {
+                level = "WARN";
+                AppLogger.warn(TAG, line);
+            }
             default -> AppLogger.info(TAG, line);
         }
+
+        try {
+            com.landrop.admin.logging.OperationalLogService.getInstance()
+                .record(event.name(), level, "SYSTEM", connectionId, details, null);
+        } catch (Throwable ignored) {}
     }
 
     public static void log(ServerEvent event, String details) {

@@ -47,6 +47,7 @@ public final class ProtocolConstants {
     public static final String EVENT_HELLO = "hello";
     public static final String EVENT_HEARTBEAT = "heartbeat";
     public static final String EVENT_ECHO = "echo";
+    public static final String EVENT_AUTH = "auth";
     public static final String EVENT_TRANSFER_REQUEST = "transfer.request";
     public static final String EVENT_TRANSFER_ACCEPT = "transfer.accept";
     public static final String EVENT_TRANSFER_REJECT = "transfer.reject";
@@ -55,6 +56,7 @@ public final class ProtocolConstants {
 
     // Standard Event Types (Server -> Client)
     public static final String EVENT_WELCOME = "welcome";
+    public static final String EVENT_AUTH_ACK = "auth_ack";
     public static final String EVENT_HEARTBEAT_ACK = "heartbeat_ack";
     public static final String EVENT_ECHO_ACK = "echo_ack";
     public static final String EVENT_ERROR = "error";
@@ -77,5 +79,7 @@ public final class ProtocolConstants {
     public static final String ERR_ACCOUNT_DISABLED = "ACCOUNT_DISABLED";
 
     public static final int CLOSE_ADMIN_DISCONNECT = 4001;
+    public static final int CLOSE_SESSION_REVOKED = 4002;
+    public static final int CLOSE_ACCOUNT_DISABLED = 4003;
     public static final int CLOSE_SERVER_SHUTDOWN = 1001;
 }

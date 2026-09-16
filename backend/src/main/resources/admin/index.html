@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LANDrop Server Control Center</title>
+  <style>
+    :root {
+      --bg-main: #0f172a;
+      --bg-card: #1e293b;
+      --bg-card-hover: #334155;
+      --border: #334155;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-primary: #3b82f6;
+      --accent-hover: #2563eb;
+      --accent-success: #10b981;
+      --accent-warning: #f59e0b;
+      --accent-danger: #ef4444;
+      --accent-purple: #8b5cf6;
+      --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      font-family: var(--font-family);
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background-color: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 0.75rem 1.5rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .logo-container { display: flex; align-items: center; gap: 0.75rem; }
+    .logo-badge {
+      background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+      color: white;
+      font-weight: bold;
+      padding: 0.25rem 0.5rem;
+      border-radius: 6px;
+      font-size: 0.85rem;
+      letter-spacing: 0.05em;
+    }
+    .logo-title { font-size: 1.15rem; font-weight: 600; letter-spacing: -0.02em; }
+    .header-actions { display: flex; align-items: center; gap: 1rem; font-size: 0.9rem; }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.2rem 0.6rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background-color: rgba(16, 185, 129, 0.15);
+      color: var(--accent-success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .status-dot { width: 6px; height: 6px; border-radius: 50%; background-color: currentColor; }
+    .nav-tabs {
+      display: flex;
+      background-color: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 0 1.5rem;
+      overflow-x: auto;
+    }
+    .nav-tab {
+      padding: 0.85rem 1.25rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-size: 0.9rem;
+      font-weight: 500;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s ease;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .nav-tab:hover { color: var(--text-main); }
+    .nav-tab.active { color: var(--accent-primary); border-bottom-color: var(--accent-primary); }
+    main { flex: 1; padding: 1.5rem; max-width: 1400px; width: 100%; margin: 0 auto; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    .grid-kpi {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 1rem;
+      margin-bottom: 1.5rem;
+    }
+    .card-kpi {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+    }
+    .kpi-label { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); font-weight: 600; }
+    .kpi-value { font-size: 1.8rem; font-weight: 700; color: var(--text-main); }
+    .kpi-sub { font-size: 0.75rem; color: var(--text-muted); }
+    .section-card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-bottom: 1.5rem;
+      overflow: hidden;
+    }
+    .card-header {
+      padding: 1rem 1.25rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background-color: rgba(255,255,255,0.02);
+    }
+    .card-title { font-size: 1rem; font-weight: 600; }
+    .card-body { padding: 1.25rem; }
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      margin-bottom: 1rem;
+      align-items: center;
+    }
+    input[type="text"], input[type="password"], input[type="number"], select {
+      background-color: var(--bg-main);
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 0.5rem 0.75rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input:focus, select:focus { border-color: var(--accent-primary); }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      padding: 0.5rem 0.85rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s;
+      user-select: none;
+    }
+    .btn-primary { background-color: var(--accent-primary); color: white; }
+    .btn-primary:hover { background-color: var(--accent-hover); }
+    .btn-danger { background-color: rgba(239, 68, 68, 0.2); color: var(--accent-danger); border: 1px solid rgba(239, 68, 68, 0.4); }
+    .btn-danger:hover { background-color: var(--accent-danger); color: white; }
+    .btn-success { background-color: rgba(16, 185, 129, 0.2); color: var(--accent-success); border: 1px solid rgba(16, 185, 129, 0.4); }
+    .btn-success:hover { background-color: var(--accent-success); color: white; }
+    .btn-secondary { background-color: var(--bg-card-hover); color: var(--text-main); }
+    .btn-secondary:hover { background-color: #475569; }
+    .btn-sm { padding: 0.3rem 0.6rem; font-size: 0.775rem; }
+    .table-container { overflow-x: auto; width: 100%; }
+    table { width: 100%; border-collapse: collapse; text-align: left; font-size: 0.875rem; }
+    th {
+      background-color: rgba(15, 23, 42, 0.5);
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.75rem;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      padding: 0.75rem 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+    td { padding: 0.75rem 1rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:hover td { background-color: rgba(255, 255, 255, 0.02); }
+    .badge {
+      display: inline-block;
+      padding: 0.15rem 0.5rem;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+    .badge-active, .badge-info { background-color: rgba(16, 185, 129, 0.15); color: var(--accent-success); border: 1px solid rgba(16, 185, 129, 0.3); }
+    .badge-disabled, .badge-error { background-color: rgba(239, 68, 68, 0.15); color: var(--accent-danger); border: 1px solid rgba(239, 68, 68, 0.3); }
+    .badge-admin { background-color: rgba(139, 92, 246, 0.15); color: var(--accent-purple); border: 1px solid rgba(139, 92, 246, 0.3); }
+    .badge-warn { background-color: rgba(245, 158, 11, 0.15); color: var(--accent-warning); border: 1px solid rgba(245, 158, 11, 0.3); }
+    .alert-banner {
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      margin-bottom: 1.25rem;
+      font-size: 0.875rem;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .alert-warning { background-color: rgba(245, 158, 11, 0.15); color: #fde68a; border: 1px solid rgba(245, 158, 11, 0.4); }
+    .form-group { margin-bottom: 1rem; display: flex; flex-direction: column; gap: 0.35rem; }
+    .form-group label { font-size: 0.8rem; font-weight: 600; color: var(--text-muted); }
+    .form-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 1rem;
+    }
+    .modal-overlay.active { display: flex; }
+    .modal-box {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      max-width: 480px;
+      width: 100%;
+      overflow: hidden;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5);
+    }
+    .modal-header { padding: 1rem 1.25rem; border-bottom: 1px solid var(--border); font-weight: 600; }
+    .modal-body { padding: 1.25rem; }
+    .modal-footer { padding: 0.75rem 1.25rem; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; gap: 0.5rem; }
+    .empty-state { text-align: center; padding: 2.5rem 1rem; color: var(--text-muted); font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <div class="logo-container">
+      <span class="logo-badge">FOUNDATION-03A</span>
+      <span class="logo-title">LANDrop Server Control Center</span>
+    </div>
+    <div class="header-actions">
+      <span class="status-pill" id="server-status-pill">
+        <span class="status-dot"></span>
+        <span id="server-status-text">RUNNING</span>
+      </span>
+      <span id="user-display" style="color: var(--text-muted);">Admin</span>
+      <button class="btn btn-secondary btn-sm" id="btn-logout" onclick="logout()">Logout</button>
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <nav class="nav-tabs">
+    <div class="nav-tab active" onclick="switchTab('dashboard')">Dashboard</div>
+    <div class="nav-tab" onclick="switchTab('users')">Users</div>
+    <div class="nav-tab" onclick="switchTab('clients')">Connected Clients</div>
+    <div class="nav-tab" onclick="switchTab('sessions')">Sessions</div>
+    <div class="nav-tab" onclick="switchTab('server')">Server & Network</div>
+    <div class="nav-tab" onclick="switchTab('logs')">Operational Logs</div>
+  </nav>
+
+  <!-- Main Content Area -->
+  <main>
+    <!-- Restart Required Alert Banner -->
+    <div id="restart-banner" class="alert-banner alert-warning" style="display: none;">
+      <span>Pending configuration changes require a server restart to take effect on network listeners.</span>
+    </div>
+
+    <!-- 1. DASHBOARD TAB -->
+    <div id="tab-dashboard" class="tab-content active">
+      <div class="grid-kpi">
+        <div class="card-kpi">
+          <span class="kpi-label">Server Status</span>
+          <span class="kpi-value" id="kpi-status" style="color: var(--accent-success)">RUNNING</span>
+          <span class="kpi-sub" id="kpi-uptime">Uptime: 0s</span>
+        </div>
+        <div class="card-kpi">
+          <span class="kpi-label">Connected Clients</span>
+          <span class="kpi-value" id="kpi-clients">0</span>
+          <span class="kpi-sub">Active WebSocket Handshakes</span>
+        </div>
+        <div class="card-kpi">
+          <span class="kpi-label">Active Sessions</span>
+          <span class="kpi-value" id="kpi-sessions">0</span>
+          <span class="kpi-sub" id="kpi-total-sessions">0 total refresh tokens</span>
+        </div>
+        <div class="card-kpi">
+          <span class="kpi-label">Registered Users</span>
+          <span class="kpi-value" id="kpi-users">0</span>
+          <span class="kpi-sub" id="kpi-admin-users">0 System Admins</span>
+        </div>
+        <div class="card-kpi">
+          <span class="kpi-label">Active Transfers</span>
+          <span class="kpi-value" id="kpi-transfers">0</span>
+          <span class="kpi-sub">File Coordination Plane</span>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <div class="card-header">
+          <span class="card-title">Runtime Summary</span>
+          <button class="btn btn-secondary btn-sm" onclick="loadDashboard()">Refresh</button>
+        </div>
+        <div class="card-body" id="dashboard-summary-content">
+          Loading runtime statistics...
+        </div>
+      </div>
+    </div>
+
+    <!-- 2. USERS TAB -->
+    <div id="tab-users" class="tab-content">
+      <div class="section-card">
+        <div class="card-header">
+          <span class="card-title">User Management</span>
+          <span style="font-size: 0.8rem; color: var(--text-muted);">Manage status, authorization & active sessions</span>
+        </div>
+        <div class="card-body">
+          <div class="toolbar">
+            <input type="text" id="user-search" placeholder="Search username, email..." style="width: 250px;" onkeyup="if(event.key==='Enter')loadUsers()">
+            <select id="user-status-filter" onchange="loadUsers()">
+              <option value="ALL">All Statuses</option>
+              <option value="ACTIVE">Active Only</option>
+              <option value="DISABLED">Disabled Only</option>
+            </select>
+            <button class="btn btn-primary btn-sm" onclick="loadUsers()">Filter</button>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>User</th>
+                  <th>Email</th>
+                  <th>System Role</th>
+                  <th>Status</th>
+                  <th>Active Sessions</th>
+                  <th>Created</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="users-tbody">
+                <tr><td colspan="7" class="empty-state">Loading users...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3. CONNECTED CLIENTS TAB -->
+    <div id="tab-clients" class="tab-content">
+      <div class="section-card">
+        <div class="card-header">
+          <span class="card-title">Active WebSocket Clients</span>
+          <button class="btn btn-secondary btn-sm" onclick="loadClients()">Refresh</button>
+        </div>
+        <div class="card-body">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Connection ID</th>
+                  <th>Device / Instance</th>
+                  <th>User</th>
+                  <th>Platform / OS</th>
+                  <th>Remote Address</th>
+                  <th>Session ID</th>
+                  <th>Connected At</th>
+                  <th>Last Heartbeat</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="clients-tbody">
+                <tr><td colspan="9" class="empty-state">No connected clients</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4. SESSIONS TAB -->
+    <div id="tab-sessions" class="tab-content">
+      <div class="section-card">
+        <div class="card-header">
+          <span class="card-title">User Authentication Sessions</span>
+          <button class="btn btn-secondary btn-sm" onclick="loadSessions()">Refresh</button>
+        </div>
+        <div class="card-body">
+          <div class="toolbar">
+            <select id="sessions-filter-active" onchange="loadSessions()">
+              <option value="true">Active Sessions Only</option>
+              <option value="false">All Sessions (Include Revoked/Expired)</option>
+            </select>
+            <button class="btn btn-primary btn-sm" onclick="loadSessions()">Apply</button>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Session ID</th>
+                  <th>User</th>
+                  <th>Device</th>
+                  <th>Online</th>
+                  <th>Created</th>
+                  <th>Expires</th>
+                  <th>Last Seen</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="sessions-tbody">
+                <tr><td colspan="9" class="empty-state">Loading sessions...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 5. SERVER & NETWORK TAB -->
+    <div id="tab-server" class="tab-content">
+      <div class="section-card">
+        <div class="card-header">
+          <span class="card-title">LAN Network Interfaces</span>
+          <button class="btn btn-secondary btn-sm" onclick="loadNetworkInterfaces()">Scan Interfaces</button>
+        </div>
+        <div class="card-body">
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>Interface</th>
+                  <th>Display Name</th>
+                  <th>MAC Address</th>
+                  <th>Status</th>
+                  <th>Addresses</th>
+                </tr>
+              </thead>
+              <tbody id="interfaces-tbody">
+                <tr><td colspan="5" class="empty-state">Loading network interfaces...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div class="section-card">
+        <div class="card-header">
+          <span class="card-title">Server Runtime & Configuration</span>
+        </div>
+        <div class="card-body">
+          <form id="config-form" onsubmit="saveConfig(event)">
+            <div class="form-row">
+              <div class="form-group">
+                <label>Bind Host</label>
+                <input type="text" id="cfg-host" required>
+              </div>
+              <div class="form-group">
+                <label>HTTP Port (1-65535)</label>
+                <input type="number" id="cfg-httpPort" min="1" max="65535" required>
+              </div>
+              <div class="form-group">
+                <label>WebSocket Port (1-65535)</label>
+                <input type="number" id="cfg-wsPort" min="1" max="65535" required>
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>Heartbeat Interval (ms)</label>
+                <input type="number" id="cfg-hbInterval" min="100" required>
+              </div>
+              <div class="form-group">
+                <label>Heartbeat Timeout (ms)</label>
+                <input type="number" id="cfg-hbTimeout" min="200" required>
+              </div>
+              <div class="form-group">
+                <label>Log Level</label>
+                <select id="cfg-logLevel">
+                  <option value="DEBUG">DEBUG</option>
+                  <option value="INFO">INFO</option>
+                  <option value="WARN">WARN</option>
+                  <option value="ERROR">ERROR</option>
+                </select>
+              </div>
+            </div>
+            <div style="margin-top: 1rem; display: flex; gap: 0.75rem;">
+              <button type="submit" class="btn btn-primary">Save Configuration</button>
+              <button type="button" class="btn btn-secondary" onclick="loadConfig()">Reset</button>
+            </div>
+          </form>
+        </div>
+      </div>
+    </div>
+
+    <!-- 6. OPERATIONAL LOGS TAB -->
+    <div id="tab-logs" class="tab-content">
+      <div class="section-card">
+        <div class="card-header">
+          <span class="card-title">Operational & Audit Logs</span>
+          <button class="btn btn-secondary btn-sm" onclick="loadLogs()">Refresh</button>
+        </div>
+        <div class="card-body">
+          <div class="toolbar">
+            <input type="text" id="log-search" placeholder="Search event, actor, details..." style="width: 250px;" onkeyup="if(event.key==='Enter')loadLogs()">
+            <select id="log-level-filter" onchange="loadLogs()">
+              <option value="ALL">All Levels</option>
+              <option value="INFO">INFO</option>
+              <option value="WARN">WARN</option>
+              <option value="ERROR">ERROR</option>
+            </select>
+            <button class="btn btn-primary btn-sm" onclick="loadLogs()">Filter</button>
+          </div>
+          <div class="table-container">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Timestamp</th>
+                  <th>Level</th>
+                  <th>Event Type</th>
+                  <th>Actor</th>
+                  <th>Target</th>
+                  <th>Details</th>
+                </tr>
+              </thead>
+              <tbody id="logs-tbody">
+                <tr><td colspan="7" class="empty-state">Loading operational logs...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Login Modal -->
+  <div class="modal-overlay" id="login-modal">
+    <div class="modal-box">
+      <div class="modal-header">System Admin Authentication</div>
+      <form onsubmit="handleLogin(event)">
+        <div class="modal-body">
+          <div id="login-error" class="alert-banner alert-warning" style="display: none;"></div>
+          <div class="form-group">
+            <label>Username or Email</label>
+            <input type="text" id="login-username" required autocomplete="username">
+          </div>
+          <div class="form-group">
+            <label>Password</label>
+            <input type="password" id="login-password" required autocomplete="current-password">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button type="submit" class="btn btn-primary" id="btn-submit-login">Sign In</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    let currentTab = 'dashboard';
+    let authToken = localStorage.getItem('landrop_admin_token') || '';
+    let currentAdminUser = JSON.parse(localStorage.getItem('landrop_admin_user') || 'null');
+
+    function checkAuth() {
+      if (!authToken || !currentAdminUser) {
+        document.getElementById('login-modal').classList.add('active');
+      } else {
+        document.getElementById('login-modal').classList.remove('active');
+        document.getElementById('user-display').textContent = currentAdminUser.username || 'Admin';
+        refreshCurrentTab();
+      }
+    }
+
+    async function apiFetch(url, options = {}) {
+      options.headers = options.headers || {};
+      if (authToken) {
+        options.headers['Authorization'] = 'Bearer ' + authToken;
+      }
+      if (options.body && typeof options.body === 'object') {
+        options.headers['Content-Type'] = 'application/json';
+        options.body = JSON.stringify(options.body);
+      }
+      const res = await fetch(url, options);
+      if (res.status === 401 || res.status === 403) {
+        logout();
+        throw new Error('Authentication expired or privileges insufficient');
+      }
+      if (!res.ok) {
+        let errMsg = 'HTTP ' + res.status;
+        try {
+          const json = await res.json();
+          if (json.message) errMsg = json.message;
+        } catch (_) {}
+        throw new Error(errMsg);
+      }
+      return res.json();
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      const errBox = document.getElementById('login-error');
+      errBox.style.display = 'none';
+
+      const username = document.getElementById('login-username').value.trim();
+      const password = document.getElementById('login-password').value;
+
+      try {
+        const res = await fetch('/api/admin/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier: username, password })
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.message || 'Login failed');
+        }
+
+        authToken = data.accessToken;
+        currentAdminUser = data.user;
+        localStorage.setItem('landrop_admin_token', authToken);
+        localStorage.setItem('landrop_admin_user', JSON.stringify(currentAdminUser));
+
+        document.getElementById('login-modal').classList.remove('active');
+        document.getElementById('user-display').textContent = currentAdminUser.username;
+        refreshCurrentTab();
+      } catch (err) {
+        errBox.textContent = err.message;
+        errBox.style.display = 'block';
+      }
+    }
+
+    function logout() {
+      authToken = '';
+      currentAdminUser = null;
+      localStorage.removeItem('landrop_admin_token');
+      localStorage.removeItem('landrop_admin_user');
+      document.getElementById('login-modal').classList.add('active');
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.nav-tab').forEach((el, idx) => {
+        el.classList.toggle('active', el.textContent.toLowerCase().includes(tab.substring(0, 4)));
+      });
+      document.querySelectorAll('.tab-content').forEach(el => {
+        el.classList.toggle('active', el.id === 'tab-' + tab);
+      });
+      refreshCurrentTab();
+    }
+
+    function refreshCurrentTab() {
+      if (currentTab === 'dashboard') loadDashboard();
+      else if (currentTab === 'users') loadUsers();
+      else if (currentTab === 'clients') loadClients();
+      else if (currentTab === 'sessions') loadSessions();
+      else if (currentTab === 'server') { loadNetworkInterfaces(); loadConfig(); }
+      else if (currentTab === 'logs') loadLogs();
+    }
+
+    async function loadDashboard() {
+      try {
+        const d = await apiFetch('/api/admin/dashboard');
+        document.getElementById('kpi-status').textContent = d.status;
+        document.getElementById('kpi-uptime').textContent = 'Uptime: ' + d.uptimeFormatted;
+        document.getElementById('kpi-clients').textContent = d.connectedClients;
+        document.getElementById('kpi-sessions').textContent = d.activeSessions;
+        document.getElementById('kpi-total-sessions').textContent = d.totalSessions + ' total refresh tokens';
+        document.getElementById('kpi-users').textContent = d.registeredUsers;
+        document.getElementById('kpi-admin-users').textContent = d.systemAdmins + ' System Admins';
+        document.getElementById('kpi-transfers').textContent = d.activeTransfers;
+
+        const banner = document.getElementById('restart-banner');
+        if (d.requiresRestart) {
+          banner.style.display = 'block';
+        } else {
+          banner.style.display = 'none';
+        }
+
+        // Also fetch /api/server/info
+        const info = await apiFetch('/api/server/info');
+        document.getElementById('dashboard-summary-content').innerHTML = `
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem;">
+            <div><strong>Host:</strong> ${info.host}</div>
+            <div><strong>HTTP Port:</strong> ${info.httpPort}</div>
+            <div><strong>WebSocket Port:</strong> ${info.wsPort}</div>
+            <div><strong>Protocol Version:</strong> ${info.protocolVersion}</div>
+            <div><strong>Server Version:</strong> ${info.version}</div>
+            <div><strong>OS:</strong> ${info.osName} (${info.osArch})</div>
+            <div><strong>Java:</strong> ${info.javaVersion}</div>
+            <div><strong>Server Time:</strong> ${new Date(info.serverTime).toLocaleString()}</div>
+          </div>
+        `;
+      } catch (err) {
+        console.error('Failed to load dashboard:', err);
+      }
+    }
+
+    async function loadUsers() {
+      const tbody = document.getElementById('users-tbody');
+      try {
+        const search = document.getElementById('user-search').value.trim();
+        const status = document.getElementById('user-status-filter').value;
+        const users = await apiFetch(`/api/admin/users?search=${encodeURIComponent(search)}&status=${status}`);
+
+        if (!users || users.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No users found</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = users.map(u => {
+          const isAdmin = u.systemRole === 'SYSTEM_ADMIN';
+          const isCurrent = currentAdminUser && currentAdminUser.id === u.id;
+          const statusBadge = u.status === 'ACTIVE'
+            ? '<span class="badge badge-active">ACTIVE</span>'
+            : '<span class="badge badge-disabled">DISABLED</span>';
+          const roleBadge = isAdmin
+            ? '<span class="badge badge-admin">SYSTEM_ADMIN</span>'
+            : '<span class="badge badge-info">USER</span>';
+
+          const toggleAction = u.status === 'ACTIVE'
+            ? `<button class="btn btn-danger btn-sm" onclick="disableUser('${u.id}', '${u.username}')" ${isCurrent ? 'disabled title="Cannot disable your own admin account"' : ''}>Disable</button>`
+            : `<button class="btn btn-success btn-sm" onclick="enableUser('${u.id}', '${u.username}')">Enable</button>`;
+
+          return `
+            <tr>
+              <td><strong>${u.username}</strong> ${isCurrent ? '<span style="font-size:0.7rem; color:var(--accent-primary);">(You)</span>' : ''}</td>
+              <td>${u.email}</td>
+              <td>${roleBadge}</td>
+              <td>${statusBadge}</td>
+              <td>${u.activeSessionsCount}</td>
+              <td>${new Date(u.createdAt).toLocaleDateString()}</td>
+              <td style="display:flex; gap:0.4rem;">
+                ${toggleAction}
+                <button class="btn btn-secondary btn-sm" onclick="revokeUserSessions('${u.id}', '${u.username}')" title="Revoke all active sessions">Revoke Sessions</button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color:var(--accent-danger)">Error: ${err.message}</td></tr>`;
+      }
+    }
+
+    async function disableUser(userId, username) {
+      if (!confirm(`Are you sure you want to disable user '${username}'? Active sessions will be immediately terminated.`)) return;
+      try {
+        await apiFetch(`/api/admin/users/${userId}/disable`, { method: 'POST' });
+        loadUsers();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function enableUser(userId, username) {
+      try {
+        await apiFetch(`/api/admin/users/${userId}/enable`, { method: 'POST' });
+        loadUsers();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function revokeUserSessions(userId, username) {
+      if (!confirm(`Revoke all active sessions for user '${username}'?`)) return;
+      try {
+        const res = await apiFetch(`/api/admin/users/${userId}/revoke-sessions`, { method: 'POST' });
+        alert(`Revoked ${res.revokedSessions || 0} session(s).`);
+        loadUsers();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function loadClients() {
+      const tbody = document.getElementById('clients-tbody');
+      try {
+        const clients = await apiFetch('/api/admin/clients');
+        if (!clients || clients.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No connected clients</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = clients.map(c => {
+          const userBadge = c.authenticated
+            ? `<span class="badge badge-info">${c.username || 'User'}</span>`
+            : '<span style="color:var(--text-muted);">Anonymous</span>';
+          const sessionCode = c.sessionId ? `<code>${c.sessionId.substring(0, 8)}...</code>` : '<span style="color:var(--text-muted);">-</span>';
+          return `
+            <tr>
+              <td><code>${c.connectionId.substring(0, 8)}...</code></td>
+              <td><strong>${c.deviceName}</strong><br><small style="color:var(--text-muted);">${c.clientInstanceId ? c.clientInstanceId.substring(0, 8) + '...' : ''}</small></td>
+              <td>${userBadge}</td>
+              <td>${c.platform} ${c.osVersion || ''}</td>
+              <td>${c.remoteAddress}</td>
+              <td>${sessionCode}</td>
+              <td>${new Date(c.connectedAt).toLocaleTimeString()}</td>
+              <td>${new Date(c.lastHeartbeatAt).toLocaleTimeString()}</td>
+              <td>
+                <button class="btn btn-danger btn-sm" onclick="disconnectClient('${c.connectionId}', '${c.deviceName}')">Disconnect</button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="color:var(--accent-danger)">Error: ${err.message}</td></tr>`;
+      }
+    }
+
+    async function disconnectClient(connectionId, deviceName) {
+      const reason = prompt(`Disconnect client '${deviceName}'? Enter reason:`, 'Disconnected by Administrator');
+      if (reason === null) return;
+      try {
+        await apiFetch(`/api/admin/clients/${connectionId}/disconnect`, {
+          method: 'POST',
+          body: { reason }
+        });
+        loadClients();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function loadSessions() {
+      const tbody = document.getElementById('sessions-tbody');
+      try {
+        const activeOnly = document.getElementById('sessions-filter-active').value;
+        const sessions = await apiFetch(`/api/admin/sessions?activeOnly=${activeOnly}`);
+        if (!sessions || sessions.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No sessions found</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = sessions.map(s => {
+          let statusBadge = '<span class="badge badge-active">ACTIVE</span>';
+          if (s.revoked) statusBadge = '<span class="badge badge-disabled">REVOKED</span>';
+          else if (s.isExpired) statusBadge = '<span class="badge badge-warn">EXPIRED</span>';
+
+          const onlineBadge = s.isOnline
+            ? '<span class="status-pill"><span class="status-dot"></span>Online</span>'
+            : '<span style="color:var(--text-muted);">Offline</span>';
+
+          const deviceDisplay = s.deviceName
+            ? `<strong>${s.deviceName}</strong>`
+            : (s.deviceId ? `<code>${s.deviceId.substring(0, 8)}...</code>` : '<span style="color:var(--text-muted);">-</span>');
+
+          const lastSeenDisplay = s.lastSeenAt ? new Date(s.lastSeenAt).toLocaleString() : '<span style="color:var(--text-muted);">-</span>';
+
+          return `
+            <tr>
+              <td><code>${s.id.substring(0, 8)}...</code></td>
+              <td><strong>${s.username}</strong></td>
+              <td>${deviceDisplay}</td>
+              <td>${onlineBadge}</td>
+              <td>${new Date(s.createdAt).toLocaleString()}</td>
+              <td>${new Date(s.expiresAt).toLocaleString()}</td>
+              <td>${lastSeenDisplay}</td>
+              <td>${statusBadge}</td>
+              <td>
+                ${s.isActive ? `<button class="btn btn-danger btn-sm" onclick="revokeSession('${s.id}')">Revoke</button>` : '<span style="color:var(--text-muted);">-</span>'}
+              </td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="color:var(--accent-danger)">Error: ${err.message}</td></tr>`;
+      }
+    }
+
+    async function revokeSession(sessionId) {
+      if (!confirm('Revoke this session token?')) return;
+      try {
+        await apiFetch(`/api/admin/sessions/${sessionId}/revoke`, { method: 'POST' });
+        loadSessions();
+      } catch (err) {
+        alert(err.message);
+      }
+    }
+
+    async function loadNetworkInterfaces() {
+      const tbody = document.getElementById('interfaces-tbody');
+      try {
+        const ifaces = await apiFetch('/api/server/interfaces');
+        if (!ifaces || ifaces.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="5" class="empty-state">No network interfaces found</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = ifaces.map(i => {
+          const status = i.isUp ? '<span class="badge badge-active">UP</span>' : '<span class="badge badge-disabled">DOWN</span>';
+          const addrs = i.addresses.map(a => {
+            const bindTag = a.isPrimaryBind ? ' <span class="badge badge-admin">Primary Bind</span>' : '';
+            return `<div><code>${a.ip}</code> (${a.type})${bindTag}</div>`;
+          }).join('');
+
+          return `
+            <tr>
+              <td><strong>${i.name}</strong></td>
+              <td>${i.displayName}</td>
+              <td><code>${i.macAddress || 'N/A'}</code></td>
+              <td>${status}</td>
+              <td>${addrs || '<span style="color:var(--text-muted);">No addresses</span>'}</td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="5" class="empty-state" style="color:var(--accent-danger)">Error: ${err.message}</td></tr>`;
+      }
+    }
+
+    async function loadConfig() {
+      try {
+        const cfgData = await apiFetch('/api/server/config');
+        const c = cfgData.pending || cfgData.current;
+        document.getElementById('cfg-host').value = c.host;
+        document.getElementById('cfg-httpPort').value = c.httpPort;
+        document.getElementById('cfg-wsPort').value = c.wsPort;
+        document.getElementById('cfg-hbInterval').value = c.heartbeatIntervalMs;
+        document.getElementById('cfg-hbTimeout').value = c.heartbeatTimeoutMs;
+        document.getElementById('cfg-logLevel').value = c.logLevel;
+
+        const banner = document.getElementById('restart-banner');
+        banner.style.display = cfgData.requiresRestart ? 'block' : 'none';
+      } catch (err) {
+        console.error('Failed to load server config:', err);
+      }
+    }
+
+    async function saveConfig(e) {
+      e.preventDefault();
+      try {
+        const payload = {
+          host: document.getElementById('cfg-host').value.trim(),
+          httpPort: parseInt(document.getElementById('cfg-httpPort').value),
+          wsPort: parseInt(document.getElementById('cfg-wsPort').value),
+          heartbeatIntervalMs: parseInt(document.getElementById('cfg-hbInterval').value),
+          heartbeatTimeoutMs: parseInt(document.getElementById('cfg-hbTimeout').value),
+          logLevel: document.getElementById('cfg-logLevel').value
+        };
+        const res = await apiFetch('/api/server/config', {
+          method: 'POST',
+          body: payload
+        });
+        alert('Configuration saved! Note: Network port/host changes require server restart.');
+        loadConfig();
+      } catch (err) {
+        alert('Error saving configuration: ' + err.message);
+      }
+    }
+
+    async function loadLogs() {
+      const tbody = document.getElementById('logs-tbody');
+      try {
+        const search = document.getElementById('log-search').value.trim();
+        const level = document.getElementById('log-level-filter').value;
+        const logs = await apiFetch(`/api/admin/logs?limit=50&search=${encodeURIComponent(search)}&level=${level}`);
+
+        if (!logs || logs.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No audit logs found</td></tr>';
+          return;
+        }
+
+        tbody.innerHTML = logs.map(l => {
+          let lvlBadge = '<span class="badge badge-info">INFO</span>';
+          if (l.level === 'WARN') lvlBadge = '<span class="badge badge-warn">WARN</span>';
+          else if (l.level === 'ERROR') lvlBadge = '<span class="badge badge-error">ERROR</span>';
+
+          return `
+            <tr>
+              <td>#${l.id}</td>
+              <td style="white-space:nowrap;">${new Date(l.timestamp).toLocaleTimeString()}</td>
+              <td>${lvlBadge}</td>
+              <td><strong>${l.eventType}</strong></td>
+              <td>${l.actor}</td>
+              <td><code>${l.target || '-'}</code></td>
+              <td>${l.details}</td>
+            </tr>
+          `;
+        }).join('');
+      } catch (err) {
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color:var(--accent-danger)">Error: ${err.message}</td></tr>`;
+      }
+    }
+
+    // Auto check on load
+    window.addEventListener('DOMContentLoaded', () => {
+      checkAuth();
+    });
+  </script>
+</body>
+</html>

@@ -63,6 +63,25 @@ public record EventEnvelope(
         );
     }
 
+    /** A WELCOME is emitted only after bearer session and enrolled device binding succeed. */
+    public static EventEnvelope authenticatedWelcome(String connectionId, String serverVersion, int protocolVersion,
+                                                     long heartbeatIntervalMs, String userId, String username,
+                                                     String deviceId, String sessionId) {
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("connectionId", connectionId);
+        payload.put("serverName", ProtocolConstants.SERVER_NAME);
+        payload.put("serverVersion", serverVersion);
+        payload.put("protocolVersion", protocolVersion);
+        payload.put("heartbeatIntervalMs", heartbeatIntervalMs);
+        payload.put("authenticated", true);
+        payload.put("userId", userId);
+        payload.put("username", username);
+        payload.put("deviceId", deviceId);
+        payload.put("sessionId", sessionId);
+        return new EventEnvelope(ProtocolConstants.EVENT_WELCOME, null, Instant.now().toString(), payload, null,
+            connectionId, serverVersion, protocolVersion, heartbeatIntervalMs, null, null);
+    }
+
     public static EventEnvelope error(String requestId, String code, String message) {
         return new EventEnvelope(
             ProtocolConstants.EVENT_ERROR,
@@ -101,6 +120,22 @@ public record EventEnvelope(
             requestId,
             Instant.now().toString(),
             Map.of("serverTimestamp", Instant.now().toString()),
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null
+        );
+    }
+
+    public static EventEnvelope authAck(String requestId, Object payload) {
+        return new EventEnvelope(
+            ProtocolConstants.EVENT_AUTH_ACK,
+            requestId,
+            Instant.now().toString(),
+            payload,
             null,
             null,
             null,

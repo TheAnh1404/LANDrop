@@ -20,10 +20,17 @@ public class FoundationWsClient implements WebSocket.Listener, AutoCloseable {
     private WebSocket webSocket;
 
     public static FoundationWsClient connect(int port) throws Exception {
+        return connect(port, null);
+    }
+
+    public static FoundationWsClient connect(int port, String bearerToken) throws Exception {
         FoundationWsClient client = new FoundationWsClient();
         HttpClient http = HttpClient.newHttpClient();
-        client.webSocket = http.newWebSocketBuilder()
-                .buildAsync(URI.create("ws://127.0.0.1:" + port), client)
+        WebSocket.Builder builder = http.newWebSocketBuilder();
+        if (bearerToken != null && !bearerToken.isBlank()) {
+            builder.header("Authorization", "Bearer " + bearerToken);
+        }
+        client.webSocket = builder.buildAsync(URI.create("ws://127.0.0.1:" + port), client)
                 .get(5, TimeUnit.SECONDS);
         return client;
     }

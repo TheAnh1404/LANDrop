@@ -22,6 +22,12 @@ import java.net.InetSocketAddress;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
+import com.landrop.auth.exception.ForbiddenException;
+import com.landrop.auth.exception.UnauthorizedException;
+import com.landrop.auth.model.AuthErrorCode;
+import com.landrop.auth.security.JwtClaims;
+import com.landrop.database.model.Device;
+import com.landrop.database.model.User;
 
 /**
  * Foundation Realtime WebSocket Gateway handling handshakes, heartbeats,
@@ -43,6 +49,12 @@ public class FoundationRealtimeServer extends WebSocketServer {
         return t;
     });
 
+    private com.landrop.auth.security.JwtService jwtService;
+    private com.landrop.database.repository.UserRepository userRepository;
+    private com.landrop.database.repository.DeviceRepository deviceRepository;
+    private com.landrop.auth.repository.RefreshTokenRepository refreshTokenRepository;
+    private final Map<WebSocket, String> authorizationHeaders = new ConcurrentHashMap<>();
+
     public FoundationRealtimeServer(InetSocketAddress address,
                                     ClientRegistry clientRegistry,
                                     TransferCoordinator transferCoordinator,
@@ -55,6 +67,16 @@ public class FoundationRealtimeServer extends WebSocketServer {
         this.heartbeatTimeoutMs = heartbeatTimeoutMs > 0 ? heartbeatTimeoutMs : ProtocolConstants.DEFAULT_HEARTBEAT_TIMEOUT_MS;
         setReuseAddr(true);
         setConnectionLostTimeout(0); // We implement our own explicit application-level heartbeat protocol
+    }
+
+    public void setAuthDependencies(com.landrop.auth.security.JwtService jwtService,
+                                    com.landrop.database.repository.UserRepository userRepository,
+                                    com.landrop.database.repository.DeviceRepository deviceRepository,
+                                    com.landrop.auth.repository.RefreshTokenRepository refreshTokenRepository) {
+        this.jwtService = jwtService;
+        this.userRepository = userRepository;
+        this.deviceRepository = deviceRepository;
+        this.refreshTokenRepository = refreshTokenRepository;
     }
 
     public void awaitReady() throws Exception {
@@ -96,6 +118,10 @@ public class FoundationRealtimeServer extends WebSocketServer {
 
     @Override
     public void onOpen(WebSocket socket, ClientHandshake handshake) {
+        String authorization = handshake != null ? handshake.getFieldValue("Authorization") : null;
+        if (authorization != null && !authorization.isBlank()) {
+            authorizationHeaders.put(socket, authorization.trim());
+        }
         String remote = socket.getRemoteSocketAddress() != null ? socket.getRemoteSocketAddress().toString() : "unknown";
         ServerEventLogger.log(ServerEvent.CLIENT_CONNECTED, null, "Remote: " + remote);
     }
@@ -137,7 +163,11 @@ public class FoundationRealtimeServer extends WebSocketServer {
             switch (type) {
                 case ProtocolConstants.EVENT_HEARTBEAT -> {
                     ServerEventLogger.log(ServerEvent.HEARTBEAT, connection.connectionId(), "Heartbeat received");
+                    triggerDeviceLastSeenSync(connection);
                     sendEnvelope(socket, EventEnvelope.heartbeatAck(requestId));
+                }
+                case ProtocolConstants.EVENT_AUTH -> {
+                    handleAuth(connection, root, requestId);
                 }
                 case ProtocolConstants.EVENT_ECHO -> {
                     JsonNode payloadNode = root.path("payload");
@@ -215,12 +245,24 @@ public class FoundationRealtimeServer extends WebSocketServer {
         ServerEventLogger.log(ServerEvent.CLIENT_HANDSHAKE_OK, connectionId,
                 "Device: " + deviceName + " (v" + clientVersion + ", " + platform + ")");
 
-        sendEnvelope(socket, EventEnvelope.welcome(
-            connectionId,
-            ProtocolConstants.SERVER_VERSION,
-            ProtocolConstants.PROTOCOL_VERSION,
-            heartbeatIntervalMs
-        ));
+        if (!authRequired()) {
+            sendEnvelope(socket, EventEnvelope.welcome(connectionId, ProtocolConstants.SERVER_VERSION,
+                ProtocolConstants.PROTOCOL_VERSION, heartbeatIntervalMs));
+            return;
+        }
+
+        String authorization = authorizationHeaders.get(socket);
+        String token = bearerToken(authorization);
+        String deviceId = root.hasNonNull("deviceId") ? root.path("deviceId").asText() : null;
+        if (token == null) {
+            rejectHandshake(connection, requestId, AuthErrorCode.UNAUTHORIZED, "Authentication is required.");
+            return;
+        }
+        if (deviceId == null || deviceId.isBlank()) {
+            rejectHandshake(connection, requestId, AuthErrorCode.DEVICE_NOT_FOUND, "An enrolled device is required.");
+            return;
+        }
+        authenticateConnection(connection, token, deviceId, requestId, true);
     }
 
     private void handleTransferRequest(ClientConnection sender, JsonNode root, String requestId) {
@@ -373,6 +415,7 @@ public class FoundationRealtimeServer extends WebSocketServer {
 
     @Override
     public void onClose(WebSocket socket, int code, String reason, boolean remote) {
+        authorizationHeaders.remove(socket);
         ClientConnection connection = socket.getAttachment();
         if (connection != null) {
             String connId = connection.connectionId();
@@ -416,6 +459,196 @@ public class FoundationRealtimeServer extends WebSocketServer {
                     Map.of("transferId", t.transferId(), "reason", "PEER_DISCONNECTED")
                 ));
             });
+        }
+    }
+
+    private void handleAuth(ClientConnection connection, JsonNode root, String requestId) {
+        if (authRequired()) {
+            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, AuthErrorCode.UNAUTHORIZED,
+                "Authenticate with the WebSocket Authorization header during hello."));
+            return;
+        }
+        JsonNode payload = root.path("payload");
+        String token = null;
+        if (payload.hasNonNull("token")) {
+            token = payload.path("token").asText();
+        } else if (payload.hasNonNull("authToken")) {
+            token = payload.path("authToken").asText();
+        } else if (payload.hasNonNull("accessToken")) {
+            token = payload.path("accessToken").asText();
+        } else if (root.hasNonNull("token")) {
+            token = root.path("token").asText();
+        }
+
+        if (token == null || token.isBlank()) {
+            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, AuthErrorCode.UNAUTHORIZED, "Missing authentication token in payload."));
+            return;
+        }
+
+        String providedDeviceId = payload.hasNonNull("deviceId") ? payload.path("deviceId").asText() : null;
+        authenticateConnection(connection, token, providedDeviceId, requestId, false);
+    }
+
+    private boolean authenticateConnection(ClientConnection connection, String token, String providedDeviceId,
+                                           String requestId, boolean authenticatedWelcome) {
+        if (jwtService == null || userRepository == null) {
+            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INTERNAL_ERROR, "Authentication service is not configured on server."));
+            return false;
+        }
+
+        try {
+            JwtClaims claims = jwtService.verifyToken(token, false);
+            UUID userId = claims.userId();
+
+            Optional<User> userOpt = userRepository.findById(userId);
+            if (userOpt.isEmpty()) {
+                sendEnvelope(connection.socket(), EventEnvelope.error(requestId, AuthErrorCode.UNAUTHORIZED, "User not found."));
+                return false;
+            }
+
+            User user = userOpt.get();
+            if (user.isDisabled()) {
+                sendEnvelope(connection.socket(), EventEnvelope.error(requestId, AuthErrorCode.ACCOUNT_DISABLED, "User account is disabled."));
+                connection.close(ProtocolConstants.CLOSE_ACCOUNT_DISABLED, "ACCOUNT_DISABLED: User account is disabled");
+                return false;
+            }
+
+            // The authenticated realtime channel is a Client channel. System
+            // administrators use the Server Control Center and never bind a
+            // client installation/device here.
+            if (user.isSystemAdmin()) {
+                throw new ForbiddenException("System administrators must use the Server Control Center", AuthErrorCode.ADMIN_LOGIN_REQUIRED);
+            }
+
+            // Resolve and prove the device belongs to the authenticated user and installation.
+            String resolvedDeviceId = providedDeviceId;
+            if (resolvedDeviceId == null || resolvedDeviceId.isBlank()) {
+                if (deviceRepository != null && connection.clientInstanceId() != null) {
+                    var devOpt = deviceRepository.findByClientInstanceId(connection.clientInstanceId());
+                    if (devOpt.isPresent()) {
+                        var dev = devOpt.get();
+                        if (dev.userId().equals(userId)) {
+                            resolvedDeviceId = dev.id();
+                        }
+                    }
+                }
+            }
+
+            if (authRequired()) {
+                if (resolvedDeviceId == null || resolvedDeviceId.isBlank()) {
+                    throw new UnauthorizedException("An enrolled device is required", AuthErrorCode.DEVICE_NOT_FOUND);
+                }
+                Device device = deviceRepository.findById(resolvedDeviceId)
+                    .orElseThrow(() -> new UnauthorizedException("Device not found", AuthErrorCode.DEVICE_NOT_FOUND));
+                if (!userId.equals(device.userId()) || !connection.clientInstanceId().equals(device.clientInstanceId())) {
+                    throw new UnauthorizedException("Device does not match this user and client installation", AuthErrorCode.DEVICE_CONFLICT);
+                }
+            }
+
+            String resolvedSessionId = claims.sessionId();
+            if (authRequired()) {
+                if (resolvedSessionId == null || resolvedSessionId.isBlank()) {
+                    throw new UnauthorizedException("Session binding is missing", AuthErrorCode.SESSION_EXPIRED);
+                }
+                UUID sessionUuid = UUID.fromString(resolvedSessionId);
+                var session = refreshTokenRepository.findById(sessionUuid)
+                    .orElseThrow(() -> new UnauthorizedException("Session no longer exists", AuthErrorCode.SESSION_REVOKED));
+                if (!userId.equals(session.userId())) {
+                    throw new UnauthorizedException("Session does not belong to the authenticated user", AuthErrorCode.UNAUTHORIZED);
+                }
+                if (session.revoked()) {
+                    throw new UnauthorizedException("Session has been revoked", AuthErrorCode.SESSION_REVOKED);
+                }
+                if (session.isExpired()) {
+                    throw new UnauthorizedException("Session has expired", AuthErrorCode.SESSION_EXPIRED);
+                }
+                refreshTokenRepository.updateLastSeen(sessionUuid, Instant.now());
+            }
+            if (resolvedSessionId == null || resolvedSessionId.isBlank()) {
+                resolvedSessionId = claims.tokenId();
+            }
+
+            // Bind in clientRegistry
+            clientRegistry.bindIdentity(connection.connectionId(), userId, user.username(), resolvedDeviceId, resolvedSessionId);
+
+            // Trigger lastSeen update on device if deviceId is resolved
+            triggerDeviceLastSeenSync(connection);
+
+            if (authenticatedWelcome) {
+                sendEnvelope(connection.socket(), EventEnvelope.authenticatedWelcome(connection.connectionId(),
+                    ProtocolConstants.SERVER_VERSION, ProtocolConstants.PROTOCOL_VERSION, heartbeatIntervalMs,
+                    userId.toString(), user.username(), resolvedDeviceId, resolvedSessionId));
+                return true;
+            }
+
+            // Legacy unauthenticated gateway compatibility.
+            Map<String, Object> ackPayload = new LinkedHashMap<>();
+            ackPayload.put("authenticated", true);
+            ackPayload.put("userId", userId.toString());
+            ackPayload.put("username", user.username());
+            ackPayload.put("email", user.email());
+            ackPayload.put("deviceId", resolvedDeviceId);
+            ackPayload.put("sessionId", resolvedSessionId);
+            sendEnvelope(connection.socket(), EventEnvelope.authAck(requestId, ackPayload));
+
+            ServerEventLogger.log(ServerEvent.HANDSHAKE_OK, connection.connectionId(),
+                    "Authenticated client connection for user: " + user.username() + " (Device: " + resolvedDeviceId + ")");
+            return true;
+
+        } catch (UnauthorizedException e) {
+            String code = e.errorCode() != null ? e.errorCode() : AuthErrorCode.UNAUTHORIZED;
+            if (authenticatedWelcome) {
+                rejectHandshake(connection, requestId, code, e.getMessage());
+            } else {
+                sendEnvelope(connection.socket(), EventEnvelope.error(requestId, code, e.getMessage()));
+            }
+            return false;
+        } catch (ForbiddenException e) {
+            String code = e.errorCode() != null ? e.errorCode() : AuthErrorCode.ACCOUNT_DISABLED;
+            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, code, e.getMessage()));
+            connection.close(ProtocolConstants.CLOSE_ACCOUNT_DISABLED, code + ": " + e.getMessage());
+            return false;
+        } catch (Exception e) {
+            AppLogger.error(TAG, "Error authenticating connection: " + e.getMessage(), e);
+            if (authenticatedWelcome) {
+                rejectHandshake(connection, requestId, ProtocolConstants.ERR_INTERNAL_ERROR, "Authentication failed.");
+            } else {
+                sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INTERNAL_ERROR, "Authentication failed."));
+            }
+            return false;
+        }
+    }
+
+    private boolean authRequired() {
+        return jwtService != null && userRepository != null && deviceRepository != null && refreshTokenRepository != null;
+    }
+
+    private static String bearerToken(String authorization) {
+        if (authorization == null || !authorization.regionMatches(true, 0, "Bearer ", 0, 7)) return null;
+        String token = authorization.substring(7).trim();
+        return token.isBlank() ? null : token;
+    }
+
+    private void rejectHandshake(ClientConnection connection, String requestId, String code, String message) {
+        sendEnvelope(connection.socket(), EventEnvelope.error(requestId, code, message));
+        clientRegistry.remove(connection.connectionId());
+        connection.close(1008, code);
+    }
+
+    private void triggerDeviceLastSeenSync(ClientConnection connection) {
+        if (connection == null || !connection.isAuthenticated()) return;
+        String devId = connection.deviceId();
+        if (devId != null && !devId.isBlank() && deviceRepository != null) {
+            if (connection.shouldUpdateDeviceLastSeen(15_000L)) {
+                connection.markDeviceLastSeenUpdated();
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        deviceRepository.updateLastSeen(devId, Instant.now());
+                    } catch (Exception e) {
+                        AppLogger.warn(TAG, "Failed to update device last_seen_at for " + devId + ": " + e.getMessage());
+                    }
+                });
+            }
         }
     }
 

@@ -139,6 +139,10 @@ public class TransferCoordinator {
         return Optional.ofNullable(transfers.get(transferId));
     }
 
+    public long countActiveTransfers() {
+        return transfers.values().stream().filter(t -> !t.status().isTerminal()).count();
+    }
+
     /**
      * Cleans up all non-terminal transfers involving a disconnected client.
      * Returns list of affected transfers so peer can be notified.

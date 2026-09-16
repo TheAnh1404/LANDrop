@@ -4,10 +4,12 @@ import org.java_websocket.WebSocket;
 
 import java.time.Instant;
 import java.util.Objects;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Thread-safe representation of an active client connection on the LANDrop Server.
+ * Supports authentication binding to User, Session, and Device (FOUNDATION-04A.8).
  */
 public final class ClientConnection {
 
@@ -25,6 +27,14 @@ public final class ClientConnection {
 
     private final AtomicReference<Instant> lastHeartbeatAt;
     private final AtomicReference<ClientStatus> status;
+
+    // Authentication & Identity Binding (FOUNDATION-04A)
+    private final AtomicReference<UUID> userId = new AtomicReference<>(null);
+    private final AtomicReference<String> username = new AtomicReference<>(null);
+    private final AtomicReference<String> deviceId = new AtomicReference<>(null);
+    private final AtomicReference<String> sessionId = new AtomicReference<>(null);
+    private final AtomicReference<Instant> authenticatedAt = new AtomicReference<>(null);
+    private final AtomicReference<Instant> lastDeviceSeenSyncAt = new AtomicReference<>(Instant.EPOCH);
 
     public ClientConnection(String connectionId,
                             String clientInstanceId,
@@ -126,12 +136,69 @@ public final class ClientConnection {
         }
     }
 
+    // =========================================================================
+    // Authentication & Identity Binding Methods (FOUNDATION-04A.8)
+    // =========================================================================
+
+    public boolean isAuthenticated() {
+        return userId.get() != null;
+    }
+
+    public UUID userId() {
+        return userId.get();
+    }
+
+    public String username() {
+        return username.get();
+    }
+
+    public String deviceId() {
+        return deviceId.get();
+    }
+
+    public String sessionId() {
+        return sessionId.get();
+    }
+
+    public Instant authenticatedAt() {
+        return authenticatedAt.get();
+    }
+
+    public void bindIdentity(UUID userId, String username, String deviceId, String sessionId) {
+        this.userId.set(userId);
+        this.username.set(username);
+        this.deviceId.set(deviceId);
+        this.sessionId.set(sessionId);
+        this.authenticatedAt.set(Instant.now());
+    }
+
+    public void unbindIdentity() {
+        this.userId.set(null);
+        this.username.set(null);
+        this.deviceId.set(null);
+        this.sessionId.set(null);
+        this.authenticatedAt.set(null);
+    }
+
+    public boolean shouldUpdateDeviceLastSeen(long throttleMs) {
+        Instant now = Instant.now();
+        Instant lastSync = lastDeviceSeenSyncAt.get();
+        return java.time.Duration.between(lastSync, now).toMillis() >= throttleMs;
+    }
+
+    public void markDeviceLastSeenUpdated() {
+        this.lastDeviceSeenSyncAt.set(Instant.now());
+    }
+
     @Override
     public String toString() {
         return "ClientConnection{" +
                 "connectionId='" + connectionId + '\'' +
                 ", clientInstanceId='" + clientInstanceId + '\'' +
                 ", deviceName='" + deviceName + '\'' +
+                ", userId=" + userId.get() +
+                ", deviceId='" + deviceId.get() + '\'' +
+                ", sessionId='" + sessionId.get() + '\'' +
                 ", remoteAddress='" + remoteAddress + '\'' +
                 ", status=" + status.get() +
                 '}';
