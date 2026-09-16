@@ -179,6 +179,53 @@ class ClientRealtimeServiceTest {
         } finally { client.dispose(); }
     }
 
+    @Test void gatewayRejoinsAnActiveChannelAfterReconnect() throws Exception {
+        var created = new java.util.concurrent.LinkedBlockingQueue<FakeTransport>();
+        ClientRealtimeService client = new ClientRealtimeService(URI.create("ws://server/api/realtime"),
+                () -> CompletableFuture.completedFuture(null), new ClientInstanceService("gateway-" + System.nanoTime()),
+                () -> "token", () -> "Laptop", (uri, token) -> {
+                    FakeTransport transport = new FakeTransport();
+                    created.add(transport);
+                    return transport;
+                });
+        RealtimeGateway gateway = new RealtimeGateway(client);
+        var ready = new java.util.concurrent.atomic.AtomicInteger();
+        try {
+            gateway.subscribeChannel("channel-1", new RealtimeGateway.SubscriptionListener() {
+                @Override public void onMessage(String payload) { }
+                @Override public void onReady() { ready.incrementAndGet(); }
+            });
+            client.start();
+            FakeTransport first = created.poll(2, java.util.concurrent.TimeUnit.SECONDS);
+            assertNotNull(first);
+            completeWelcome(first);
+            acknowledgeJoin(first);
+            assertEquals(1, ready.get());
+
+            first.listener.onClose(1006, "Network interrupted");
+            FakeTransport second = created.poll(3, java.util.concurrent.TimeUnit.SECONDS);
+            assertNotNull(second);
+            completeWelcome(second);
+            acknowledgeJoin(second);
+            assertEquals(2, ready.get());
+        } finally {
+            gateway.close();
+            client.dispose();
+        }
+    }
+
+    private static void completeWelcome(FakeTransport transport) {
+        transport.receive(RealtimeEnvelope.create("welcome", RealtimeEnvelope.newPayload()
+                .put("protocolVersion", 1).put("heartbeatIntervalMs", 60_000)).toJson());
+    }
+
+    private static void acknowledgeJoin(FakeTransport transport) {
+        RealtimeEnvelope join = RealtimeEnvelope.parse(transport.sent.getLast());
+        assertEquals("channel.join", join.type());
+        transport.receive(new RealtimeEnvelope("channel.joined", join.requestId(), "2026-01-01T00:00:00Z",
+                RealtimeEnvelope.newPayload().put("channelId", "channel-1")).toJson());
+    }
+
     private static final class FakeTransport implements RealtimeTransport {
         private Listener listener; private boolean connected; private final List<String> sent = new java.util.concurrent.CopyOnWriteArrayList<>();
         private final CompletableFuture<Void> helloSent = new CompletableFuture<>();

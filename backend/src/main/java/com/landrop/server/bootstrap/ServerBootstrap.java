@@ -67,6 +67,7 @@ public class ServerBootstrap {
     private DeviceHttpHandler deviceHttpHandler;
     private WorkspaceHttpServer workspaceHttpServer;
     private ChatHttpServer chatHttpServer;
+    private ChannelChatService channelChatService;
     private FileHttpServer fileHttpServer;
     private AdminBootstrapService adminBootstrapService;
     private AdminAuthMiddleware adminAuthMiddleware;
@@ -137,13 +138,13 @@ public class ServerBootstrap {
                 // successful login.
                 if (this.workspaceHttpServer == null) {
                     var mapper = com.landrop.auth.server.AuthHttpServer.createObjectMapper();
-                    var chatService = new ChannelChatService();
+                    this.channelChatService = new ChannelChatService();
                     var fileService = new FileManagementService();
                     var transferService = new TransferCoordinationService();
                     var fileRoutes = new FileHttpServer(this.authMiddleware, fileService, transferService, mapper);
                     this.workspaceHttpServer = new WorkspaceHttpServer(
-                        this.authMiddleware, new WorkspaceService(), chatService, fileRoutes, mapper);
-                    this.chatHttpServer = new ChatHttpServer(this.authMiddleware, chatService, mapper);
+                        this.authMiddleware, new WorkspaceService(), this.channelChatService, fileRoutes, mapper);
+                    this.chatHttpServer = new ChatHttpServer(this.authMiddleware, this.channelChatService, mapper);
                     this.fileHttpServer = fileRoutes;
                 }
                 this.adminBootstrapService = new AdminBootstrapService(this.userRepository);
@@ -207,6 +208,8 @@ public class ServerBootstrap {
             config.getHeartbeatTimeoutMs()
         );
         realtimeServer.setAuthDependencies(this.jwtService, this.userRepository, this.deviceRepository, this.refreshTokenRepository);
+        realtimeServer.setChannelChatService(this.channelChatService);
+        if (this.channelChatService != null) this.channelChatService.setBroadcaster(realtimeServer);
         realtimeServer.start();
         realtimeServer.awaitReady();
 

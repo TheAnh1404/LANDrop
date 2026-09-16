@@ -5,6 +5,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.landrop.server.clients.ClientConnection;
 import com.landrop.server.clients.ClientRegistry;
 import com.landrop.server.clients.ClientStatus;
+import com.landrop.chat.service.ChannelBroadcaster;
+import com.landrop.chat.service.ChannelChatService;
 import com.landrop.server.logging.ServerEvent;
 import com.landrop.server.logging.ServerEventLogger;
 import com.landrop.server.protocol.EventEnvelope;
@@ -33,7 +35,7 @@ import com.landrop.database.model.User;
  * Foundation Realtime WebSocket Gateway handling handshakes, heartbeats,
  * echo tests, and control-plane transfer coordination.
  */
-public class FoundationRealtimeServer extends WebSocketServer {
+public class FoundationRealtimeServer extends WebSocketServer implements ChannelBroadcaster {
 
     private static final String TAG = "FoundationRealtimeServer";
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -54,6 +56,8 @@ public class FoundationRealtimeServer extends WebSocketServer {
     private com.landrop.database.repository.DeviceRepository deviceRepository;
     private com.landrop.auth.repository.RefreshTokenRepository refreshTokenRepository;
     private final Map<WebSocket, String> authorizationHeaders = new ConcurrentHashMap<>();
+    private final Map<UUID, Set<String>> channelSubscribers = new ConcurrentHashMap<>();
+    private volatile ChannelChatService channelChatService;
 
     public FoundationRealtimeServer(InetSocketAddress address,
                                     ClientRegistry clientRegistry,
@@ -77,6 +81,11 @@ public class FoundationRealtimeServer extends WebSocketServer {
         this.userRepository = userRepository;
         this.deviceRepository = deviceRepository;
         this.refreshTokenRepository = refreshTokenRepository;
+    }
+
+    /** Connects persistent workspace chat broadcasts to the authenticated client gateway. */
+    public void setChannelChatService(ChannelChatService channelChatService) {
+        this.channelChatService = channelChatService;
     }
 
     public void awaitReady() throws Exception {
@@ -189,6 +198,8 @@ public class FoundationRealtimeServer extends WebSocketServer {
                 case ProtocolConstants.EVENT_TRANSFER_CANCEL -> {
                     handleTransferCancel(connection, root, requestId);
                 }
+                case "channel.join" -> handleChannelJoin(connection, root.path("payload"), requestId);
+                case "channel.leave" -> handleChannelLeave(connection, root.path("payload"), requestId);
                 default -> {
                     sendEnvelope(socket, EventEnvelope.error(requestId, ProtocolConstants.ERR_UNKNOWN_EVENT,
                             "Unknown event type: " + type));
@@ -199,6 +210,104 @@ public class FoundationRealtimeServer extends WebSocketServer {
             // Guarantee server does not crash on malformed JSON or illegal payloads
             sendEnvelope(socket, EventEnvelope.error(null, ProtocolConstants.ERR_INVALID_JSON, "Failed to process message: " + e.getMessage()));
         }
+    }
+
+    /**
+     * A channel room is only a delivery subscription. Every join and every
+     * broadcast verifies current workspace membership, so a stale socket never
+     * receives messages after access has been removed.
+     */
+    private void handleChannelJoin(ClientConnection connection, JsonNode payload, String requestId) {
+        UUID channelId = channelId(payload, requestId, connection);
+        if (channelId == null) return;
+        ChannelChatService chat = channelChatService;
+        if (chat == null) {
+            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INTERNAL_ERROR,
+                    "Realtime chat is not available."));
+            return;
+        }
+        try {
+            if (!connection.isAuthenticated() || !chat.canAccess(connection.userId(), channelId)) {
+                sendEnvelope(connection.socket(), EventEnvelope.error(requestId, "FORBIDDEN",
+                        "Channel access is unavailable."));
+                return;
+            }
+            channelSubscribers.computeIfAbsent(channelId, ignored -> ConcurrentHashMap.newKeySet())
+                    .add(connection.connectionId());
+            sendEnvelope(connection.socket(), EventEnvelope.event("channel.joined", requestId,
+                    Map.of("channelId", channelId.toString())));
+        } catch (Exception error) {
+            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INTERNAL_ERROR,
+                    "Could not join the chat channel."));
+        }
+    }
+
+    private void handleChannelLeave(ClientConnection connection, JsonNode payload, String requestId) {
+        UUID channelId = channelId(payload, requestId, connection);
+        if (channelId == null) return;
+        removeChannelSubscription(connection.connectionId(), channelId);
+        sendEnvelope(connection.socket(), EventEnvelope.event("channel.left", requestId,
+                Map.of("channelId", channelId.toString())));
+    }
+
+    private UUID channelId(JsonNode payload, String requestId, ClientConnection connection) {
+        try {
+            String value = payload.path("channelId").asText("");
+            if (value.isBlank()) throw new IllegalArgumentException();
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException invalid) {
+            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INVALID_PAYLOAD,
+                    "A valid channelId is required."));
+            return null;
+        }
+    }
+
+    @Override
+    public void broadcast(UUID channelId, Object event) {
+        if (channelId == null || event == null) return;
+        ChannelChatService chat = channelChatService;
+        if (chat == null) return;
+        Set<String> subscribers = channelSubscribers.get(channelId);
+        if (subscribers == null || subscribers.isEmpty()) return;
+
+        String eventType = eventType(event);
+        for (String connectionId : Set.copyOf(subscribers)) {
+            ClientConnection connection = clientRegistry.get(connectionId).orElse(null);
+            if (connection == null || !connection.isOpen() || !connection.isAuthenticated()) {
+                removeChannelSubscription(connectionId, channelId);
+                continue;
+            }
+            try {
+                if (!chat.canAccess(connection.userId(), channelId)) {
+                    removeChannelSubscription(connectionId, channelId);
+                    continue;
+                }
+                sendEnvelope(connection.socket(), EventEnvelope.event(eventType, null, event));
+            } catch (Exception ignored) {
+                // Treat an unavailable authorization check as no permission.
+                removeChannelSubscription(connectionId, channelId);
+            }
+        }
+    }
+
+    private static String eventType(Object event) {
+        if (event instanceof Map<?, ?> map) {
+            Object type = map.get("type");
+            if (type instanceof String value && !value.isBlank()) return value;
+        }
+        return "message.updated";
+    }
+
+    private void removeChannelSubscription(String connectionId, UUID channelId) {
+        Set<String> subscribers = channelSubscribers.get(channelId);
+        if (subscribers != null) {
+            subscribers.remove(connectionId);
+            if (subscribers.isEmpty()) channelSubscribers.remove(channelId, subscribers);
+        }
+    }
+
+    private void removeAllChannelSubscriptions(String connectionId) {
+        channelSubscribers.forEach((channelId, subscribers) -> removeChannelSubscription(connectionId, channelId));
     }
 
     private void handleHello(WebSocket socket, JsonNode root, String requestId) {
@@ -419,6 +528,7 @@ public class FoundationRealtimeServer extends WebSocketServer {
         ClientConnection connection = socket.getAttachment();
         if (connection != null) {
             String connId = connection.connectionId();
+            removeAllChannelSubscriptions(connId);
             clientRegistry.remove(connId);
             notifyDisconnectedPeerTransfers(connId);
             ServerEventLogger.log(ServerEvent.CLIENT_DISCONNECTED, connId,

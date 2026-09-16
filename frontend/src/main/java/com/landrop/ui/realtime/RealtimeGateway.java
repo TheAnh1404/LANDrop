@@ -12,7 +12,12 @@ import java.util.concurrent.ConcurrentHashMap;
 
 /** Chat adapter over the sole ClientRealtimeService; it owns no socket or retry timer. */
 public final class RealtimeGateway implements AutoCloseable {
-    public interface SubscriptionListener { void onMessage(String payload); default void onError(Throwable error) { } }
+    public interface SubscriptionListener {
+        void onMessage(String payload);
+        /** Invoked after the server has accepted this channel room subscription. */
+        default void onReady() { }
+        default void onError(Throwable error) { }
+    }
     private final ClientRealtimeService client;
     private final ObjectProperty<RealtimeConnectionStatus> status = new SimpleObjectProperty<>(RealtimeConnectionStatus.IDLE);
     private final Map<String, Map<SubscriptionListener, AutoCloseable[]>> channelListeners = new ConcurrentHashMap<>();
@@ -42,7 +47,8 @@ public final class RealtimeGateway implements AutoCloseable {
     private void join(String channelId, SubscriptionListener listener) {
         if (!client.isConnected()) return;
         ObjectNode payload = RealtimeEnvelope.newPayload(); payload.put("channelId", channelId);
-        client.request("channel.join", payload).exceptionally(error -> { listener.onError(error); return null; });
+        client.request("channel.join", payload).thenRun(listener::onReady)
+                .exceptionally(error -> { listener.onError(error); return null; });
     }
     private void unsubscribe(String channelId, SubscriptionListener listener) {
         Map<SubscriptionListener, AutoCloseable[]> listeners = channelListeners.get(channelId);

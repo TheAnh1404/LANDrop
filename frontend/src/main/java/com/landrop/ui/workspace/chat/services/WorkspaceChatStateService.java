@@ -118,8 +118,22 @@ public final class WorkspaceChatStateService implements AutoCloseable {
         if (closed) return;
         channelSubscription = realtime.subscribeChannel(channelId, new RealtimeGateway.SubscriptionListener() {
             @Override public void onMessage(String payload) { receiveEvent(payload, channelId, token); }
+            @Override public void onReady() { reloadRecentMessages(channelId, token); }
             @Override public void onError(Throwable error) { if (token == generation.get()) run(() -> errorMessage.set("Realtime connection failed; message history remains available.")); }
         });
+    }
+
+    /** Restores any messages missed while the WebSocket was reconnecting. */
+    private void reloadRecentMessages(String channelId, long token) {
+        api.listMessages(channelId, PAGE_SIZE, null).whenComplete((page, failure) -> run(() -> {
+            if (closed || token != generation.get() || activeChannel.get() == null
+                    || !channelId.equals(activeChannel.get().id())) return;
+            if (failure != null) {
+                errorMessage.set("Realtime reconnected, but recent messages could not be synchronized.");
+                return;
+            }
+            merge(page.messages());
+        }));
     }
     private void receiveEvent(String payload, String channelId, long token) {
         try { JsonNode root = JSON.readTree(payload); String type = root.path("type").asText();
