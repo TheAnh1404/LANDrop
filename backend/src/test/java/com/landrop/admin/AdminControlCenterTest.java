@@ -129,6 +129,30 @@ public class AdminControlCenterTest {
     }
 
     @Test
+    @DisplayName("03A.1b: Fixed local administrator credential is restored on bootstrap")
+    void testFixedAdminCredential() throws Exception {
+        ServerConfig config = new ServerConfig("127.0.0.1", 0, 0, 1, 1000L, 3000L, "test", "INFO");
+        bootstrap = new ServerBootstrap(config);
+        bootstrap.start();
+        org.junit.jupiter.api.Assumptions.assumeTrue(bootstrap.getUserRepository() != null, "PostgreSQL repository required for admin credential test");
+
+        UserRepository users = bootstrap.getUserRepository();
+        AdminBootstrapService fixedAdmin = new AdminBootstrapService(users);
+        User admin = fixedAdmin.ensureSystemAdminExists();
+        User persisted = users.findByUsername(AdminBootstrapService.FIXED_ADMIN_USERNAME).orElseThrow();
+        assertTrue(PasswordHasher.verify(AdminBootstrapService.FIXED_ADMIN_PASSWORD, persisted.passwordHash()));
+        assertTrue(persisted.isSystemAdmin());
+        assertTrue(persisted.isActive());
+
+        users.updatePasswordHash(persisted.id(), PasswordHasher.hash("a-different-password"));
+        fixedAdmin.ensureSystemAdminExists();
+        User restored = users.findById(persisted.id()).orElseThrow();
+        assertTrue(PasswordHasher.verify(AdminBootstrapService.FIXED_ADMIN_PASSWORD, restored.passwordHash()));
+        assertThrows(UnsupportedOperationException.class,
+                () -> com.landrop.admin.security.AdminPasswordResetMain.main(new String[0]));
+    }
+
+    @Test
     @DisplayName("03A.2: AdminAuthMiddleware enforces SYSTEM_ADMIN and active status")
     void testAdminAuthMiddlewareEnforcement() {
         AdminAuthMiddleware middleware = new AdminAuthMiddleware(jwtService);

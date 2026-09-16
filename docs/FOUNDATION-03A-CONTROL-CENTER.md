@@ -38,22 +38,10 @@ System administrative privileges are decoupled from workspace memberships to ens
   - Returns `401 Unauthorized` for missing/invalid tokens; `403 Forbidden` for non-admin accounts.
 
 ### Bootstrapping
-- `AdminBootstrapService` initializes the system administrator on server startup:
-  - Honors `ADMIN_USERNAME`, `ADMIN_PASSWORD`, and `ADMIN_EMAIL` environment variables if set.
-  - Generates secure temporary credentials if no system admin exists.
-  - Never logs plaintext credentials.
-
-### Administrative password recovery
-If the generated password is lost, reset the existing administrator explicitly. The
-password is read from the environment and is never passed as a command-line argument:
-
-```powershell
-$env:LANDROP_ADMIN_RESET_PASSWORD = "new-password-8+"
-./mvnw -q -pl backend exec:java "-Dexec.mainClass=com.landrop.admin.security.AdminPasswordResetMain"
-```
-
-The command updates the oldest `SYSTEM_ADMIN` account and exits. It does not print the
-password. Clear the environment variable after use.
+- `AdminBootstrapService` creates or synchronizes the fixed local account on every server start.
+- Username: `admin`; password: `admin123`; email: `admin@landrop.local`.
+- The account is always activated and assigned `SYSTEM_ADMIN`; environment variables do not override it.
+- Password reset tooling is disabled. If its database hash is changed manually, the next server start restores `admin123`.
 
 ---
 
