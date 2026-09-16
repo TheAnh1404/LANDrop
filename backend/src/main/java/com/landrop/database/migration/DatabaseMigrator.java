@@ -26,7 +26,9 @@ public final class DatabaseMigrator {
         "/db/migration/V2__auth_sessions_phase15.sql",
         "/db/migration/V3__realtime_message_identity.sql",
         "/db/migration/V4__persistent_chat_phase17.sql",
-        "/db/migration/V5__file_management_phase18.sql"
+        "/db/migration/V5__file_management_phase18.sql",
+        "/db/migration/V6__server_control_center_phase03.sql",
+        "/db/migration/V7__authentication_device_enrollment_phase04.sql"
     );
 
     private final DatabaseManager databaseManager;
@@ -101,11 +103,13 @@ public final class DatabaseMigrator {
                 }
             }
 
-            // Verify password_hash column in users
-            String colCheckSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = 'password_hash')";
-            try (ResultSet rs = stmt.executeQuery(colCheckSql)) {
-                if (!rs.next() || !rs.getBoolean(1)) {
-                    throw new SQLException("Required column password_hash missing in users table");
+            // Verify password_hash, status, and system_role columns in users
+            for (String col : List.of("password_hash", "status", "system_role")) {
+                String colCheckSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = '" + col + "')";
+                try (ResultSet rs = stmt.executeQuery(colCheckSql)) {
+                    if (!rs.next() || !rs.getBoolean(1)) {
+                        throw new SQLException("Required column " + col + " missing in users table");
+                    }
                 }
             }
 
@@ -130,6 +134,26 @@ public final class DatabaseMigrator {
             try (ResultSet rs = stmt.executeQuery(foldersDelSql)) {
                 if (!rs.next() || !rs.getBoolean(1)) {
                     throw new SQLException("Required column deleted_at missing in folders table");
+                }
+            }
+
+            // Verify FOUNDATION-04A columns in refresh_tokens
+            for (String col : List.of("last_seen_at", "revoked_at", "device_id")) {
+                String tokenColSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'refresh_tokens' AND column_name = '" + col + "')";
+                try (ResultSet rs = stmt.executeQuery(tokenColSql)) {
+                    if (!rs.next() || !rs.getBoolean(1)) {
+                        throw new SQLException("Required column " + col + " missing in refresh_tokens table");
+                    }
+                }
+            }
+
+            // Verify FOUNDATION-04A columns in devices
+            for (String col : List.of("client_instance_id", "platform", "client_version", "status")) {
+                String devColSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'devices' AND column_name = '" + col + "')";
+                try (ResultSet rs = stmt.executeQuery(devColSql)) {
+                    if (!rs.next() || !rs.getBoolean(1)) {
+                        throw new SQLException("Required column " + col + " missing in devices table");
+                    }
                 }
             }
         }

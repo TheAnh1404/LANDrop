@@ -1,9 +1,16 @@
 package com.landrop.auth.server;
 
+import com.landrop.auth.exception.ForbiddenException;
 import com.landrop.auth.exception.UnauthorizedException;
+import com.landrop.auth.model.AuthErrorCode;
 import com.landrop.auth.security.JwtClaims;
 import com.landrop.auth.security.JwtService;
+import com.landrop.database.model.User;
+import com.landrop.database.repository.UserRepository;
 import com.sun.net.httpserver.HttpExchange;
+
+import java.sql.SQLException;
+import java.util.Optional;
 
 /**
  * Authentication middleware for verifying Bearer JWT tokens on protected HTTP endpoints.
@@ -11,9 +18,15 @@ import com.sun.net.httpserver.HttpExchange;
 public class AuthMiddleware {
 
     private final JwtService jwtService;
+    private final UserRepository userRepository;
 
     public AuthMiddleware(JwtService jwtService) {
+        this(jwtService, null);
+    }
+
+    public AuthMiddleware(JwtService jwtService, UserRepository userRepository) {
         this.jwtService = jwtService;
+        this.userRepository = userRepository;
     }
 
     /**
@@ -39,6 +52,27 @@ public class AuthMiddleware {
             throw new UnauthorizedException("Bearer token cannot be empty");
         }
 
-        return jwtService.verifyToken(token, false);
+        JwtClaims claims = jwtService.verifyToken(token, false);
+
+        if (userRepository != null) {
+            try {
+                Optional<User> userOpt = userRepository.findById(claims.userId());
+                if (userOpt.isPresent() && userOpt.get().isDisabled()) {
+                    throw new ForbiddenException("User account is disabled", AuthErrorCode.ACCOUNT_DISABLED);
+                }
+            } catch (SQLException ignored) {
+                // Database connectivity issues should not crash token verification if offline
+            }
+        }
+
+        return claims;
+    }
+
+    public JwtService getJwtService() {
+        return jwtService;
+    }
+
+    public UserRepository getUserRepository() {
+        return userRepository;
     }
 }

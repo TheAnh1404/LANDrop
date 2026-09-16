@@ -111,9 +111,9 @@ public final class DatabaseManager implements AutoCloseable {
     }
 
     public static DatabaseManager getInstance() {
-        if (instance == null) {
+        if (instance == null || instance.closed.get()) {
             synchronized (DatabaseManager.class) {
-                if (instance == null) {
+                if (instance == null || instance.closed.get()) {
                     String url = DatabaseConfig.getDatabaseUrl();
                     instance = new DatabaseManager(url);
                 }
@@ -152,6 +152,11 @@ public final class DatabaseManager implements AutoCloseable {
         if (closed.compareAndSet(false, true)) {
             AppLogger.info(TAG, "Closing HikariCP connection pool...");
             dataSource.close();
+            synchronized (DatabaseManager.class) {
+                if (instance == this) {
+                    instance = null;
+                }
+            }
         }
     }
 

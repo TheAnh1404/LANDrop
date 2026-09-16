@@ -55,24 +55,39 @@ public class JwtService {
         return createToken(user, "access", accessExpirySeconds, accessSecret);
     }
 
+    public String generateAccessToken(User user, String sessionId) {
+        return createToken(user, "access", accessExpirySeconds, accessSecret, sessionId);
+    }
+
     public String generateRefreshToken(User user) {
         return createToken(user, "refresh", refreshExpirySeconds, refreshSecret);
     }
 
+    public String generateRefreshToken(User user, String sessionId) {
+        return createToken(user, "refresh", refreshExpirySeconds, refreshSecret, sessionId);
+    }
+
     public String createToken(User user, String tokenType, long durationSeconds, String secret) {
+        return createToken(user, tokenType, durationSeconds, secret, null);
+    }
+
+    public String createToken(User user, String tokenType, long durationSeconds, String secret, String sessionId) {
         Instant now = Instant.now();
         Instant expiresAt = now.plusSeconds(durationSeconds);
         String jti = UUID.randomUUID().toString();
 
-        Map<String, Object> claims = Map.of(
-            "sub", user.id().toString(),
-            "email", user.email(),
-            "username", user.username(),
-            "type", tokenType,
-            "iat", now.getEpochSecond(),
-            "exp", expiresAt.getEpochSecond(),
-            "jti", jti
-        );
+        Map<String, Object> claims = new java.util.LinkedHashMap<>();
+        claims.put("sub", user.id().toString());
+        claims.put("email", user.email());
+        claims.put("username", user.username());
+        claims.put("role", user.systemRole() != null ? user.systemRole() : "USER");
+        claims.put("type", tokenType);
+        claims.put("iat", now.getEpochSecond());
+        claims.put("exp", expiresAt.getEpochSecond());
+        claims.put("jti", jti);
+        if (sessionId != null && !sessionId.isBlank()) {
+            claims.put("sid", sessionId);
+        }
 
         try {
             String payloadJson = objectMapper.writeValueAsString(claims);
@@ -128,10 +143,12 @@ public class JwtService {
             String sub = payload.hasNonNull("sub") ? payload.get("sub").asText() : null;
             String email = payload.hasNonNull("email") ? payload.get("email").asText() : null;
             String username = payload.hasNonNull("username") ? payload.get("username").asText() : null;
+            String role = payload.hasNonNull("role") ? payload.get("role").asText() : "USER";
             String type = payload.hasNonNull("type") ? payload.get("type").asText() : null;
             long iat = payload.hasNonNull("iat") ? payload.get("iat").asLong() : 0;
             long exp = payload.hasNonNull("exp") ? payload.get("exp").asLong() : 0;
             String jti = payload.hasNonNull("jti") ? payload.get("jti").asText() : null;
+            String sessionId = payload.hasNonNull("sid") ? payload.get("sid").asText() : null;
 
             if (sub == null || sub.isBlank()) {
                 throw new UnauthorizedException("Invalid token claims: missing subject");
@@ -150,10 +167,12 @@ public class JwtService {
                 UUID.fromString(sub),
                 email,
                 username,
+                role,
                 type,
                 Instant.ofEpochSecond(iat),
                 expiresAt,
-                jti
+                jti,
+                sessionId
             );
         } catch (UnauthorizedException e) {
             throw e;

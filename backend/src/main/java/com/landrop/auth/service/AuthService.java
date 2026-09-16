@@ -2,8 +2,10 @@ package com.landrop.auth.service;
 
 import com.landrop.auth.dto.*;
 import com.landrop.auth.exception.ConflictException;
+import com.landrop.auth.exception.ForbiddenException;
 import com.landrop.auth.exception.UnauthorizedException;
 import com.landrop.auth.exception.ValidationException;
+import com.landrop.auth.model.AuthErrorCode;
 import com.landrop.auth.model.RefreshToken;
 import com.landrop.auth.repository.RefreshTokenRepository;
 import com.landrop.auth.security.JwtClaims;
@@ -79,6 +81,20 @@ public class AuthService {
     }
 
     public AuthResponse login(LoginRequest request) throws SQLException {
+        return login(request, false);
+    }
+
+    /** Authenticates a regular LANDrop Client user. System administrators use the Control Center endpoint. */
+    public AuthResponse loginClient(LoginRequest request) throws SQLException {
+        return login(request, false);
+    }
+
+    /** Authenticates a SYSTEM_ADMIN for the Server Control Center only. */
+    public AuthResponse loginAdmin(LoginRequest request) throws SQLException {
+        return login(request, true);
+    }
+
+    private AuthResponse login(LoginRequest request, boolean adminLogin) throws SQLException {
         if (request == null) {
             throw new ValidationException("Login payload cannot be empty");
         }
@@ -94,21 +110,34 @@ public class AuthService {
 
         if (userOpt.isEmpty()) {
             AppLogger.warn(TAG, "Failed login attempt: unknown user '" + identifier + "'");
-            throw new UnauthorizedException("Invalid email/username or password");
+            throw new UnauthorizedException("Invalid email/username or password", AuthErrorCode.INVALID_CREDENTIALS);
         }
 
         User user = userOpt.get();
 
-        // 2. Verify password
+        // 2. Verify account is not disabled
+        if (user.isDisabled()) {
+            AppLogger.warn(TAG, "Failed login attempt: account is disabled for user '" + identifier + "'");
+            throw new ForbiddenException("User account is disabled", AuthErrorCode.ACCOUNT_DISABLED);
+        }
+
+        // 3. Verify password
         if (user.passwordHash() == null || !PasswordHasher.verify(request.password(), user.passwordHash())) {
             AppLogger.warn(TAG, "Failed login attempt: invalid credentials for user '" + identifier + "'");
-            throw new UnauthorizedException("Invalid email/username or password");
+            throw new UnauthorizedException("Invalid email/username or password", AuthErrorCode.INVALID_CREDENTIALS);
+        }
+
+        if (adminLogin != user.isSystemAdmin()) {
+            if (adminLogin) {
+                throw new ForbiddenException("Server Control Center access requires a system administrator account", AuthErrorCode.ADMIN_REQUIRED);
+            }
+            throw new ForbiddenException("System administrators must sign in through the Server Control Center", AuthErrorCode.ADMIN_LOGIN_REQUIRED);
         }
 
         AppLogger.info(TAG, "User logged in successfully: " + user.username() + " (" + user.id() + ")");
 
-        // 3. Issue tokens
-        return issueAuthTokens(user);
+        // 4. Issue tokens
+        return issueAuthTokens(user, request.deviceId());
     }
 
     public AuthResponse refresh(RefreshRequest request) throws SQLException {
@@ -117,10 +146,15 @@ public class AuthService {
         }
         request.validate();
 
-        return refresh(request.refreshToken());
+        return refreshClient(request.refreshToken());
     }
 
     public AuthResponse refresh(String rawRefreshToken) throws SQLException {
+        return refreshClient(rawRefreshToken);
+    }
+
+    /** Refreshes a regular Client session. Admin sessions are kept on the Control Center flow. */
+    public AuthResponse refreshClient(String rawRefreshToken) throws SQLException {
         if (rawRefreshToken == null || rawRefreshToken.isBlank()) {
             throw new ValidationException("refreshToken is required");
         }
@@ -134,7 +168,7 @@ public class AuthService {
 
         if (storedOpt.isEmpty()) {
             AppLogger.warn(TAG, "Refresh rejected: token not found in database session registry");
-            throw new UnauthorizedException("Invalid refresh token");
+            throw new UnauthorizedException("Invalid refresh token", AuthErrorCode.UNAUTHORIZED);
         }
 
         RefreshToken storedToken = storedOpt.get();
@@ -142,24 +176,33 @@ public class AuthService {
         // 3. Check revocation and expiration
         if (storedToken.revoked()) {
             AppLogger.warn(TAG, "Refresh rejected: token has been revoked for user " + storedToken.userId());
-            throw new UnauthorizedException("Refresh token has been revoked");
+            throw new UnauthorizedException("Refresh token has been revoked", AuthErrorCode.SESSION_REVOKED);
         }
         if (storedToken.isExpired()) {
             AppLogger.warn(TAG, "Refresh rejected: database session expired for user " + storedToken.userId());
-            throw new UnauthorizedException("Refresh token has expired");
+            throw new UnauthorizedException("Refresh token has expired", AuthErrorCode.SESSION_EXPIRED);
         }
 
         // 4. Retrieve user
         User user = userRepository.findById(storedToken.userId())
-                .orElseThrow(() -> new UnauthorizedException("User not found"));
+                .orElseThrow(() -> new UnauthorizedException("User not found", AuthErrorCode.UNAUTHORIZED));
+
+        if (user.isSystemAdmin()) {
+            throw new ForbiddenException("System administrators must sign in through the Server Control Center", AuthErrorCode.ADMIN_LOGIN_REQUIRED);
+        }
+
+        if (user.isDisabled()) {
+            AppLogger.warn(TAG, "Refresh rejected: account is disabled for user " + user.id());
+            throw new ForbiddenException("User account is disabled", AuthErrorCode.ACCOUNT_DISABLED);
+        }
 
         // 5. Token rotation: revoke previous refresh token to prevent reuse attacks
         if (!refreshTokenRepository.revokeByTokenHash(tokenHash)) {
-            throw new UnauthorizedException("Refresh token has already been used");
+            throw new UnauthorizedException("Refresh token has already been used", AuthErrorCode.SESSION_REVOKED);
         }
 
-        // 6. Issue fresh token pair
-        return issueAuthTokens(user);
+        // 6. Issue fresh token pair (preserving deviceId)
+        return issueAuthTokens(user, storedToken.deviceId());
     }
 
     public boolean logout(String rawRefreshToken) throws SQLException {
@@ -183,18 +226,36 @@ public class AuthService {
 
     public UserDto getCurrentUser(UUID userId) throws SQLException {
         User user = userRepository.findById(userId)
-                .orElseThrow(() -> new UnauthorizedException("User not found"));
+                .orElseThrow(() -> new UnauthorizedException("User not found", AuthErrorCode.UNAUTHORIZED));
         return UserDto.from(user);
     }
 
-    private AuthResponse issueAuthTokens(User user) throws SQLException {
-        String accessToken = jwtService.generateAccessToken(user);
-        String refreshToken = jwtService.generateRefreshToken(user);
+    /** Resolves identity for the Client API and rejects SYSTEM_ADMIN accounts. */
+    public UserDto getCurrentClientUser(UUID userId) throws SQLException {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UnauthorizedException("User not found", AuthErrorCode.UNAUTHORIZED));
+        if (user.isSystemAdmin()) {
+            throw new ForbiddenException("System administrators must sign in through the Server Control Center", AuthErrorCode.ADMIN_LOGIN_REQUIRED);
+        }
+        return UserDto.from(user);
+    }
+
+    public AuthResponse issueAuthTokens(User user) throws SQLException {
+        return issueAuthTokens(user, null);
+    }
+
+    public AuthResponse issueAuthTokens(User user, String deviceId) throws SQLException {
+        UUID sessionId = UUID.randomUUID();
+        String accessToken = jwtService.generateAccessToken(user, sessionId.toString());
+        String refreshToken = jwtService.generateRefreshToken(user, sessionId.toString());
 
         // Store hashed refresh token in database
         String tokenHash = JwtService.hashToken(refreshToken);
         Instant expiresAt = Instant.now().plusSeconds(jwtService.getRefreshExpirySeconds());
-        RefreshToken session = new RefreshToken(user.id(), tokenHash, expiresAt);
+        Instant now = Instant.now();
+        RefreshToken session = new RefreshToken(
+            sessionId, user.id(), tokenHash, deviceId, expiresAt, now, null, false, now, now
+        );
         refreshTokenRepository.create(session);
 
         return new AuthResponse(

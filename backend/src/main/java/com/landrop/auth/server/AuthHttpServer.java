@@ -51,6 +51,9 @@ public class AuthHttpServer {
     private final com.landrop.file.service.FileManagementService fileManagementService;
     private final com.landrop.file.service.TransferCoordinationService transferCoordinationService;
     private final com.landrop.file.server.FileHttpServer fileHttpServer;
+    private final com.landrop.admin.server.AdminHttpServer adminHttpServer;
+    private final com.landrop.device.service.DeviceService deviceService;
+    private final com.landrop.device.server.DeviceHttpHandler deviceHttpHandler;
     private final ObjectMapper objectMapper;
     private HttpServer httpServer;
 
@@ -87,6 +90,19 @@ public class AuthHttpServer {
         this.fileHttpServer = new com.landrop.file.server.FileHttpServer(authMiddleware, this.fileManagementService, this.transferCoordinationService, objectMapper);
         this.workspaceHttpServer = new WorkspaceHttpServer(authMiddleware, workspaceService, this.channelChatService, this.fileHttpServer, objectMapper);
         this.chatHttpServer = new com.landrop.chat.server.ChatHttpServer(authMiddleware, this.channelChatService, objectMapper);
+
+        var jwt = authMiddleware.getJwtService();
+        var adminAuth = new com.landrop.admin.security.AdminAuthMiddleware(jwt);
+        var adminService = new com.landrop.admin.service.AdminControlCenterService(
+            null, null, null, null,
+            new com.landrop.server.config.ServerConfigManager(com.landrop.server.config.ServerConfig.load()),
+            com.landrop.admin.logging.OperationalLogService.getInstance()
+        );
+        this.adminHttpServer = new com.landrop.admin.server.AdminHttpServer(
+            adminAuth, adminService, objectMapper, AuthConfig.getBindHost(), port, AuthConfig.getRealtimePort()
+        );
+        this.deviceService = new com.landrop.device.service.DeviceService(new com.landrop.database.repository.DeviceRepository(), null);
+        this.deviceHttpHandler = new com.landrop.device.server.DeviceHttpHandler(this.deviceService, authMiddleware, objectMapper);
     }
 
     public static ObjectMapper createObjectMapper() {
@@ -129,9 +145,14 @@ public class AuthHttpServer {
         workspaceHttpServer.register(httpServer);
         chatHttpServer.register(httpServer);
         fileHttpServer.register(httpServer);
+        adminHttpServer.register(httpServer);
 
         httpServer.start();
         AppLogger.info(TAG, "Auth HTTP Server started on port " + getPort() + " (Virtual Threads enabled)");
+    }
+
+    public com.landrop.admin.server.AdminHttpServer getAdminHttpServer() {
+        return adminHttpServer;
     }
 
     public com.landrop.chat.service.ChannelChatService getChannelChatService() {
@@ -200,7 +221,7 @@ public class AuthHttpServer {
 
         try {
             LoginRequest req = parseRequestBody(exchange, LoginRequest.class);
-            AuthResponse response = authService.login(req);
+            AuthResponse response = authService.loginClient(req);
             sendJsonResponse(exchange, 200, response);
         } catch (Exception e) {
             handleError(exchange, e);
@@ -266,7 +287,7 @@ public class AuthHttpServer {
 
         try {
             JwtClaims claims = authMiddleware.authenticate(exchange);
-            UserDto user = authService.getCurrentUser(claims.userId());
+            UserDto user = authService.getCurrentClientUser(claims.userId());
             sendJsonResponse(exchange, 200, user);
         } catch (Exception e) {
             handleError(exchange, e);
