@@ -41,7 +41,7 @@ class AuthenticatedApiTransportTest {
             @Override public CompletableFuture<String> get(String path, Map<String, String> query, Map<String, String> headers) {
                 if (requests.getAndIncrement() == 0) {
                     firstToken.set(headers.get("Authorization"));
-                    return CompletableFuture.failedFuture(new ApiException(401, "TOKEN_EXPIRED", "expired"));
+                    return CompletableFuture.failedFuture(new ApiException(401, "UNAUTHORIZED", "expired"));
                 }
                 secondToken.set(headers.get("Authorization"));
                 return CompletableFuture.completedFuture("ok");
@@ -52,6 +52,7 @@ class AuthenticatedApiTransportTest {
         assertEquals("Bearer access-1", firstToken.get());
         assertEquals("Bearer access-2", secondToken.get());
         assertEquals("access-2", state.accessToken().orElseThrow());
+        assertTrue(state.isAuthenticated());
         assertEquals(2, requests.get());
     }
 
