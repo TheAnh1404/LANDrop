@@ -8,26 +8,62 @@
             fx:controller="com.landrop.ui.controllers.PeersController"
             fitToWidth="true" style="-fx-background-color: transparent; -fx-background: transparent;">
 
-    <VBox spacing="20.0" styleClass="page-container">
-        <!-- Header -->
-        <HBox alignment="CENTER_LEFT">
-            <VBox spacing="2.0">
-                <Label text="PEERS" styleClass="page-title"/>
-                <Label fx:id="peersSubtitleLabel" text="0 peers online" styleClass="page-subtitle"/>
+    <VBox spacing="18.0" styleClass="page-container" style="-fx-padding: 20px 28px 32px 28px; -fx-background-color: #f8fafc;">
+        <!-- 1. Header -->
+        <HBox alignment="CENTER_LEFT" spacing="12.0">
+            <VBox spacing="3.0" HBox.hgrow="ALWAYS">
+                <Label text="MẠNG THIẾT BỊ &amp; THÀNH VIÊN" styleClass="page-title" style="-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: #0f172a;"/>
+                <Label fx:id="peersSubtitleLabel" text="Đang quét thiết bị mạng LAN..." styleClass="page-subtitle" style="-fx-font-size: 13px; -fx-text-fill: #64748b;"/>
             </VBox>
-            <Region HBox.hgrow="ALWAYS"/>
-            <Button fx:id="refreshButton" text="⟳ Refresh" styleClass="secondary-button" onAction="#onRefreshClicked"/>
+            <Button fx:id="refreshButton" text="⟳ Quét lại mạng" styleClass="secondary-button" onAction="#onRefreshClicked"
+                    style="-fx-font-size: 12px; -fx-font-weight: bold; -fx-padding: 6px 14px;"/>
         </HBox>
 
-        <!-- Peers List -->
-        <VBox fx:id="peersContainer" spacing="12.0"/>
+        <!-- 2. Search & Filter Bar -->
+        <HBox spacing="12.0" alignment="CENTER_LEFT"
+              style="-fx-background-color: #ffffff; -fx-padding: 12px 16px; -fx-background-radius: 10px; -fx-border-color: #e2e8f0; -fx-border-radius: 10px;">
+            <TextField fx:id="searchField" promptText="🔍 Tìm kiếm theo tên thiết bị, tên người dùng, địa chỉ IP..."
+                       styleClass="text-input-field" HBox.hgrow="ALWAYS" style="-fx-font-size: 13px;"/>
 
-        <!-- Empty State -->
-        <VBox fx:id="emptyStateContainer" styleClass="empty-state-box">
-            <Label text="No other peers online." styleClass="empty-state-title"/>
-            <Label text="Ensure other peers are running and registered with the discovery server, then click Refresh."
-                   styleClass="empty-state-desc"/>
-            <Button text="Scan for Peers" styleClass="secondary-button" onAction="#onRefreshClicked" style="-fx-margin-top: 8px;"/>
+            <HBox spacing="6.0" alignment="CENTER_RIGHT">
+                <Button fx:id="filterAllButton" text="Tất cả" onAction="#onFilterAll" styleClass="primary-button-small"
+                        style="-fx-font-size: 11.5px; -fx-padding: 5px 12px;"/>
+                <Button fx:id="filterOnlineButton" text="🟢 Trực tuyến" onAction="#onFilterOnline" styleClass="secondary-button"
+                        style="-fx-font-size: 11.5px; -fx-padding: 5px 12px;"/>
+                <Button fx:id="filterOfflineButton" text="⚪ Chưa trực tuyến" onAction="#onFilterOffline" styleClass="secondary-button"
+                        style="-fx-font-size: 11.5px; -fx-padding: 5px 12px;"/>
+            </HBox>
+        </HBox>
+
+        <!-- 3. Online Peers Section -->
+        <VBox fx:id="onlineSection" spacing="10.0">
+            <HBox alignment="CENTER_LEFT" spacing="8.0">
+                <Label fx:id="onlineSectionLabel" text="THIẾT BỊ ĐANG TRỰC TUYẾN (LAN) (0)"
+                       style="-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #059669; -fx-letter-spacing: 0.5px;"/>
+            </HBox>
+            <VBox fx:id="onlinePeersContainer" spacing="10.0"/>
+        </VBox>
+
+        <!-- 4. Offline Members Section -->
+        <VBox fx:id="offlineSection" spacing="10.0">
+            <HBox alignment="CENTER_LEFT" spacing="8.0">
+                <Label fx:id="offlineSectionLabel" text="NGƯỜI DÙNG CHƯA TRỰC TUYẾN (0)"
+                       style="-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #64748b; -fx-letter-spacing: 0.5px;"/>
+            </HBox>
+            <VBox fx:id="offlineMembersContainer" spacing="10.0"/>
+        </VBox>
+
+        <!-- 5. Empty State -->
+        <VBox fx:id="emptyStateContainer" styleClass="empty-state-box" alignment="CENTER" spacing="10.0"
+              style="-fx-background-color: #ffffff; -fx-padding: 36px 20px; -fx-background-radius: 10px; -fx-border-color: #e2e8f0; -fx-border-radius: 10px;"
+              visible="false" managed="false">
+            <Label text="👥" style="-fx-font-size: 40px;"/>
+            <Label fx:id="emptyTitleLabel" text="Không tìm thấy thiết bị hoặc người dùng nào"
+                   styleClass="empty-state-title" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+            <Label fx:id="emptyDescLabel" text="Hãy đảm bảo các thiết bị khác trong cùng mạng LAN đang bật ứng dụng LANDrop."
+                   styleClass="empty-state-desc" style="-fx-text-fill: #64748b; -fx-font-size: 12.5px;"/>
+            <Button text="Quét lại mạng LAN" styleClass="primary-button" onAction="#onRefreshClicked"
+                    style="-fx-font-size: 12px; -fx-margin-top: 6px;"/>
         </VBox>
     </VBox>
 </ScrollPane>

@@ -27,6 +27,7 @@ import com.landrop.ui.bootstrap.LocalClientProfileCoordinator;
 import com.landrop.ui.connection.ServerHealthClient;
 import com.landrop.ui.realtime.ClientRealtimeService;
 import com.landrop.ui.realtime.TransferControlService;
+import com.landrop.ui.connection.ServerDiscoveryService;
 
 import java.io.IOException;
 import java.net.URI;
@@ -55,8 +56,8 @@ public class MainApp extends Application {
     private volatile ClientRealtimeService serverRealtimeService;
     private volatile TransferControlService transferControlService;
     private volatile ClientInstanceService clientInstanceService;
-    private volatile com.landrop.ui.lan.UIStateLanServices lanServices;
     private LocalClientProfileCoordinator localProfileCoordinator;
+    private volatile com.landrop.ui.lan.UIStateLanServices lanServices;
     private volatile com.landrop.ui.device.CurrentDeviceService currentDeviceService;
     private volatile URI resolvedWsUri;
     private volatile URI resolvedApiUri;
@@ -67,8 +68,11 @@ public class MainApp extends Application {
     private Scene readyScene;
     private String configurationError;
     private boolean showServerConfiguration;
-    public com.landrop.ui.bootstrap.ClientBootstrapService getBootstrap() { return bootstrap; }
 
+    private final ServerDiscoveryService serverDiscoveryService = new ServerDiscoveryService();
+    private javafx.scene.control.Label discoveryStatusLabel;
+
+    public com.landrop.ui.bootstrap.ClientBootstrapService getBootstrap() { return bootstrap; }
 
     // Parsed configuration
     private String configuredDisplayName = null;
@@ -107,7 +111,6 @@ public class MainApp extends Application {
         }
         this.clientInstanceService = new ClientInstanceService(sessionProfile);
         System.out.println("[LANDrop Client] CLIENT_STARTED (profile=" + sessionProfile + ")");
-        // Legacy credentials had no server scope and cannot be safely migrated to an arbitrary endpoint.
         new PreferencesSessionStore(sessionProfile).clear();
         initializeAuth(new HttpAuthApi(resolvedApiUri), new com.landrop.ui.auth.api.ServerSessionStore(resolvedApiUri, sessionProfile));
         parseParameters();
@@ -217,13 +220,12 @@ public class MainApp extends Application {
         stage.setWidth(DEFAULT_WIDTH);
         stage.setHeight(DEFAULT_HEIGHT);
 
-        showAuthLoadingView();
         stage.show();
         stage.toFront();
         stage.requestFocus();
+
         initializeBootstrap();
-        if (configurationError == null) bootstrap.start();
-        else bootstrap.configurationError(configurationError);
+        startServerDiscovery();
     }
 
     private void initializeBootstrap() {
@@ -270,48 +272,133 @@ public class MainApp extends Application {
                 case READY -> { if (!featuresMounted) onAuthenticated(); else if (readyScene != null) primaryStage.setScene(readyScene); }
                 case AUTH_REQUIRED -> { cleanupFeatures(); showLoginView(); }
                 case AUTHENTICATING -> { }
+                case SERVER_UNREACHABLE -> startServerDiscovery();
                 default -> showAuthLoadingView();
             }
         }));
     }
 
-    public void showServerConnectionView() {
-        showServerConfiguration = true;
-        showAuthLoadingView();
+    public void startServerDiscovery() {
+        if (bootstrap != null && bootstrap.isReady()) {
+            return;
+        }
+        showServerDiscoveryView();
+        serverDiscoveryService.setPreferredUrl(resolvedApiUri != null ? resolvedApiUri.toString() : null);
+        serverDiscoveryService.startContinuousDiscovery(this::onServerDiscovered, this::updateDiscoveryStatus);
     }
+
+    private void onServerDiscovered(ServerDiscoveryService.DiscoveredServer server) {
+        System.out.println("[LANDrop Auto-Discovery] Found server at " + server.displayAddress() + " (v" + server.serverVersion() + ")");
+        showServerConfiguration = false;
+        if (discoveryStatusLabel != null) {
+            discoveryStatusLabel.setText("Đã tìm thấy máy chủ tại " + server.displayAddress() + "! Đang kết nối...");
+            discoveryStatusLabel.setStyle("-fx-text-fill: #10b981; -fx-font-weight: bold; -fx-font-size: 13px;");
+        }
+        configureServerConnection(server.apiUrl(), server.wsUrl());
+    }
+
+    private void updateDiscoveryStatus(String status) {
+        if (discoveryStatusLabel != null) {
+            discoveryStatusLabel.setText(status);
+        }
+    }
+
+    public void showServerConnectionView() {
+        startServerDiscovery();
+    }
+
+    public void showServerDiscoveryView() {
+        if (primaryStage == null) return;
+        var root = new javafx.scene.layout.VBox(20);
+        root.setAlignment(javafx.geometry.Pos.CENTER);
+        root.getStyleClass().add("auth-page");
+
+        var card = new javafx.scene.layout.VBox(16);
+        card.setAlignment(javafx.geometry.Pos.CENTER);
+        card.setMaxWidth(480);
+        card.getStyleClass().add("card");
+        card.setStyle("-fx-padding: 32px; -fx-background-radius: 12px;");
+
+        // Header logo
+        var logoBox = new javafx.scene.layout.HBox(8);
+        logoBox.setAlignment(javafx.geometry.Pos.CENTER);
+        var title = new javafx.scene.control.Label("LANDrop");
+        title.getStyleClass().add("app-title");
+        title.setStyle("-fx-font-size: 28px;");
+        var badge = new javafx.scene.control.Label("v1.0");
+        badge.getStyleClass().add("app-version-badge");
+        logoBox.getChildren().addAll(title, badge);
+
+        var subtitle = new javafx.scene.control.Label("Hệ thống chia sẻ tệp & liên lạc mạng nội bộ");
+        subtitle.getStyleClass().add("page-subtitle");
+        subtitle.setStyle("-fx-font-size: 13px; -fx-text-fill: #64748b;");
+
+        // Visual Spinner
+        var spinner = new javafx.scene.control.ProgressIndicator();
+        spinner.setPrefSize(48, 48);
+        spinner.setMaxSize(48, 48);
+
+        var heading = new javafx.scene.control.Label("Đang tự động dò tìm máy chủ LANDrop...");
+        heading.getStyleClass().add("card-title");
+        heading.setStyle("-fx-font-size: 16px; -fx-font-weight: bold;");
+
+        discoveryStatusLabel = new javafx.scene.control.Label("Đang quét máy chủ trên localhost:3000 và mạng LAN...");
+        discoveryStatusLabel.setWrapText(true);
+        discoveryStatusLabel.setStyle("-fx-text-fill: #475569; -fx-font-size: 13px; -fx-text-alignment: center;");
+        discoveryStatusLabel.setMaxWidth(400);
+
+        // Information banner
+        var infoBox = new javafx.scene.layout.VBox(4);
+        infoBox.setStyle("-fx-background-color: #f1f5f9; -fx-padding: 12px; -fx-background-radius: 8px; -fx-border-color: #e2e8f0; -fx-border-radius: 8px;");
+        var infoHeader = new javafx.scene.control.Label("⚡ Tự động nhận diện máy chủ");
+        infoHeader.setStyle("-fx-font-weight: bold; -fx-font-size: 12px; -fx-text-fill: #1e293b;");
+        var infoText = new javafx.scene.control.Label("Khi máy chủ LANDrop được bật, ứng dụng sẽ tự động phát hiện và mở giao diện. Bạn không cần nhập thủ công cổng (port) hay địa chỉ IP.");
+        infoText.setWrapText(true);
+        infoText.setStyle("-fx-font-size: 12px; -fx-text-fill: #64748b;");
+        infoBox.getChildren().addAll(infoHeader, infoText);
+
+        var scanNowBtn = new javafx.scene.control.Button("🔍 Quét lại ngay");
+        scanNowBtn.getStyleClass().add("primary-button");
+        scanNowBtn.setMaxWidth(Double.MAX_VALUE);
+        scanNowBtn.setOnAction(e -> {
+            if (discoveryStatusLabel != null) discoveryStatusLabel.setText("Đang quét lại máy chủ...");
+            serverDiscoveryService.scanOnce(this::updateDiscoveryStatus).thenAccept(opt -> {
+                if (opt.isPresent()) {
+                    Platform.runLater(() -> onServerDiscovered(opt.get()));
+                }
+            });
+        });
+
+        card.getChildren().addAll(logoBox, subtitle, spinner, heading, discoveryStatusLabel, infoBox, scanNowBtn);
+        root.getChildren().add(card);
+
+        var scene = new Scene(root, DEFAULT_WIDTH, DEFAULT_HEIGHT);
+        applyStylesheets(scene);
+        primaryStage.setScene(scene);
+    }
+
     private void showAuthLoadingView() {
         if (primaryStage == null) return;
-        var root = new javafx.scene.layout.VBox(14);
+        var bootstrapState = bootstrap == null ? com.landrop.ui.bootstrap.BootstrapState.INITIALIZING : bootstrap.state();
+        if (bootstrapState == com.landrop.ui.bootstrap.BootstrapState.SERVER_UNREACHABLE
+                || bootstrapState == com.landrop.ui.bootstrap.BootstrapState.ERROR) {
+            startServerDiscovery();
+            return;
+        }
+        var root = new javafx.scene.layout.VBox(16);
         root.setAlignment(javafx.geometry.Pos.CENTER);
         root.getStyleClass().add("auth-page");
         String code = bootstrap == null ? "" : bootstrap.errorCode();
-        var bootstrapState = bootstrap == null ? com.landrop.ui.bootstrap.BootstrapState.INITIALIZING : bootstrap.state();
-        boolean editable = showServerConfiguration
-                || bootstrapState == com.landrop.ui.bootstrap.BootstrapState.SERVER_UNREACHABLE
-                || bootstrapState == com.landrop.ui.bootstrap.BootstrapState.ERROR;
-        var title = new javafx.scene.control.Label(editable ? "Connect to LANDrop Server" : "Connecting to LANDrop Server");
+        var spinner = new javafx.scene.control.ProgressIndicator();
+        spinner.setPrefSize(42, 42);
+        spinner.setMaxSize(42, 42);
+        var title = new javafx.scene.control.Label("Đang kết nối tới LANDrop Server");
         title.getStyleClass().add("card-title");
         var label = new javafx.scene.control.Label(code.isBlank()
-                ? (editable ? "Server is unavailable. Check the address and retry." : "Checking server and restoring your session...")
+                ? "Đang xác thực và khôi phục phiên làm việc..."
                 : com.landrop.ui.bootstrap.BootstrapErrors.message(code));
         label.setWrapText(true);
-        root.getChildren().addAll(title, label);
-        if (editable) {
-            var api = new javafx.scene.control.TextField(resolvedApiUri == null ? FrontendConfig.DEFAULT_API_BASE_URL : resolvedApiUri.toString());
-            api.setPromptText("http://server:3000/api");
-            api.setMaxWidth(440);
-            var connect = new javafx.scene.control.Button("Connect & retry");
-            connect.setOnAction(event -> {
-                try {
-                    showServerConfiguration = false;
-                    configureServerConnection(api.getText(), "");
-                } catch (IllegalArgumentException error) {
-                    showServerConfiguration = true;
-                    label.setText("Enter a valid server address, for example http://192.168.1.10:3000/api.");
-                }
-            });
-            root.getChildren().addAll(new javafx.scene.control.Label("Server address"), api, connect);
-        }
+        root.getChildren().addAll(spinner, title, label);
         var scene = new Scene(root, DEFAULT_WIDTH, DEFAULT_HEIGHT);
         applyStylesheets(scene);
         primaryStage.setScene(scene);
@@ -414,14 +501,9 @@ public class MainApp extends Application {
             }
         }
 
-        // Phase 17B opens a single authenticated channel socket only after a channel is selected.
-        // The old global socket had no workspace/channel authorization context.
-
-        // Initialize WorkspaceStateService (Phase 16B)
         if (resolvedApiUri != null) {
             this.realtimeGateway = new com.landrop.ui.realtime.RealtimeGateway(serverRealtimeService);
             this.transferControlService = new TransferControlService(serverRealtimeService, event -> {
-                // Transfer UI subscribes to the server-owned control state in a later composition pass.
             });
 
             com.landrop.ui.workspace.api.HttpWorkspaceApi wsApi =
@@ -440,8 +522,6 @@ public class MainApp extends Application {
             });
         }
 
-        // Server authentication is the primary client flow. Start the local LAN
-        // listener in the background, but do not block the client on Discovery:8888.
         startLocalClientRuntime();
     }
 
@@ -501,7 +581,6 @@ public class MainApp extends Application {
         this.lanServices = null;
 
         if (stateService != null) stateService.shutdown();
-
     }
 
     /**
@@ -569,6 +648,7 @@ public class MainApp extends Application {
 
     @Override
     public void stop() {
+        serverDiscoveryService.close();
         if (localProfileCoordinator != null) localProfileCoordinator.close();
         if (bootstrap != null) bootstrap.close();
         if (realtimeGateway != null) {
@@ -591,6 +671,7 @@ public class MainApp extends Application {
                 realtimeChatService.close();
             } catch (Exception ignored) {
             }
+            realtimeChatService = null;
         }
         if (stateService != null) {
             stateService.shutdown();

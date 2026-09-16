@@ -237,6 +237,8 @@ public class UIStateService {
                     });
                 }
 
+                startPeriodicPeerPolling();
+
             } catch (Throwable t) {
                 System.err.println("[LANDrop ERROR] connectAndRegister failed: " + t.getMessage());
                 t.printStackTrace();
@@ -506,18 +508,36 @@ public class UIStateService {
             try {
                 List<PeerInfo> peers = discoveryClient.requestPeerList();
                 Platform.runLater(() -> {
+                    discoveryStatus.set(DiscoveryStatus.CONNECTED);
                     updateDiscoveredPeersList(peers);
                     future.complete(peers);
                 });
             } catch (IOException e) {
                 Platform.runLater(() -> {
                     discoveryStatus.set(DiscoveryStatus.ERROR);
-                    future.completeExceptionally(new RuntimeException("Failed to refresh peers: " + e.getMessage(), e));
+                    future.complete(Collections.unmodifiableList(discoveredPeers));
                 });
             }
         });
 
         return future;
+    }
+
+    private java.util.concurrent.ScheduledExecutorService peerPollScheduler;
+
+    public synchronized void startPeriodicPeerPolling() {
+        if (peerPollScheduler == null || peerPollScheduler.isShutdown()) {
+            peerPollScheduler = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "PeerPolling-Worker");
+                t.setDaemon(true);
+                return t;
+            });
+            peerPollScheduler.scheduleWithFixedDelay(() -> {
+                if (running.get()) {
+                    refreshPeerList();
+                }
+            }, 3, 3, TimeUnit.SECONDS);
+        }
     }
 
     private void updateDiscoveredPeersList(List<PeerInfo> peers) {
@@ -746,6 +766,13 @@ public class UIStateService {
         if (fileTransferService != null) {
             try {
                 fileTransferService.close();
+            } catch (Exception ignored) {
+            }
+        }
+
+        if (peerPollScheduler != null) {
+            try {
+                peerPollScheduler.shutdownNow();
             } catch (Exception ignored) {
             }
         }

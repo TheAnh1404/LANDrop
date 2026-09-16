@@ -48,9 +48,12 @@ public class FileHttpServer {
         server.createContext("/api/files/", this::handleFiles);
         server.createContext("/api/folders", this::handleFolders);
         server.createContext("/api/folders/", this::handleFolders);
-        // Device enrollment, listing, and rename are owned by
-        // DeviceHttpHandler. Registering the same /api/devices contexts here
-        // causes java.net.HttpServer to fail startup with a duplicate context.
+        try {
+            server.createContext("/api/devices", this::handleDevices);
+            server.createContext("/api/devices/", this::handleDevices);
+        } catch (IllegalArgumentException ignored) {
+            // Already registered by DeviceHttpHandler in FoundationHttpServer
+        }
         server.createContext("/api/transfers", this::handleTransfers);
         server.createContext("/api/transfers/", this::handleTransfers);
         server.createContext("/api/users/", this::handleUsers);

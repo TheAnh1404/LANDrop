@@ -115,6 +115,11 @@ public class SettingsController {
         }));
     }
 
+    @FXML private void onAutoDetectServer() {
+        if (mainController == null || mainController.getMainApp() == null) return;
+        mainController.getMainApp().startServerDiscovery();
+    }
+
     @FXML private void onApplyServerClicked() {
         if (mainController == null || mainController.getMainApp() == null) return;
         try {

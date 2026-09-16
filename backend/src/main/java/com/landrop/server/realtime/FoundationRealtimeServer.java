@@ -354,24 +354,25 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
         ServerEventLogger.log(ServerEvent.CLIENT_HANDSHAKE_OK, connectionId,
                 "Device: " + deviceName + " (v" + clientVersion + ", " + platform + ")");
 
-        if (!authRequired()) {
-            sendEnvelope(socket, EventEnvelope.welcome(connectionId, ProtocolConstants.SERVER_VERSION,
-                ProtocolConstants.PROTOCOL_VERSION, heartbeatIntervalMs));
-            return;
-        }
-
         String authorization = authorizationHeaders.get(socket);
         String token = bearerToken(authorization);
         String deviceId = root.hasNonNull("deviceId") ? root.path("deviceId").asText() : null;
-        if (token == null) {
-            rejectHandshake(connection, requestId, AuthErrorCode.UNAUTHORIZED, "Authentication is required.");
+
+        if (authRequired() && (token != null || (deviceId != null && !deviceId.isBlank()))) {
+            if (token == null) {
+                rejectHandshake(connection, requestId, AuthErrorCode.UNAUTHORIZED, "Authentication is required.");
+                return;
+            }
+            if (deviceId == null || deviceId.isBlank()) {
+                rejectHandshake(connection, requestId, AuthErrorCode.DEVICE_NOT_FOUND, "An enrolled device is required.");
+                return;
+            }
+            authenticateConnection(connection, token, deviceId, requestId, true);
             return;
         }
-        if (deviceId == null || deviceId.isBlank()) {
-            rejectHandshake(connection, requestId, AuthErrorCode.DEVICE_NOT_FOUND, "An enrolled device is required.");
-            return;
-        }
-        authenticateConnection(connection, token, deviceId, requestId, true);
+
+        sendEnvelope(socket, EventEnvelope.welcome(connectionId, ProtocolConstants.SERVER_VERSION,
+            ProtocolConstants.PROTOCOL_VERSION, heartbeatIntervalMs));
     }
 
     private void handleTransferRequest(ClientConnection sender, JsonNode root, String requestId) {

@@ -11,6 +11,7 @@ import javafx.scene.control.TextField;
 
 /**
  * Controller for the initial connection and peer setup screen.
+ * Network parameters (ports, hosts) are automatically configured.
  */
 public class SetupController {
 
@@ -38,6 +39,11 @@ public class SetupController {
     private MainApp mainApp;
     private UIStateService stateService;
 
+    private int configuredLocalPort = 5001;
+    private String configuredDiscoveryHost = "127.0.0.1";
+    private int configuredDiscoveryPort = 8888;
+    private String configuredAdvertisedHost = "127.0.0.1";
+
     public void init(
             MainApp mainApp,
             UIStateService stateService,
@@ -51,6 +57,11 @@ public class SetupController {
         this.mainApp = mainApp;
         this.stateService = stateService;
 
+        this.configuredLocalPort = initialLocalPort > 0 ? initialLocalPort : 5001;
+        this.configuredDiscoveryHost = initialDiscoveryHost != null && !initialDiscoveryHost.isBlank() ? initialDiscoveryHost : "127.0.0.1";
+        this.configuredDiscoveryPort = initialDiscoveryPort > 0 ? initialDiscoveryPort : 8888;
+        this.configuredAdvertisedHost = initialAdvertisedHost != null && !initialAdvertisedHost.isBlank() ? initialAdvertisedHost : "127.0.0.1";
+
         String fallbackName = "User";
         if (mainApp != null && mainApp.getAuthStateService() != null && mainApp.getAuthStateService().user() != null) {
             String name = mainApp.getAuthStateService().user().displayName();
@@ -58,11 +69,21 @@ public class SetupController {
                 fallbackName = name.trim();
             }
         }
-        displayNameField.setText(initialDisplayName != null && !initialDisplayName.isBlank() ? initialDisplayName : fallbackName);
-        localPortField.setText(String.valueOf(initialLocalPort > 0 ? initialLocalPort : 5001));
-        advertisedHostField.setText(initialAdvertisedHost != null && !initialAdvertisedHost.isBlank() ? initialAdvertisedHost : "127.0.0.1");
-        discoveryHostField.setText(initialDiscoveryHost != null && !initialDiscoveryHost.isBlank() ? initialDiscoveryHost : "127.0.0.1");
-        discoveryPortField.setText(String.valueOf(initialDiscoveryPort > 0 ? initialDiscoveryPort : 8888));
+        if (displayNameField != null) {
+            displayNameField.setText(initialDisplayName != null && !initialDisplayName.isBlank() ? initialDisplayName : fallbackName);
+        }
+        if (localPortField != null) {
+            localPortField.setText(String.valueOf(this.configuredLocalPort));
+        }
+        if (advertisedHostField != null) {
+            advertisedHostField.setText(this.configuredAdvertisedHost);
+        }
+        if (discoveryHostField != null) {
+            discoveryHostField.setText(this.configuredDiscoveryHost);
+        }
+        if (discoveryPortField != null) {
+            discoveryPortField.setText(String.valueOf(this.configuredDiscoveryPort));
+        }
 
         if (autoConnect) {
             Platform.runLater(this::onConnectClicked);
@@ -71,72 +92,76 @@ public class SetupController {
 
     @FXML
     private void onConnectClicked() {
-        String displayName = displayNameField.getText() != null ? displayNameField.getText().trim() : "";
+        String displayName = (displayNameField != null && displayNameField.getText() != null)
+                ? displayNameField.getText().trim() : "";
         if (displayName.isEmpty()) {
-            statusLabel.setText("Please enter a display name.");
+            if (statusLabel != null) statusLabel.setText("Vui lòng nhập tên hiển thị.");
             return;
         }
 
-        int localPort;
-        try {
-            localPort = Integer.parseInt(localPortField.getText().trim());
-            if (localPort < 1024 || localPort > 65535) {
-                statusLabel.setText("Local P2P Port must be between 1024 and 65535.");
-                return;
-            }
-        } catch (NumberFormatException e) {
-            statusLabel.setText("Invalid local P2P port number.");
-            return;
+        int localPort = this.configuredLocalPort;
+        if (localPortField != null && localPortField.getText() != null && !localPortField.getText().isBlank()) {
+            try {
+                localPort = Integer.parseInt(localPortField.getText().trim());
+            } catch (NumberFormatException ignored) {}
         }
 
-        String discHost = discoveryHostField.getText() != null ? discoveryHostField.getText().trim() : "";
-        if (discHost.isEmpty()) {
-            statusLabel.setText("Please enter a discovery server host.");
-            return;
+        String discHost = this.configuredDiscoveryHost;
+        if (discoveryHostField != null && discoveryHostField.getText() != null && !discoveryHostField.getText().isBlank()) {
+            discHost = discoveryHostField.getText().trim();
         }
 
-        int discPort;
-        try {
-            discPort = Integer.parseInt(discoveryPortField.getText().trim());
-            if (discPort < 1 || discPort > 65535) {
-                statusLabel.setText("Discovery port must be between 1 and 65535.");
-                return;
-            }
-        } catch (NumberFormatException e) {
-            statusLabel.setText("Invalid discovery port number.");
-            return;
+        int discPort = this.configuredDiscoveryPort;
+        if (discoveryPortField != null && discoveryPortField.getText() != null && !discoveryPortField.getText().isBlank()) {
+            try {
+                discPort = Integer.parseInt(discoveryPortField.getText().trim());
+            } catch (NumberFormatException ignored) {}
         }
 
-        String advHost = advertisedHostField.getText() != null ? advertisedHostField.getText().trim() : "127.0.0.1";
+        String advHost = this.configuredAdvertisedHost;
+        if (advertisedHostField != null && advertisedHostField.getText() != null && !advertisedHostField.getText().isBlank()) {
+            advHost = advertisedHostField.getText().trim();
+        }
 
-        connectButton.setDisable(true);
-        connectButton.setText("Connecting...");
-        statusLabel.setText("Connecting to Discovery Server at " + discHost + ":" + discPort + "...");
-        statusLabel.setStyle("-fx-text-fill: #4f46e5;");
+        if (connectButton != null) {
+            connectButton.setDisable(true);
+            connectButton.setText("Đang kết nối...");
+        }
+        if (statusLabel != null) {
+            statusLabel.setText("Đang khởi tạo kết nối mạng nội bộ...");
+            statusLabel.setStyle("-fx-text-fill: #4f46e5;");
+        }
 
+        final int finalLocalPort = localPort;
+        final String finalDiscHost = discHost;
+        final int finalDiscPort = discPort;
         stateService.connectAndRegister(displayName, localPort, discHost, discPort, advHost)
                 .thenRun(() -> Platform.runLater(() -> {
-                    statusLabel.setText("");
+                    if (statusLabel != null) statusLabel.setText("");
                     mainApp.showMainView();
                 }))
                 .exceptionally(ex -> {
                     Platform.runLater(() -> {
-                        connectButton.setDisable(false);
-                        connectButton.setText("Connect & Join Network");
+                        if (connectButton != null) {
+                            connectButton.setDisable(false);
+                            connectButton.setText("Tham gia mạng & Bắt đầu");
+                        }
                         String msg = ex.getCause() != null ? ex.getCause().getMessage() : ex.getMessage();
-                        statusLabel.setText(msg);
-                        statusLabel.setStyle("-fx-text-fill: #ef4444;");
+                        if (statusLabel != null) {
+                            statusLabel.setText(msg != null ? msg : "Lỗi kết nối");
+                            statusLabel.setStyle("-fx-text-fill: #ef4444;");
+                        }
 
                         if (msg != null && msg.contains("Local P2P Port")) {
                             AlertUtils.showError(
-                                    "Local Port Conflict",
-                                    "Port " + localPort + " is already in use",
+                                    "Xung đột cổng",
+                                    "Cổng " + finalLocalPort + " đang được sử dụng bởi ứng dụng khác.",
                                     msg
                             );
                         } else {
                             AlertUtils.showError(
-                                    "Discovery Connection Failed",
-                                    "Unable to connect to Discovery Server at " + discHost + ":" + discPort,
+                                    "Kết nối mạng nội bộ",
+                                    "Không thể kết nối đến máy chủ tại " + finalDiscHost + ":" + finalDiscPort,
                                     msg
                             );
                         }

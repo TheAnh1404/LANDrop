@@ -16,45 +16,33 @@
                 <Label text="LANDrop" styleClass="app-title" style="-fx-font-size: 28px;"/>
                 <Label text="v1.0" styleClass="app-version-badge"/>
             </HBox>
-            <Label text="Fast peer-to-peer communication over your local network"
+            <Label text="Truyền tệp và liên lạc mạng nội bộ siêu tốc"
                    style="-fx-text-fill: #64748b; -fx-font-size: 13px;"/>
         </VBox>
 
         <!-- Setup Card -->
         <VBox styleClass="card" spacing="16.0">
-            <Label text="Peer Configuration" styleClass="card-title"/>
+            <Label text="Thiết lập người dùng" styleClass="card-title"/>
             
             <VBox styleClass="form-group">
-                <Label text="Display Name" styleClass="form-label"/>
-                <TextField fx:id="displayNameField" promptText="e.g. Ken" styleClass="text-input-field"/>
+                <Label text="Tên hiển thị trên mạng (Display Name)" styleClass="form-label"/>
+                <TextField fx:id="displayNameField" promptText="Ví dụ: Ken, Laptop-Office..." styleClass="text-input-field"/>
             </VBox>
 
-            <HBox spacing="12.0">
-                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
-                    <Label text="Local P2P Port" styleClass="form-label"/>
-                    <TextField fx:id="localPortField" promptText="5001" styleClass="text-input-field"/>
-                </VBox>
-                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
-                    <Label text="Advertised Host" styleClass="form-label"/>
-                    <TextField fx:id="advertisedHostField" promptText="127.0.0.1" styleClass="text-input-field"/>
-                </VBox>
-            </HBox>
-
-            <HBox spacing="12.0">
-                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
-                    <Label text="Discovery Host" styleClass="form-label"/>
-                    <TextField fx:id="discoveryHostField" promptText="localhost" styleClass="text-input-field"/>
-                </VBox>
-                <VBox styleClass="form-group" HBox.hgrow="ALWAYS">
-                    <Label text="Discovery Port" styleClass="form-label"/>
-                    <TextField fx:id="discoveryPortField" promptText="8888" styleClass="text-input-field"/>
-                </VBox>
-            </HBox>
+            <!-- Auto-configuration Notice Badge (No manual ports/hosts required) -->
+            <VBox spacing="6.0" style="-fx-background-color: #f1f5f9; -fx-padding: 12px; -fx-background-radius: 8px; -fx-border-color: #e2e8f0; -fx-border-radius: 8px;">
+                <HBox alignment="CENTER_LEFT" spacing="8.0">
+                    <Label text="⚡" style="-fx-font-size: 16px;"/>
+                    <Label text="Cấu hình kết nối tự động" style="-fx-font-weight: bold; -fx-font-size: 13px; -fx-text-fill: #1e293b;"/>
+                </HBox>
+                <Label text="Hệ thống tự động phát hiện cổng mạng P2P và máy chủ trung tâm. Bạn không cần thiết lập thủ công các thông số cổng hay địa chỉ IP."
+                       wrapText="true" style="-fx-font-size: 12px; -fx-text-fill: #64748b;"/>
+            </VBox>
 
             <Label fx:id="statusLabel" text="" wrapText="true"
                    style="-fx-font-size: 12px; -fx-text-fill: #ef4444;" />
 
-            <Button fx:id="connectButton" text="Connect &amp; Join Network"
+            <Button fx:id="connectButton" text="Tham gia mạng &amp; Bắt đầu"
                     maxWidth="Infinity" styleClass="primary-button" onAction="#onConnectClicked"/>
         </VBox>
     </VBox>

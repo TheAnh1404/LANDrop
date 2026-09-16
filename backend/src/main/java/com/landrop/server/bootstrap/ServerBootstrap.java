@@ -76,6 +76,7 @@ public class ServerBootstrap {
 
     private FoundationHttpServer httpServer;
     private FoundationRealtimeServer realtimeServer;
+    private com.landrop.discovery.DiscoveryServer embeddedDiscoveryServer;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Thread shutdownHook;
 
@@ -217,13 +218,25 @@ public class ServerBootstrap {
             adminHttpServer.setActualPorts(httpServer.getPort(), realtimeServer.getPort());
         }
 
-        // 4. Register Graceful Shutdown Hook
+        // 4. Start Embedded LAN Discovery Server on port 8888 (skip in test environment)
+        if (!"test".equalsIgnoreCase(config.getEnvironment())) {
+            try {
+                int discPort = 8888;
+                this.embeddedDiscoveryServer = new com.landrop.discovery.DiscoveryServer(discPort);
+                this.embeddedDiscoveryServer.startAsync();
+                AppLogger.info(TAG, "Embedded LAN Discovery Server started on port " + discPort);
+            } catch (Exception e) {
+                AppLogger.warn(TAG, "Embedded Discovery Server could not be started on 8888: " + e.getMessage());
+            }
+        }
+
+        // 5. Register Graceful Shutdown Hook
         shutdownHook = new Thread(this::shutdownGracefully, "server-shutdown-hook");
         Runtime.getRuntime().addShutdownHook(shutdownHook);
 
         running.set(true);
 
-        // 5. Log startup banner
+        // 6. Log startup banner
         printStartupBanner();
     }
 
@@ -272,7 +285,16 @@ public class ServerBootstrap {
             }
         }
 
-        // 4. Close database pool if present
+        // 4. Stop Embedded Discovery Server
+        if (embeddedDiscoveryServer != null) {
+            try {
+                embeddedDiscoveryServer.stop();
+                AppLogger.info(TAG, "Embedded Discovery Server stopped.");
+            } catch (Exception ignored) {
+            }
+        }
+
+        // 5. Close database pool if present
         try {
             DatabaseManager db = DatabaseManager.getInstance();
             if (db != null) {

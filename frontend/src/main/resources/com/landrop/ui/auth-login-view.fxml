@@ -7,22 +7,29 @@
     <VBox alignment="CENTER" spacing="20.0" maxWidth="440.0" styleClass="auth-container">
         <VBox alignment="CENTER" spacing="6.0">
             <Label text="LANDrop" styleClass="app-title" style="-fx-font-size: 30px;"/>
-            <Label text="Sign in to your account" styleClass="page-subtitle"/>
+            <Label text="Đăng nhập tài khoản của bạn" styleClass="page-subtitle"/>
         </VBox>
         <VBox styleClass="card" spacing="14.0" maxWidth="440.0">
-            <Label text="Welcome back" styleClass="card-title"/>
+            <Label text="Chào mừng trở lại" styleClass="card-title"/>
             <VBox styleClass="form-group">
-                <Label text="Email or username" styleClass="form-label"/>
-                <TextField fx:id="emailField" promptText="you@example.com or username" styleClass="text-input-field"/>
+                <Label text="Email hoặc Tên đăng nhập" styleClass="form-label"/>
+                <TextField fx:id="emailField" promptText="email@example.com hoặc username" styleClass="text-input-field"/>
             </VBox>
             <VBox styleClass="form-group">
-                <Label text="Password" styleClass="form-label"/>
-                <PasswordField fx:id="passwordField" promptText="Your password" styleClass="text-input-field"/>
+                <Label text="Mật khẩu" styleClass="form-label"/>
+                <PasswordField fx:id="passwordField" promptText="Nhập mật khẩu" styleClass="text-input-field"/>
             </VBox>
             <Label fx:id="errorLabel" wrapText="true" styleClass="auth-error"/>
-            <Button fx:id="submitButton" text="Sign in" maxWidth="Infinity" styleClass="primary-button" onAction="#onSubmit"/>
+            <Button fx:id="submitButton" text="Đăng nhập" maxWidth="Infinity" styleClass="primary-button" onAction="#onSubmit"/>
+            
             <HBox alignment="CENTER" spacing="4.0">
-                <Hyperlink fx:id="registerLink" text="Change server" onAction="#onRegister"/>
+                <Label text="Chưa có tài khoản?" styleClass="page-subtitle"/>
+                <Hyperlink fx:id="registerLink" text="Tạo tài khoản mới" onAction="#onRegister"/>
+            </HBox>
+
+            <HBox alignment="CENTER" spacing="8.0" style="-fx-padding: 8px 0 0 0; -fx-border-color: #f1f5f9; -fx-border-width: 1px 0 0 0;">
+                <Label fx:id="serverAddressLabel" text="🟢 Máy chủ: Đang kết nối" style="-fx-font-size: 11px; -fx-text-fill: #10b981; -fx-font-weight: bold;"/>
+                <Hyperlink text="Dò lại máy chủ" onAction="#onAutoDetectServer" style="-fx-font-size: 11px; -fx-text-fill: #6366f1;"/>
             </HBox>
         </VBox>
     </VBox>

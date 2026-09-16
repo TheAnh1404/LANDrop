@@ -46,7 +46,7 @@ public final class TransfersController {
     private void renderFiles(){foldersContainer.getChildren().clear();filesContainer.getChildren().clear();boolean empty=files.folders().isEmpty()&&files.files().isEmpty();emptyFilesContainer.setVisible(empty);emptyFilesContainer.setManaged(empty);
         for(Domain.Folder folder:files.folders())foldersContainer.getChildren().add(folderRow(folder)); for(Domain.File file:files.files())filesContainer.getChildren().add(fileRow(file));}
     private HBox folderRow(Domain.Folder folder){HBox row=new HBox(10);row.setAlignment(Pos.CENTER_LEFT);row.getStyleClass().add("file-row");Button open=new Button("📁  "+folder.name());open.getStyleClass().add("file-name-button");open.setOnAction(e->files.openFolder(folder));Region gap=new Region();HBox.setHgrow(gap,Priority.ALWAYS);row.getChildren().addAll(open,gap,actionsForFolder(folder));return row;}
-    private HBox fileRow(Domain.File file){HBox row=new HBox(10);row.setAlignment(Pos.CENTER_LEFT);row.getStyleClass().add("file-row");Button info=new Button(icon(file.mimeType())+"  "+file.name());info.getStyleClass().add("file-name-button");info.setOnAction(e->showDetails(file));VBox meta=new VBox(1,new Label(formatSize(file.sizeBytes())+" • "+uploader(file.uploadedById())),new Label(DateTimeFormatter.ofPattern("dd MMM yyyy").withZone(ZoneId.systemDefault()).format(file.createdAt())));meta.getStyleClass().add("file-meta");Region gap=new Region();HBox.setHgrow(gap,Priority.ALWAYS);Button send=small("Send",e->chooseLocalAndReceiver(file));row.getChildren().addAll(info,meta,gap,send,actionsForFile(file));return row;}
+    private HBox fileRow(Domain.File file){HBox row=new HBox(10);row.setAlignment(Pos.CENTER_LEFT);row.getStyleClass().add("file-row");Button info=new Button(icon(file.name(), file.mimeType())+"  "+file.name());info.getStyleClass().add("file-name-button");info.setOnAction(e->showDetails(file));VBox meta=new VBox(1,new Label(formatSize(file.sizeBytes())+" • "+uploader(file.uploadedById())),new Label(DateTimeFormatter.ofPattern("dd MMM yyyy").withZone(ZoneId.systemDefault()).format(file.createdAt())));meta.getStyleClass().add("file-meta");Region gap=new Region();HBox.setHgrow(gap,Priority.ALWAYS);Button send=small("Send",e->chooseLocalAndReceiver(file));row.getChildren().addAll(info,meta,gap,send,actionsForFile(file));return row;}
     private HBox actionsForFolder(Domain.Folder f){HBox box=new HBox(4);box.getChildren().addAll(small("Rename",e->renameFolder(f)),small("Move",e->moveFolder(f)),small("Delete",e->deleteFolder(f)));return box;}
     private HBox actionsForFile(Domain.File f){HBox box=new HBox(4);box.getChildren().addAll(small("Rename",e->renameFile(f)),small("Move",e->moveFile(f)),small("Delete",e->deleteFile(f)));return box;}
     private Button small(String text,javafx.event.EventHandler<javafx.event.ActionEvent> h){Button b=new Button(text);b.getStyleClass().add("message-action-button");b.setOnAction(h);return b;}
@@ -63,6 +63,55 @@ public final class TransfersController {
     private void receiverDialog(Path local,Domain.File existing){Dialog<ButtonType> dialog=new Dialog<>();dialog.setTitle("Send file");dialog.setHeaderText("Choose a workspace user and LAN device");ButtonType sendType=new ButtonType("Send",ButtonBar.ButtonData.OK_DONE);dialog.getDialogPane().getButtonTypes().addAll(ButtonType.CANCEL,sendType);ComboBox<Domain.WorkspaceMember> users=new ComboBox<>();users.getItems().setAll(workspaces.getActiveMembers().stream().filter(m->!m.userId().equals(workspaces.currentUserId())).toList());users.setCellFactory(x->memberCell());users.setButtonCell(memberCell());ComboBox<Domain.Device> devices=new ComboBox<>();devices.setCellFactory(x->deviceCell());devices.setButtonCell(deviceCell());Label availability=new Label("Choose a recipient.");VBox content=new VBox(10,new Label("Recipient"),users,new Label("Device"),devices,availability);dialog.getDialogPane().setContent(content);Node send=dialog.getDialogPane().lookupButton(sendType);send.setDisable(true);users.valueProperty().addListener((o,a,user)->{devices.getItems().clear();send.setDisable(true);if(user==null)return;availability.setText("Loading devices…");files.devicesFor(user.userId()).whenComplete((found,fail)->Platform.runLater(()->{if(fail!=null){availability.setText("Could not load devices: "+fail.getMessage());return;}devices.getItems().setAll(found);availability.setText(found.isEmpty()?"No reachable LAN device.":"Choose a device.");}));});devices.valueProperty().addListener((o,a,device)->{boolean reachable=device!=null&&device.lanAvailable();send.setDisable(!reachable);availability.setText(device==null?"Choose a device.":device.availabilityLabel());});dialog.showAndWait().filter(x->x==sendType).ifPresent(x->{Domain.WorkspaceMember user=users.getValue();Domain.Device device=devices.getValue();if(user!=null&&device!=null&&device.lanAvailable()){if(existing==null)files.registerAndRequest(local,user.userId(),device.id());else files.requestExistingTransfer(existing,user.userId(),device.id());}});}
     private ListCell<Domain.WorkspaceMember> memberCell(){return new ListCell<>(){@Override protected void updateItem(Domain.WorkspaceMember m,boolean empty){super.updateItem(m,empty);setText(empty||m==null?null:m.nameOrFallback());}};} private ListCell<Domain.Device> deviceCell(){return new ListCell<>(){@Override protected void updateItem(Domain.Device d,boolean empty){super.updateItem(d,empty);setText(empty||d==null?null:d.label()+" — "+d.availabilityLabel());}};}
     private void renderTransfers(){transfersContainer.getChildren().clear();for(FileTransfer t:lanTransfer.transfers())transfersContainer.getChildren().add(transferRow(t));}
-    private HBox transferRow(FileTransfer t){boolean outgoing=t.getDirection()==FileTransferDirection.OUTGOING;HBox row=new HBox(10);row.getStyleClass().add("transfer-history-row");VBox info=new VBox(2,new Label(t.getFileName()),new Label((outgoing?"To device: ":"From device: ")+t.getRemotePeerName()));ProgressBar bar=new ProgressBar(t.getStatus()==FileTransferStatus.TRANSFERRING?t.getProgress():(t.getStatus()==FileTransferStatus.COMPLETED?1:0));bar.setPrefWidth(130);Label status=new Label(t.getStatus().getLabel()+(t.getStatus()==FileTransferStatus.TRANSFERRING?" "+t.getProgressPercent()+"%":""));Region gap=new Region();HBox.setHgrow(gap,Priority.ALWAYS);HBox actions=new HBox(4);if(t.getStatus()==FileTransferStatus.PENDING&&!outgoing){actions.getChildren().addAll(small("Accept",e->lanTransfer.accept(t.getTransferId())),small("Reject",e->lanTransfer.reject(t.getTransferId(),"Declined by user")));}else if(!t.getStatus().isTerminal()&&t.getStatus()!=FileTransferStatus.VERIFYING){actions.getChildren().add(small("Cancel",e->lanTransfer.cancel(t.getTransferId())));}row.getChildren().addAll(info,gap,bar,status,actions);return row;}
-    private String uploader(String userId){if(userId.equals(workspaces.currentUserId())&&workspaces.authStateService().user()!=null)return workspaces.authStateService().user().displayName();for(Domain.WorkspaceMember m:workspaces.getActiveMembers())if(userId.equals(m.userId()))return m.nameOrFallback();return "User";} private static String icon(String mime){if(mime!=null&&mime.startsWith("image/"))return "🖼";if(mime!=null&&mime.contains("zip"))return "📦";return "📄";} private static String formatSize(BigInteger bytes){if(bytes.compareTo(BigInteger.valueOf(1024*1024))>=0)return String.format("%.1f MB",bytes.doubleValue()/(1024d*1024));if(bytes.compareTo(BigInteger.valueOf(1024))>=0)return String.format("%.1f KB",bytes.doubleValue()/1024d);return bytes+" B";}
+    private HBox transferRow(FileTransfer t){
+        boolean outgoing=t.getDirection()==FileTransferDirection.OUTGOING;
+        HBox row=new HBox(10);
+        row.getStyleClass().add("transfer-history-row");
+        row.setAlignment(Pos.CENTER_LEFT);
+
+        VBox info=new VBox(2);
+        Label nameLabel = new Label(icon(t.getFileName(), null) + "  " + t.getFileName());
+        nameLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 12px;");
+        Label subLabel = new Label((outgoing ? "Gửi tới: " : "Nhận từ: ") + t.getRemotePeerName() +
+                " • " + t.getFormattedTransferred() + " / " + t.getFormattedSize() +
+                (t.getSpeedBytesPerSec() > 0 ? " (" + t.getFormattedSpeed() + ")" : ""));
+        subLabel.setStyle("-fx-font-size: 10.5px; -fx-text-fill: #64748b;");
+        info.getChildren().addAll(nameLabel, subLabel);
+
+        ProgressBar bar=new ProgressBar(t.getStatus()==FileTransferStatus.TRANSFERRING?t.getProgress():(t.getStatus()==FileTransferStatus.COMPLETED?1:0));
+        bar.setPrefWidth(120);
+
+        Label status=new Label(t.getStatus().getLabel()+(t.getStatus()==FileTransferStatus.TRANSFERRING?" "+t.getProgressPercent()+"%":""));
+        status.setStyle("-fx-font-size: 11px;");
+
+        Region gap=new Region();
+        HBox.setHgrow(gap,Priority.ALWAYS);
+
+        HBox actions=new HBox(4);
+        actions.setAlignment(Pos.CENTER_RIGHT);
+
+        if(t.getStatus()==FileTransferStatus.PENDING&&!outgoing){
+            actions.getChildren().addAll(small("Chấp nhận",e->lanTransfer.accept(t.getTransferId())),small("Từ chối",e->lanTransfer.reject(t.getTransferId(),"Declined by user")));
+        } else if(t.isCompleted() && t.getLocalPath() != null) {
+            actions.getChildren().add(small("📁 Mở thư mục", e -> openTransferDirectory(t)));
+        } else if(!t.getStatus().isTerminal()&&t.getStatus()!=FileTransferStatus.VERIFYING){
+            actions.getChildren().add(small("Huỷ",e->lanTransfer.cancel(t.getTransferId())));
+        }
+        row.getChildren().addAll(info,gap,bar,status,actions);
+        return row;
+    }
+
+    private void openTransferDirectory(FileTransfer t) {
+        try {
+            if (t.getLocalPath() != null && java.nio.file.Files.exists(t.getLocalPath())) {
+                File file = t.getLocalPath().toFile();
+                if (java.awt.Desktop.isDesktopSupported()) {
+                    java.awt.Desktop.getDesktop().open(file.getParentFile());
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+    private String uploader(String userId){if(userId.equals(workspaces.currentUserId())&&workspaces.authStateService().user()!=null)return workspaces.authStateService().user().displayName();for(Domain.WorkspaceMember m:workspaces.getActiveMembers())if(userId.equals(m.userId()))return m.nameOrFallback();return "User";}
+    private static String icon(String name, String mime){return com.landrop.ui.util.FileUtils.getFileIcon(name, mime);}
+    private static String formatSize(BigInteger bytes){return com.landrop.ui.util.FileUtils.formatSize(bytes);}
 }

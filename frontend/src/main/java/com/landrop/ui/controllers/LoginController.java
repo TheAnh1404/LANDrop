@@ -18,6 +18,7 @@ public final class LoginController {
     @FXML private Button submitButton;
     @FXML private Hyperlink registerLink;
     @FXML private Label errorLabel;
+    @FXML private Label serverAddressLabel;
 
     private MainApp mainApp;
     private AuthStateService authState;
@@ -29,6 +30,11 @@ public final class LoginController {
         if (mainApp.getBootstrap() != null && !mainApp.getBootstrap().errorCode().isBlank()
                 && !"ERROR".equals(mainApp.getBootstrap().errorCode())) {
             errorLabel.setText(com.landrop.ui.bootstrap.BootstrapErrors.message(mainApp.getBootstrap().errorCode()));
+        }
+        if (serverAddressLabel != null && mainApp.getResolvedApiUri() != null) {
+            String host = mainApp.getResolvedApiUri().getHost();
+            int port = mainApp.getResolvedApiUri().getPort() > 0 ? mainApp.getResolvedApiUri().getPort() : 3000;
+            serverAddressLabel.setText("🟢 Máy chủ: " + host + ":" + port);
         }
     }
 
@@ -48,5 +54,7 @@ public final class LoginController {
                 }));
     }
 
-    @FXML private void onRegister() { mainApp.showServerConnectionView(); }
+    @FXML private void onRegister() { mainApp.showRegisterView(); }
+
+    @FXML private void onAutoDetectServer() { mainApp.startServerDiscovery(); }
 }
