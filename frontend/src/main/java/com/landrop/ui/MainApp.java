@@ -23,6 +23,7 @@ import com.landrop.ui.config.ServerConnectionPreferences;
 import com.landrop.ui.services.RealtimeChatService;
 import com.landrop.ui.workspace.services.WorkspaceStateService;
 import com.landrop.ui.bootstrap.ClientInstanceService;
+import com.landrop.ui.bootstrap.LocalClientProfileCoordinator;
 import com.landrop.ui.connection.ServerHealthClient;
 import com.landrop.ui.realtime.ClientRealtimeService;
 import com.landrop.ui.realtime.TransferControlService;
@@ -55,6 +56,7 @@ public class MainApp extends Application {
     private volatile TransferControlService transferControlService;
     private volatile ClientInstanceService clientInstanceService;
     private volatile com.landrop.ui.lan.UIStateLanServices lanServices;
+    private LocalClientProfileCoordinator localProfileCoordinator;
     private volatile com.landrop.ui.device.CurrentDeviceService currentDeviceService;
     private volatile URI resolvedWsUri;
     private volatile URI resolvedApiUri;
@@ -91,7 +93,8 @@ public class MainApp extends Application {
         } else if (!FrontendConfig.hasExplicitWsConfiguration(named)) {
             wsUrl = FrontendConfig.resolveWsUrl(named, apiBaseUrl);
         }
-        sessionProfile = FrontendConfig.resolveSessionProfile(named);
+        localProfileCoordinator = LocalClientProfileCoordinator.acquire(FrontendConfig.resolveSessionProfile(named));
+        sessionProfile = localProfileCoordinator.profile();
 
         try {
             this.resolvedApiUri = URI.create(FrontendConfig.validateApiBaseUrl(apiBaseUrl));
@@ -102,8 +105,8 @@ public class MainApp extends Application {
             this.resolvedWsUri = URI.create(FrontendConfig.DEFAULT_WS_URL);
             configurationError = "INVALID_SERVER_CONFIG";
         }
-        this.clientInstanceService = new ClientInstanceService();
-        System.out.println("[LANDrop Client] CLIENT_STARTED");
+        this.clientInstanceService = new ClientInstanceService(sessionProfile);
+        System.out.println("[LANDrop Client] CLIENT_STARTED (profile=" + sessionProfile + ")");
         // Legacy credentials had no server scope and cannot be safely migrated to an arbitrary endpoint.
         new PreferencesSessionStore(sessionProfile).clear();
         initializeAuth(new HttpAuthApi(resolvedApiUri), new com.landrop.ui.auth.api.ServerSessionStore(resolvedApiUri, sessionProfile));
@@ -382,7 +385,7 @@ public class MainApp extends Application {
         var store = new com.landrop.ui.auth.api.ServerSessionStore(resolvedApiUri, sessionProfile);
         store.clear();
         initializeAuth(new HttpAuthApi(resolvedApiUri), store);
-        if (clientInstanceService == null) clientInstanceService = new ClientInstanceService();
+        if (clientInstanceService == null) clientInstanceService = new ClientInstanceService(sessionProfile);
         initializeBootstrap();
         showAuthLoadingView();
         bootstrap.start();
@@ -454,7 +457,12 @@ public class MainApp extends Application {
         String finalDisplayName = displayName;
         stateService.connectAndRegister(finalDisplayName, configuredLocalPort,
                 configuredDiscoveryHost, configuredDiscoveryPort, configuredAdvertisedHost)
-                .whenComplete((ignored, error) -> Platform.runLater(this::showMainView));
+                .whenComplete((ignored, error) -> Platform.runLater(() -> {
+                    if (error == null) {
+                        configuredLocalPort = stateService.getLocalP2pPort();
+                    }
+                    showMainView();
+                }));
     }
 
     public void logout() {
@@ -561,6 +569,7 @@ public class MainApp extends Application {
 
     @Override
     public void stop() {
+        if (localProfileCoordinator != null) localProfileCoordinator.close();
         if (bootstrap != null) bootstrap.close();
         if (realtimeGateway != null) {
             try { realtimeGateway.close(); } catch (Exception ignored) { }

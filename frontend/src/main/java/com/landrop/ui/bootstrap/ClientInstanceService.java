@@ -13,7 +13,7 @@ public final class ClientInstanceService {
     private final Preferences preferences;
 
     public ClientInstanceService() {
-        this(Preferences.userNodeForPackage(ClientInstanceService.class));
+        this("default");
     }
     /** Isolated profile is useful for independent local installations and integration tests. */
     public ClientInstanceService(String profile) {

@@ -35,6 +35,7 @@ import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
 
 import java.io.IOException;
+import java.net.BindException;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
@@ -54,6 +55,8 @@ import java.util.function.Consumer;
  * Ensures thread isolation between background network I/O and the JavaFX Application Thread.
  */
 public class UIStateService {
+
+    private static final int P2P_PORT_SCAN_LIMIT = 100;
 
     // Identity and configuration
     private volatile PeerIdentity identity;
@@ -181,10 +184,12 @@ public class UIStateService {
                     } catch (Exception ignored) {
                     }
                 }
-                try {
-                    this.peerListener = new PeerListener(this.localP2pPort);
-                } catch (IOException e) {
-                    throw new RuntimeException("Local P2P Port " + this.localP2pPort + " is already in use by another application. Please choose another port (e.g. 5002, 5003).", e);
+                int requestedPort = this.localP2pPort;
+                this.peerListener = bindAvailablePeerListener(requestedPort);
+                this.localP2pPort = this.peerListener.getPort();
+                if (requestedPort != 0 && requestedPort != this.localP2pPort) {
+                    System.out.println("[LANDrop] P2P port " + requestedPort + " is unavailable; using "
+                            + this.localP2pPort + " instead.");
                 }
                 startP2pAcceptorLoop();
 
@@ -244,6 +249,40 @@ public class UIStateService {
         });
 
         return future;
+    }
+
+    /**
+     * Binds the requested port directly, then tries nearby ports if another local
+     * client already owns it. Binding each candidate (rather than probing first)
+     * prevents a check-then-bind race between concurrently launched clients.
+     */
+    private PeerListener bindAvailablePeerListener(int requestedPort) throws IOException {
+        if (requestedPort < 0 || requestedPort > 65535) {
+            throw new IllegalArgumentException("P2P port must be between 0 and 65535.");
+        }
+        if (requestedPort == 0) {
+            return new PeerListener(0);
+        }
+
+        BindException lastBindFailure = null;
+        int finalCandidate = Math.min(65535, requestedPort + P2P_PORT_SCAN_LIMIT - 1);
+        for (int candidate = requestedPort; candidate <= finalCandidate; candidate++) {
+            try {
+                return new PeerListener(candidate);
+            } catch (BindException bindFailure) {
+                lastBindFailure = bindFailure;
+            }
+        }
+
+        try {
+            return new PeerListener(0);
+        } catch (IOException dynamicPortFailure) {
+            if (lastBindFailure != null) {
+                dynamicPortFailure.addSuppressed(lastBindFailure);
+            }
+            throw new IOException("Could not bind a P2P listener near port " + requestedPort
+                    + " or obtain a system-assigned port.", dynamicPortFailure);
+        }
     }
 
     /**

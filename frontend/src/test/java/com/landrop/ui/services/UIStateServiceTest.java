@@ -11,6 +11,7 @@ import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.net.ServerSocket;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 
@@ -25,6 +26,27 @@ public class UIStateServiceTest {
             Platform.setImplicitExit(false);
         } catch (IllegalStateException ignored) {
             Platform.setImplicitExit(false);
+        }
+    }
+
+    @Test
+    void fallsBackToAnotherP2pPortWhenTheRequestedPortIsOccupied() throws Exception {
+        DiscoveryServer discoveryServer = new DiscoveryServer(0);
+        discoveryServer.startAsync();
+        assertTrue(discoveryServer.awaitReady(5, TimeUnit.SECONDS));
+        UIStateService peer = new UIStateService();
+
+        try (ServerSocket occupiedPort = new ServerSocket(0)) {
+            int requestedPort = occupiedPort.getLocalPort();
+            peer.connectAndRegister("Fallback peer", requestedPort, "127.0.0.1",
+                    discoveryServer.getPort(), "127.0.0.1").get(5, TimeUnit.SECONDS);
+
+            assertNotEquals(requestedPort, peer.getLocalP2pPort());
+            assertTrue(peer.getLocalP2pPort() > 0);
+            assertEquals(DiscoveryStatus.CONNECTED, peer.discoveryStatusProperty().get());
+        } finally {
+            peer.shutdown();
+            discoveryServer.stop();
         }
     }
 
