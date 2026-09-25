@@ -5,12 +5,16 @@ import com.landrop.auth.exception.ForbiddenException;
 import com.landrop.auth.exception.NotFoundException;
 import com.landrop.auth.exception.ValidationException;
 import com.landrop.auth.model.AuthErrorCode;
+import com.landrop.auth.model.RefreshToken;
+import com.landrop.auth.repository.RefreshTokenRepository;
+import com.landrop.auth.security.SessionVerifier;
 import com.landrop.database.model.Device;
 import com.landrop.database.repository.DeviceRepository;
 import com.landrop.device.dto.DeviceDto;
 import com.landrop.device.dto.DeviceEnrollRequest;
 import com.landrop.device.dto.DeviceRenameRequest;
 import com.landrop.server.clients.ClientRegistry;
+import com.landrop.admin.logging.OperationalLogService;
 import com.landrop.util.AppLogger;
 
 import java.sql.SQLException;
@@ -31,13 +35,24 @@ public class DeviceService {
 
     private final DeviceRepository deviceRepository;
     private final ClientRegistry clientRegistry;
+    private final RefreshTokenRepository sessionRepository;
 
     public DeviceService(DeviceRepository deviceRepository, ClientRegistry clientRegistry) {
+        this(deviceRepository, clientRegistry, null);
+    }
+
+    public DeviceService(DeviceRepository deviceRepository, ClientRegistry clientRegistry,
+                         RefreshTokenRepository sessionRepository) {
         this.deviceRepository = Objects.requireNonNull(deviceRepository, "deviceRepository cannot be null");
         this.clientRegistry = clientRegistry;
+        this.sessionRepository = sessionRepository;
     }
 
     public DeviceDto enrollDevice(UUID userId, DeviceEnrollRequest request) throws SQLException {
+        return enrollDevice(userId, null, request);
+    }
+
+    public DeviceDto enrollDevice(UUID userId, UUID sessionId, DeviceEnrollRequest request) throws SQLException {
         if (userId == null) {
             throw new ValidationException("User identity required from authenticated session");
         }
@@ -52,19 +67,20 @@ public class DeviceService {
         String clientVersion = request.resolvedClientVersion();
 
         Optional<Device> existingOpt = deviceRepository.findByClientInstanceId(clientInstanceId);
+        if (existingOpt.isPresent() && !existingOpt.get().userId().equals(userId)) {
+            throw new ConflictException("This client installation belongs to another user. Ask an administrator to resolve ownership.",
+                    AuthErrorCode.DEVICE_ALREADY_OWNED);
+        }
+        RefreshToken session = sessionRepository != null
+                ? SessionVerifier.requireActive(sessionRepository, sessionId, userId) : null;
+        if (session != null && session.deviceId() != null
+                && (existingOpt.isEmpty() || !session.deviceId().equals(existingOpt.get().id()))) {
+            throw new ConflictException("Session is already bound to another device", AuthErrorCode.DEVICE_CONFLICT);
+        }
         Device savedDevice;
 
         if (existingOpt.isPresent()) {
             Device existing = existingOpt.get();
-            // Ownership invariant check: must belong to the same user
-            if (!existing.userId().equals(userId)) {
-                AppLogger.warn(TAG, "Device conflict: instance '" + clientInstanceId + "' belongs to " + existing.userId() + ", not " + userId);
-                throw new ConflictException(
-                    "Device with clientInstanceId '" + clientInstanceId + "' is already enrolled to another user. Recovery policy requires administrator intervention.",
-                    AuthErrorCode.DEVICE_ALREADY_OWNED
-                );
-            }
-
             // Same user: update existing device metadata
             Device updated = new Device(
                 existing.id(),
@@ -104,6 +120,13 @@ public class DeviceService {
             savedDevice = deviceRepository.upsert(newDevice);
             AppLogger.info(TAG, "Enrolled new device: " + savedDevice.id() + " (" + deviceName + ") for user " + userId);
         }
+
+        if (session != null && !sessionRepository.bindDevice(sessionId, userId, savedDevice.id())) {
+            throw new ConflictException("Session could not be bound to this device", AuthErrorCode.DEVICE_CONFLICT);
+        }
+        OperationalLogService.getInstance().info(existingOpt.isPresent() ? "DEVICE_RECONNECTED" : "DEVICE_ENROLLED",
+                userId.toString(), savedDevice.id(),
+                existingOpt.isPresent() ? "Existing client installation enrolled again." : "New client installation enrolled.");
 
         boolean isOnline = isDeviceOnline(savedDevice);
         return DeviceDto.from(savedDevice, isOnline);
@@ -145,7 +168,9 @@ public class DeviceService {
         }
 
         String newName = request.resolvedName();
-        deviceRepository.updateName(deviceId, newName);
+        if (!deviceRepository.updateName(deviceId, newName)) {
+            throw new NotFoundException("Device not found: " + deviceId, AuthErrorCode.DEVICE_NOT_FOUND);
+        }
 
         Device updated = device.withDeviceName(newName);
         boolean isOnline = isDeviceOnline(updated);
@@ -161,8 +186,6 @@ public class DeviceService {
 
     public boolean isDeviceOnline(Device device) {
         if (device == null || clientRegistry == null) return false;
-        if (clientRegistry.isDeviceOnline(device.id())) return true;
-        if (device.clientInstanceId() != null && clientRegistry.isInstanceOnline(device.clientInstanceId())) return true;
-        return false;
+        return clientRegistry.isDeviceOnline(device.id());
     }
 }

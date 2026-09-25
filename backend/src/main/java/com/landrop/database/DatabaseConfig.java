@@ -24,6 +24,11 @@ public final class DatabaseConfig {
     private DatabaseConfig() {}
 
     public static String getDatabaseUrl() {
+        // Explicitly opt out of persistence for local regression runs even when
+        // a developer has a cloud DATABASE_URL in the repository .env file.
+        if ("false".equalsIgnoreCase(System.getProperty("landrop.database.enabled"))) {
+            return null;
+        }
         String url = System.getProperty("landrop.database.url");
         if (url == null || url.isBlank()) {
             url = System.getenv("DATABASE_URL");

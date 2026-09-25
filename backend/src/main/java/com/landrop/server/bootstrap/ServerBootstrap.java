@@ -122,10 +122,10 @@ public class ServerBootstrap {
                     this.authService = new AuthService(this.userRepository, this.refreshTokenRepository, this.jwtService);
                 }
                 if (this.deviceService == null) {
-                    this.deviceService = new DeviceService(this.deviceRepository, this.clientRegistry);
+                    this.deviceService = new DeviceService(this.deviceRepository, this.clientRegistry, this.refreshTokenRepository);
                 }
                 if (this.authMiddleware == null) {
-                    this.authMiddleware = new AuthMiddleware(this.jwtService, this.userRepository);
+                    this.authMiddleware = new AuthMiddleware(this.jwtService, this.userRepository, this.refreshTokenRepository);
                 }
                 if (this.authHttpHandler == null) {
                     this.authHttpHandler = new AuthHttpHandler(this.authService, this.authMiddleware, this.clientRegistry, com.landrop.auth.server.AuthHttpServer.createObjectMapper());
@@ -150,7 +150,7 @@ public class ServerBootstrap {
                 }
                 this.adminBootstrapService = new AdminBootstrapService(this.userRepository);
                 this.adminBootstrapService.ensureSystemAdminExists();
-                this.adminAuthMiddleware = new AdminAuthMiddleware(this.jwtService, this.userRepository);
+                this.adminAuthMiddleware = new AdminAuthMiddleware(this.jwtService, this.userRepository, this.refreshTokenRepository);
             } catch (Exception e) {
                 AppLogger.warn(TAG, "Failed initializing database admin subsystems: " + e.getMessage());
             }
@@ -160,7 +160,7 @@ public class ServerBootstrap {
             this.jwtService = new JwtService();
         }
         if (this.adminAuthMiddleware == null) {
-            this.adminAuthMiddleware = new AdminAuthMiddleware(this.jwtService, this.userRepository);
+            this.adminAuthMiddleware = new AdminAuthMiddleware(this.jwtService, this.userRepository, this.refreshTokenRepository);
         }
 
         this.adminControlCenterService = new AdminControlCenterService(

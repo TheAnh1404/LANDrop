@@ -289,6 +289,15 @@ public class AdminHttpServer {
                 }
 
                 String action = parts[1].toLowerCase();
+                if ("identity".equals(action) && "GET".equals(method)) {
+                    var identity = service.getUserIdentity(targetUserId);
+                    if (identity.isEmpty()) {
+                        sendJsonResponse(exchange, 404, new ErrorResponse("Not Found", "User not found", 404));
+                    } else {
+                        sendJsonResponse(exchange, 200, identity.get());
+                    }
+                    return;
+                }
                 if ("disable".equals(action)) {
                     if (!"POST".equals(method)) { sendMethodNotAllowed(exchange, "POST"); return; }
                     boolean ok = service.disableUser(targetUserId, adminClaims.userId(), adminClaims.username());

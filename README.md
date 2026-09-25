@@ -109,6 +109,12 @@ mvn -pl frontend -am test     # Test frontend cùng dependency backend
 npm test                      # Test các launcher Node
 ```
 
+Nếu máy có `.env` trỏ tới database đang dùng, có thể chạy bộ regression không dùng database bằng lệnh sau:
+
+```bash
+mvn test "-Dlandrop.database.enabled=false" "-Dtest=*,!PersistentChatTest,!FileManagementTest" "-Dsurefire.failIfNoSpecifiedTests=false"
+```
+
 **Lưu ý về database khi test:** Mã backend tự tìm `DATABASE_URL` từ system property, biến môi trường hoặc `.env` ở thư mục hiện tại/thư mục cha. Một số test mặc định sẽ dùng database nếu có URL và có thể ghi dữ liệu; chỉ chạy chúng với database chuyên dụng cho kiểm thử. Các suite PostgreSQL opt-in khác cần `-Dlandrop.test.postgres=true`. Test JavaFX cần môi trường đồ họa; một số cổng kiểm thử LAN/live cần server ngoài và sẽ được bỏ qua nếu chưa cấu hình. Kế hoạch kiểm thử chi tiết nằm ở [docs/TEST_PLAN.md](docs/TEST_PLAN.md).
 
 ## Cấu trúc repo
@@ -128,7 +134,7 @@ LANDrop/
 Tài liệu kỹ thuật chính:
 
 - [Kiến trúc P2P cốt lõi](docs/ARCHITECTURE.md) và [giao thức LAN](docs/PROTOCOL.md).
-- [Hợp đồng client/server](docs/FOUNDATION-01B-CLIENT-CONTRACT.md), [xác thực và thiết bị](docs/FOUNDATION-04B-CLIENT-AUTH.md), [quản trị](docs/FOUNDATION-03A-CONTROL-CENTER.md).
+- [Hợp đồng client/server](docs/FOUNDATION-01B-CLIENT-CONTRACT.md), [xác thực server và đăng ký thiết bị](docs/FOUNDATION-04A-SERVER-AUTH.md), [xác thực client](docs/FOUNDATION-04B-CLIENT-AUTH.md), [quản trị](docs/FOUNDATION-03A-CONTROL-CENTER.md).
 - [API chat nhóm](docs/PHASE-17A-API-CONTRACT.md), [API file và transfer](docs/PHASE-18A-API-CONTRACT.md), [database](docs/DATABASE.md).
 
 ## Trạng thái hiện tại

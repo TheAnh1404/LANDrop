@@ -4,6 +4,8 @@ import com.landrop.auth.exception.ForbiddenException;
 import com.landrop.auth.exception.UnauthorizedException;
 import com.landrop.auth.security.JwtClaims;
 import com.landrop.auth.security.JwtService;
+import com.landrop.auth.security.SessionVerifier;
+import com.landrop.auth.repository.RefreshTokenRepository;
 import com.landrop.database.model.User;
 import com.landrop.database.repository.UserRepository;
 import com.sun.net.httpserver.HttpExchange;
@@ -20,10 +22,17 @@ public class AdminAuthMiddleware {
 
     private final JwtService jwtService;
     private final UserRepository userRepository;
+    private final RefreshTokenRepository sessionRepository;
 
     public AdminAuthMiddleware(JwtService jwtService, UserRepository userRepository) {
+        this(jwtService, userRepository, null);
+    }
+
+    public AdminAuthMiddleware(JwtService jwtService, UserRepository userRepository,
+                               RefreshTokenRepository sessionRepository) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
+        this.sessionRepository = sessionRepository;
     }
 
     public AdminAuthMiddleware(JwtService jwtService) {
@@ -60,9 +69,11 @@ public class AdminAuthMiddleware {
             throw new ForbiddenException("Access denied: requires SYSTEM_ADMIN privileges");
         }
 
-        // Verify live user status in database if repository is present
-        if (userRepository != null) {
-            try {
+        try {
+            if (sessionRepository != null && claims.sessionId() != null && !claims.sessionId().isBlank()) {
+                SessionVerifier.requireActive(sessionRepository, claims);
+            }
+            if (userRepository != null) {
                 Optional<User> userOpt = userRepository.findById(claims.userId());
                 if (userOpt.isEmpty()) {
                     throw new UnauthorizedException("Admin user account not found");
@@ -74,9 +85,9 @@ public class AdminAuthMiddleware {
                 if (!user.isSystemAdmin()) {
                     throw new ForbiddenException("Access denied: SYSTEM_ADMIN privileges revoked");
                 }
-            } catch (SQLException e) {
-                // If database connectivity blip, fall back to verified cryptographic claims
             }
+        } catch (SQLException unavailable) {
+            throw new UnauthorizedException("Administrator session is unavailable");
         }
 
         return claims;

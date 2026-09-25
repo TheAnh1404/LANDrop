@@ -63,7 +63,14 @@ public class DeviceHttpHandler {
         try {
             JwtClaims claims = authMiddleware.authenticate(exchange);
             DeviceEnrollRequest req = parseRequestBody(exchange, DeviceEnrollRequest.class);
-            DeviceDto enrolled = deviceService.enrollDevice(claims.userId(), req);
+            java.util.UUID sessionId;
+            try {
+                sessionId = java.util.UUID.fromString(claims.sessionId());
+            } catch (Exception missing) {
+                throw new com.landrop.auth.exception.UnauthorizedException(
+                        "A valid session is required", AuthErrorCode.SESSION_EXPIRED);
+            }
+            DeviceDto enrolled = deviceService.enrollDevice(claims.userId(), sessionId, req);
             sendJsonResponse(exchange, 201, enrolled);
         } catch (Exception e) {
             handleError(exchange, e);
@@ -94,6 +101,9 @@ public class DeviceHttpHandler {
             if (path.startsWith(prefix)) {
                 String remainder = path.substring(prefix.length());
                 String[] parts = remainder.split("/");
+                if (parts.length != 1 || parts[0].isBlank()) {
+                    throw new NotFoundException("Device endpoint not found", AuthErrorCode.DEVICE_NOT_FOUND);
+                }
                 String deviceId = parts[0];
 
                 if ("PATCH".equals(method)) {

@@ -2,6 +2,8 @@ package com.landrop.server.clients;
 
 import com.landrop.server.logging.ServerEvent;
 import com.landrop.server.logging.ServerEventLogger;
+import com.landrop.server.protocol.EventEnvelope;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -16,6 +18,8 @@ import java.util.function.Consumer;
  */
 public class ClientRegistry {
 
+    private static final ObjectMapper JSON = new ObjectMapper();
+
     private final Map<String, ClientConnection> connectionsById = new ConcurrentHashMap<>();
     private final Map<String, String> instanceToConnectionId = new ConcurrentHashMap<>();
     private final Map<String, String> deviceToConnectionId = new ConcurrentHashMap<>();
@@ -29,19 +33,19 @@ public class ClientRegistry {
     public void register(ClientConnection connection) {
         Objects.requireNonNull(connection, "connection cannot be null");
 
-        // Reconnect-friendly: supersede prior session with same clientInstanceId
-        String previousConnId = instanceToConnectionId.put(connection.clientInstanceId(), connection.connectionId());
-        if (previousConnId != null && !previousConnId.equals(connection.connectionId())) {
-            ClientConnection oldConn = connectionsById.remove(previousConnId);
-            if (oldConn != null && oldConn.isOpen()) {
-                oldConn.close(1000, "RECONNECTED_FROM_NEW_SESSION");
-                cleanupIdentityIndices(oldConn);
-            }
-            ServerEventLogger.log(ServerEvent.CLIENT_RECONNECTED, connection.connectionId(),
-                    "Client instance '" + connection.clientInstanceId() + "' reconnected; superseded prior session: " + previousConnId);
-        }
-
         connectionsById.put(connection.connectionId(), connection);
+
+        // HELLO supplies an untrusted installation ID. It must not displace an
+        // authenticated connection until the replacement proves session/device ownership.
+        String previousConnId = instanceToConnectionId.get(connection.clientInstanceId());
+        ClientConnection previous = previousConnId != null ? connectionsById.get(previousConnId) : null;
+        if (previous != null && previous.isAuthenticated()) {
+            return;
+        }
+        previousConnId = instanceToConnectionId.put(connection.clientInstanceId(), connection.connectionId());
+        if (previousConnId != null && !previousConnId.equals(connection.connectionId())) {
+            supersede(previousConnId, connection);
+        }
     }
 
     public Optional<ClientConnection> get(String connectionId) {
@@ -122,6 +126,11 @@ public class ClientRegistry {
         // Clean any previous binding for this connection
         cleanupIdentityIndices(conn);
 
+        String previousConnId = instanceToConnectionId.put(conn.clientInstanceId(), connectionId);
+        if (previousConnId != null && !previousConnId.equals(connectionId)) {
+            supersede(previousConnId, conn);
+        }
+
         conn.bindIdentity(userId, username, deviceId, sessionId);
 
         if (deviceId != null && !deviceId.isBlank()) {
@@ -136,6 +145,16 @@ public class ClientRegistry {
 
         ServerEventLogger.log(ServerEvent.HANDSHAKE_OK, connectionId,
                 "Bound connection to User: " + username + " (" + userId + "), Device: " + deviceId + ", Session: " + sessionId);
+    }
+
+    private void supersede(String previousConnId, ClientConnection replacement) {
+        ClientConnection oldConn = connectionsById.remove(previousConnId);
+        if (oldConn != null) {
+            cleanupIdentityIndices(oldConn);
+            oldConn.close(1000, "RECONNECTED_FROM_NEW_SESSION");
+            ServerEventLogger.log(ServerEvent.CLIENT_RECONNECTED, replacement.connectionId(),
+                    "Client instance '" + replacement.clientInstanceId() + "' reconnected; superseded prior session: " + previousConnId);
+        }
     }
 
     /**
@@ -155,7 +174,7 @@ public class ClientRegistry {
         int disconnectedCount = 0;
         for (ClientConnection conn : connections) {
             try {
-                conn.close(4003, reasonCode != null ? reasonCode + ": " + reasonMessage : reasonMessage);
+                closeForRevocation(conn, 4003, reasonCode, reasonMessage);
                 remove(conn.connectionId());
                 disconnectedCount++;
             } catch (Exception ignored) {}
@@ -168,11 +187,22 @@ public class ClientRegistry {
         Optional<ClientConnection> connOpt = findBySessionId(sessionId);
         if (connOpt.isPresent()) {
             ClientConnection conn = connOpt.get();
-            conn.close(4002, reasonCode != null ? reasonCode + ": " + reasonMessage : reasonMessage);
+            closeForRevocation(conn, 4002, reasonCode, reasonMessage);
             remove(conn.connectionId());
             return true;
         }
         return false;
+    }
+
+    private void closeForRevocation(ClientConnection conn, int closeCode, String reasonCode, String reasonMessage) {
+        String message = reasonMessage != null ? reasonMessage : "Authentication session ended";
+        String code = reasonCode != null ? reasonCode : "SESSION_REVOKED";
+        try {
+            conn.sendText(JSON.writeValueAsString(EventEnvelope.error(null, code, message)));
+        } catch (Exception ignored) {
+            // The close code still conveys the terminal reason if the socket cannot send.
+        }
+        conn.close(closeCode, code + ": " + message);
     }
 
     public Optional<ClientConnection> remove(String connectionId) {

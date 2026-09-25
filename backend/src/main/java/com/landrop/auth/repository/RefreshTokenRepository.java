@@ -158,6 +158,24 @@ public class RefreshTokenRepository {
         }
     }
 
+    /** Binds a live session once; a session cannot silently move to another device. */
+    public boolean bindDevice(UUID sessionId, UUID userId, String deviceId) throws SQLException {
+        String sql = """
+            UPDATE refresh_tokens SET device_id = ?, updated_at = ?
+            WHERE id = ? AND user_id = ? AND revoked = FALSE AND expires_at > CURRENT_TIMESTAMP
+              AND (device_id IS NULL OR device_id = ?)
+        """;
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setString(1, deviceId);
+            ps.setTimestamp(2, Timestamp.from(Instant.now()));
+            ps.setObject(3, sessionId);
+            ps.setObject(4, userId);
+            ps.setString(5, deviceId);
+            return ps.executeUpdate() > 0;
+        }
+    }
+
     public List<RefreshToken> findActiveByUserId(UUID userId) throws SQLException {
         String sql = """
             SELECT id, user_id, token_hash, device_id, expires_at, last_seen_at, revoked_at, revoked, created_at, updated_at

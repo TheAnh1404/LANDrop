@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.landrop.auth.config.AuthConfig;
 import com.landrop.auth.exception.UnauthorizedException;
+import com.landrop.auth.model.AuthErrorCode;
 import com.landrop.database.model.User;
 
 import javax.crypto.Mac;
@@ -160,7 +161,7 @@ public class JwtService {
 
             Instant expiresAt = Instant.ofEpochSecond(exp);
             if (Instant.now().isAfter(expiresAt)) {
-                throw new UnauthorizedException("Token has expired");
+                throw new UnauthorizedException("Token has expired", AuthErrorCode.SESSION_EXPIRED);
             }
 
             return new JwtClaims(

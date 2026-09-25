@@ -35,6 +35,7 @@ public final class ClientConnection {
     private final AtomicReference<String> sessionId = new AtomicReference<>(null);
     private final AtomicReference<Instant> authenticatedAt = new AtomicReference<>(null);
     private final AtomicReference<Instant> lastDeviceSeenSyncAt = new AtomicReference<>(Instant.EPOCH);
+    private final AtomicReference<Instant> lastSessionSeenSyncAt = new AtomicReference<>(Instant.EPOCH);
 
     public ClientConnection(String connectionId,
                             String clientInstanceId,
@@ -188,6 +189,14 @@ public final class ClientConnection {
 
     public void markDeviceLastSeenUpdated() {
         this.lastDeviceSeenSyncAt.set(Instant.now());
+    }
+
+    public boolean shouldUpdateSessionLastSeen(long throttleMs) {
+        return java.time.Duration.between(lastSessionSeenSyncAt.get(), Instant.now()).toMillis() >= throttleMs;
+    }
+
+    public void markSessionLastSeenUpdated() {
+        this.lastSessionSeenSyncAt.set(Instant.now());
     }
 
     @Override

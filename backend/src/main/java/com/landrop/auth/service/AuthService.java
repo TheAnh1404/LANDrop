@@ -11,6 +11,8 @@ import com.landrop.auth.repository.RefreshTokenRepository;
 import com.landrop.auth.security.JwtClaims;
 import com.landrop.auth.security.JwtService;
 import com.landrop.auth.security.PasswordHasher;
+import com.landrop.auth.security.SessionVerifier;
+import com.landrop.admin.logging.OperationalLogService;
 import com.landrop.database.model.User;
 import com.landrop.database.repository.UserRepository;
 import com.landrop.util.AppLogger;
@@ -137,7 +139,12 @@ public class AuthService {
         AppLogger.info(TAG, "User logged in successfully: " + user.username() + " (" + user.id() + ")");
 
         // 4. Issue tokens
-        return issueAuthTokens(user, request.deviceId());
+        // Device identity is established only by authenticated enrollment.
+        // A login payload cannot pre-bind a session to a client-claimed device.
+        AuthResponse response = issueAuthTokens(user);
+        OperationalLogService.getInstance().info("USER_LOGIN", user.id().toString(), user.id().toString(),
+                adminLogin ? "Administrator signed in." : "Client user signed in.");
+        return response;
     }
 
     public AuthResponse refresh(RefreshRequest request) throws SQLException {
@@ -206,16 +213,42 @@ public class AuthService {
     }
 
     public boolean logout(String rawRefreshToken) throws SQLException {
+        return logoutSession(rawRefreshToken).isPresent();
+    }
+
+    /** Revokes only the session represented by this signed refresh credential. */
+    public Optional<UUID> logoutSession(String rawRefreshToken) throws SQLException {
         if (rawRefreshToken == null || rawRefreshToken.isBlank()) {
-            return false;
+            return Optional.empty();
         }
 
+        JwtClaims claims = jwtService.verifyToken(rawRefreshToken, true);
         String tokenHash = JwtService.hashToken(rawRefreshToken);
-        boolean revoked = refreshTokenRepository.revokeByTokenHash(tokenHash);
+        Optional<RefreshToken> found = refreshTokenRepository.findByTokenHash(tokenHash);
+        if (found.isEmpty()) {
+            throw new UnauthorizedException("Refresh session not found", AuthErrorCode.SESSION_REVOKED);
+        }
+        RefreshToken session = found.get();
+        if (!session.userId().equals(claims.userId()) || !session.id().toString().equals(claims.sessionId())) {
+            throw new UnauthorizedException("Refresh credential does not match its session", AuthErrorCode.UNAUTHORIZED);
+        }
+        boolean revoked = refreshTokenRepository.revokeById(session.id());
         if (revoked) {
             AppLogger.info(TAG, "Refresh token session revoked successfully on logout");
+            OperationalLogService.getInstance().info("USER_LOGOUT", session.userId().toString(), session.id().toString(),
+                    "Current session signed out.");
+            return Optional.of(session.id());
         }
-        return revoked;
+        return Optional.empty();
+    }
+
+    /** Access-token logout for clients that have no refresh credential available. */
+    public Optional<UUID> logoutCurrentSession(JwtClaims claims) throws SQLException {
+        RefreshToken session = SessionVerifier.requireActive(refreshTokenRepository, claims);
+        if (!refreshTokenRepository.revokeById(session.id())) return Optional.empty();
+        OperationalLogService.getInstance().info("USER_LOGOUT", session.userId().toString(), session.id().toString(),
+                "Current session signed out.");
+        return Optional.of(session.id());
     }
 
     public int logoutAll(UUID userId) throws SQLException {
@@ -257,6 +290,8 @@ public class AuthService {
             sessionId, user.id(), tokenHash, deviceId, expiresAt, now, null, false, now, now
         );
         refreshTokenRepository.create(session);
+        OperationalLogService.getInstance().info("SESSION_CREATED", user.id().toString(), session.id().toString(),
+                "Authentication session created.");
 
         return new AuthResponse(
             accessToken,

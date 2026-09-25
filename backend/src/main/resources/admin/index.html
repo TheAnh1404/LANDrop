@@ -348,6 +348,13 @@
           </div>
         </div>
       </div>
+      <div class="section-card" id="user-identity-card" style="display:none">
+        <div class="card-header">
+          <span class="card-title" id="user-identity-title">User identity</span>
+          <button class="btn btn-secondary btn-sm" onclick="closeUserIdentity()">Close</button>
+        </div>
+        <div class="card-body" id="user-identity-content"></div>
+      </div>
     </div>
 
     <!-- 3. GROUPS & DATABASE TAB -->
@@ -396,13 +403,13 @@
             <table>
               <thead>
                 <tr>
-                  <th>Connection ID</th>
                   <th>Device / Instance</th>
                   <th>User</th>
-                  <th>Platform / OS</th>
-                  <th>Remote Address</th>
-                  <th>Session ID</th>
-                  <th>Connected At</th>
+                  <th>IP / Endpoint</th>
+                  <th>Connection</th>
+                  <th>Session</th>
+                  <th>Status</th>
+                  <th>Protocol</th>
                   <th>Last Heartbeat</th>
                   <th>Actions</th>
                 </tr>
@@ -596,9 +603,13 @@
 
   <script>
     let currentTab = 'dashboard';
-    let authToken = localStorage.getItem('landrop_admin_token') || '';
-    let currentAdminUser = JSON.parse(localStorage.getItem('landrop_admin_user') || 'null');
+    localStorage.removeItem('landrop_admin_token');
+    localStorage.removeItem('landrop_admin_user');
+    let authToken = sessionStorage.getItem('landrop_admin_token') || '';
+    let currentAdminUser = JSON.parse(sessionStorage.getItem('landrop_admin_user') || 'null');
     let selectedWorkspace = null;
+    let usersById = new Map();
+    let clientsById = new Map();
 
     function escapeHtml(value) {
       return String(value ?? '').replace(/[&<>'"]/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' }[ch]));
@@ -660,8 +671,8 @@
 
         authToken = data.accessToken;
         currentAdminUser = data.user;
-        localStorage.setItem('landrop_admin_token', authToken);
-        localStorage.setItem('landrop_admin_user', JSON.stringify(currentAdminUser));
+        sessionStorage.setItem('landrop_admin_token', authToken);
+        sessionStorage.setItem('landrop_admin_user', JSON.stringify(currentAdminUser));
 
         document.getElementById('login-modal').classList.remove('active');
         document.getElementById('user-display').textContent = currentAdminUser.username;
@@ -672,12 +683,18 @@
       }
     }
 
-    function logout() {
+    async function logout() {
+      const token = authToken;
       authToken = '';
       currentAdminUser = null;
-      localStorage.removeItem('landrop_admin_token');
-      localStorage.removeItem('landrop_admin_user');
+      sessionStorage.removeItem('landrop_admin_token');
+      sessionStorage.removeItem('landrop_admin_user');
       document.getElementById('login-modal').classList.add('active');
+      if (token) {
+        try {
+          await fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + token } });
+        } catch (_) { /* The local session is already cleared. */ }
+      }
     }
 
     function switchTab(tab) {
@@ -745,6 +762,7 @@
         const search = document.getElementById('user-search').value.trim();
         const status = document.getElementById('user-status-filter').value;
         const users = await apiFetch(`/api/admin/users?search=${encodeURIComponent(search)}&status=${status}`);
+        usersById = new Map((users || []).map(u => [u.id, u]));
 
         if (!users || users.length === 0) {
           tbody.innerHTML = '<tr><td colspan="7" class="empty-state">No users found</td></tr>';
@@ -762,32 +780,55 @@
             : '<span class="badge badge-info">USER</span>';
 
           const toggleAction = u.status === 'ACTIVE'
-            ? `<button class="btn btn-danger btn-sm" onclick="disableUser('${u.id}', '${u.username}')" ${isCurrent ? 'disabled title="Cannot disable your own admin account"' : ''}>Disable</button>`
-            : `<button class="btn btn-success btn-sm" onclick="enableUser('${u.id}', '${u.username}')">Enable</button>`;
+            ? `<button class="btn btn-danger btn-sm" onclick="disableUser('${u.id}')" ${isCurrent ? 'disabled title="Cannot disable your own admin account"' : ''}>Disable</button>`
+            : `<button class="btn btn-success btn-sm" onclick="enableUser('${u.id}')">Enable</button>`;
 
           return `
             <tr>
-              <td><strong>${u.username}</strong> ${isCurrent ? '<span style="font-size:0.7rem; color:var(--accent-primary);">(You)</span>' : ''}<br><small style="color:var(--text-muted);"><code title="Copy this UUID when assigning group owners or members">${u.id}</code></small></td>
-              <td>${u.email}</td>
+              <td><strong>${escapeHtml(u.username)}</strong> ${isCurrent ? '<span style="font-size:0.7rem; color:var(--accent-primary);">(You)</span>' : ''}<br><small style="color:var(--text-muted);"><code title="Copy this UUID when assigning group owners or members">${escapeHtml(u.id)}</code></small></td>
+              <td>${escapeHtml(u.email)}</td>
               <td>${roleBadge}</td>
               <td>${statusBadge}</td>
               <td>${u.activeSessionsCount}</td>
               <td>${new Date(u.createdAt).toLocaleDateString()}</td>
               <td style="display:flex; gap:0.4rem;">
                 ${toggleAction}
-                <button class="btn btn-secondary btn-sm" onclick="editUser('${u.id}', '${escapeHtml(u.displayName || u.username)}', '${u.systemRole}')">Edit</button>
-                <button class="btn btn-secondary btn-sm" onclick="revokeUserSessions('${u.id}', '${u.username}')" title="Revoke all active sessions">Revoke Sessions</button>
-                <button class="btn btn-danger btn-sm" onclick="deleteUser('${u.id}', '${u.username}')" ${isCurrent ? 'disabled title="Cannot delete your own admin account"' : ''}>Delete</button>
+                <button class="btn btn-secondary btn-sm" onclick="showUserIdentity('${u.id}')">Details</button>
+                <button class="btn btn-secondary btn-sm" onclick="editUser('${u.id}')">Edit</button>
+                <button class="btn btn-secondary btn-sm" onclick="revokeUserSessions('${u.id}')" title="Revoke all active sessions">Revoke Sessions</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteUser('${u.id}')" ${isCurrent ? 'disabled title="Cannot delete your own admin account"' : ''}>Delete</button>
               </td>
             </tr>
           `;
         }).join('');
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color:var(--accent-danger)">Error: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="7" class="empty-state" style="color:var(--accent-danger)">Error: ${escapeHtml(err.message)}</td></tr>`;
       }
     }
 
-    async function disableUser(userId, username) {
+    async function showUserIdentity(userId) {
+      const card = document.getElementById('user-identity-card');
+      const content = document.getElementById('user-identity-content');
+      card.style.display = 'block';
+      content.textContent = 'Loading identity...';
+      try {
+        const detail = await apiFetch(`/api/admin/users/${userId}/identity`);
+        document.getElementById('user-identity-title').textContent = `Identity: ${detail.user.displayName || detail.user.username}`;
+        const devices = (detail.devices || []).map(d => `<li><strong>${escapeHtml(d.name)}</strong> · ${escapeHtml(d.platform)} · ${d.isOnline ? 'Online' : 'Offline'} · Last seen ${escapeHtml(d.lastSeenAt ? new Date(d.lastSeenAt).toLocaleString() : 'Never')}</li>`).join('') || '<li>No enrolled devices</li>';
+        const sessions = (detail.sessions || []).map(s => `<li><code>${escapeHtml(s.id)}</code> · ${s.revoked ? 'Revoked' : s.isExpired ? 'Expired' : 'Active'} · ${escapeHtml(s.deviceName || 'Unbound device')}</li>`).join('') || '<li>No sessions</li>';
+        const connections = (detail.connections || []).map(c => `<li>${escapeHtml(c.deviceName)} · ${escapeHtml(c.remoteAddress)} · <code>${escapeHtml(c.connectionId)}</code></li>`).join('') || '<li>No active connections</li>';
+        content.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1rem"><div><h3>Devices</h3><ul>${devices}</ul></div><div><h3>Sessions</h3><ul>${sessions}</ul></div><div><h3>Current connections</h3><ul>${connections}</ul></div></div>`;
+      } catch (err) {
+        content.textContent = `Could not load identity: ${err.message}`;
+      }
+    }
+
+    function closeUserIdentity() {
+      document.getElementById('user-identity-card').style.display = 'none';
+    }
+
+    async function disableUser(userId) {
+      const username = usersById.get(userId)?.username || userId;
       if (!confirm(`Are you sure you want to disable user '${username}'? Active sessions will be immediately terminated.`)) return;
       try {
         await apiFetch(`/api/admin/users/${userId}/disable`, { method: 'POST' });
@@ -797,7 +838,7 @@
       }
     }
 
-    async function enableUser(userId, username) {
+    async function enableUser(userId) {
       try {
         await apiFetch(`/api/admin/users/${userId}/enable`, { method: 'POST' });
         loadUsers();
@@ -806,7 +847,8 @@
       }
     }
 
-    async function revokeUserSessions(userId, username) {
+    async function revokeUserSessions(userId) {
+      const username = usersById.get(userId)?.username || userId;
       if (!confirm(`Revoke all active sessions for user '${username}'?`)) return;
       try {
         const res = await apiFetch(`/api/admin/users/${userId}/revoke-sessions`, { method: 'POST' });
@@ -817,7 +859,10 @@
       }
     }
 
-    async function editUser(userId, currentName, currentRole) {
+    async function editUser(userId) {
+      const current = usersById.get(userId);
+      const currentName = current?.displayName || current?.username || '';
+      const currentRole = current?.systemRole || 'USER';
       const displayName = prompt('Display name:', currentName);
       if (displayName === null) return;
       const systemRole = prompt('System role (USER or SYSTEM_ADMIN):', currentRole);
@@ -828,7 +873,8 @@
       } catch (err) { alert(err.message); }
     }
 
-    async function deleteUser(userId, username) {
+    async function deleteUser(userId) {
+      const username = usersById.get(userId)?.username || userId;
       if (!confirm(`Permanently delete user '${username}' and related data? This cannot be undone.`)) return;
       try {
         await apiFetch(`/api/admin/users/${userId}`, { method: 'DELETE' });
@@ -915,6 +961,7 @@
       const tbody = document.getElementById('clients-tbody');
       try {
         const clients = await apiFetch('/api/admin/clients');
+        clientsById = new Map((clients || []).map(c => [c.connectionId, c]));
         if (!clients || clients.length === 0) {
           tbody.innerHTML = '<tr><td colspan="9" class="empty-state">No connected clients</td></tr>';
           return;
@@ -922,31 +969,32 @@
 
         tbody.innerHTML = clients.map(c => {
           const userBadge = c.authenticated
-            ? `<span class="badge badge-info">${c.username || 'User'}</span>`
-            : '<span style="color:var(--text-muted);">Anonymous</span>';
-          const sessionCode = c.sessionId ? `<code>${c.sessionId.substring(0, 8)}...</code>` : '<span style="color:var(--text-muted);">-</span>';
+            ? `<span class="badge badge-info">${escapeHtml(c.username || 'User')}</span>`
+            : '<span style="color:var(--text-muted);">Unauthenticated</span>';
+          const sessionCode = c.sessionId ? `<code title="${escapeHtml(c.sessionId)}">${escapeHtml(c.sessionId.substring(0, 8))}...</code>` : '<span style="color:var(--text-muted);">-</span>';
           return `
             <tr>
-              <td><code>${c.connectionId.substring(0, 8)}...</code></td>
-              <td><strong>${c.deviceName}</strong><br><small style="color:var(--text-muted);">${c.clientInstanceId ? c.clientInstanceId.substring(0, 8) + '...' : ''}</small></td>
+              <td><strong>${escapeHtml(c.authenticated ? c.deviceName : 'Unknown Device')}</strong><br><small style="color:var(--text-muted);">${c.authenticated && c.deviceId ? `<code title="${escapeHtml(c.deviceId)}">${escapeHtml(c.deviceId.substring(0, 8))}...</code> · ` : ''}${c.clientInstanceId ? escapeHtml(c.clientInstanceId.substring(0, 8)) + '...' : ''}</small></td>
               <td>${userBadge}</td>
-              <td>${c.platform} ${c.osVersion || ''}</td>
-              <td>${c.remoteAddress}</td>
+              <td>${escapeHtml(c.remoteAddress)}</td>
+              <td><code title="${escapeHtml(c.connectionId)}">${escapeHtml(c.connectionId.substring(0, 8))}...</code></td>
               <td>${sessionCode}</td>
-              <td>${new Date(c.connectedAt).toLocaleTimeString()}</td>
+              <td>${escapeHtml(c.status)}</td>
+              <td>v${Number(c.protocolVersion)}</td>
               <td>${new Date(c.lastHeartbeatAt).toLocaleTimeString()}</td>
               <td>
-                <button class="btn btn-danger btn-sm" onclick="disconnectClient('${c.connectionId}', '${c.deviceName}')">Disconnect</button>
+                <button class="btn btn-danger btn-sm" onclick="disconnectClient('${c.connectionId}')">Disconnect</button>
               </td>
             </tr>
           `;
         }).join('');
       } catch (err) {
-        tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="color:var(--accent-danger)">Error: ${err.message}</td></tr>`;
+        tbody.innerHTML = `<tr><td colspan="9" class="empty-state" style="color:var(--accent-danger)">Error: ${escapeHtml(err.message)}</td></tr>`;
       }
     }
 
-    async function disconnectClient(connectionId, deviceName) {
+    async function disconnectClient(connectionId) {
+      const deviceName = clientsById.get(connectionId)?.deviceName || connectionId;
       const reason = prompt(`Disconnect client '${deviceName}'? Enter reason:`, 'Disconnected by Administrator');
       if (reason === null) return;
       try {
@@ -980,15 +1028,15 @@
             : '<span style="color:var(--text-muted);">Offline</span>';
 
           const deviceDisplay = s.deviceName
-            ? `<strong>${s.deviceName}</strong>`
-            : (s.deviceId ? `<code>${s.deviceId.substring(0, 8)}...</code>` : '<span style="color:var(--text-muted);">-</span>');
+            ? `<strong>${escapeHtml(s.deviceName)}</strong>`
+            : (s.deviceId ? `<code>${escapeHtml(s.deviceId.substring(0, 8))}...</code>` : '<span style="color:var(--text-muted);">-</span>');
 
           const lastSeenDisplay = s.lastSeenAt ? new Date(s.lastSeenAt).toLocaleString() : '<span style="color:var(--text-muted);">-</span>';
 
           return `
             <tr>
               <td><code>${s.id.substring(0, 8)}...</code></td>
-              <td><strong>${s.username}</strong></td>
+              <td><strong>${escapeHtml(s.username)}</strong></td>
               <td>${deviceDisplay}</td>
               <td>${onlineBadge}</td>
               <td>${new Date(s.createdAt).toLocaleString()}</td>

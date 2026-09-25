@@ -19,6 +19,8 @@ import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.UUID;
 
 /**
  * Standard HTTP handler exposing REST endpoints for User Authentication (FOUNDATION-04A.2 - 04A.3, 04A.12).
@@ -122,19 +124,16 @@ public class AuthHttpHandler {
                 } catch (Exception ignored) {}
             }
 
+            Optional<UUID> revokedSession;
             if (refreshToken != null && !refreshToken.isBlank()) {
-                authService.logout(refreshToken);
+                revokedSession = authService.logoutSession(refreshToken);
+            } else {
+                JwtClaims claims = authMiddleware.authenticate(exchange);
+                revokedSession = authService.logoutCurrentSession(claims);
             }
-
-            // If an authorization token was provided, also check if we can unbind active connection
-            String authHeader = exchange.getRequestHeaders().getFirst("Authorization");
-            if (authHeader != null && authHeader.regionMatches(true, 0, "Bearer ", 0, 7)) {
-                try {
-                    JwtClaims claims = authMiddleware.authenticate(exchange);
-                    if (clientRegistry != null && claims != null) {
-                        // Unbind runtime connection if needed
-                    }
-                } catch (Exception ignored) {}
+            if (clientRegistry != null) {
+                revokedSession.ifPresent(sessionId -> clientRegistry.disconnectSession(sessionId.toString(),
+                        AuthErrorCode.SESSION_REVOKED, "Current session signed out"));
             }
 
             sendJsonResponse(exchange, 200, Map.of(

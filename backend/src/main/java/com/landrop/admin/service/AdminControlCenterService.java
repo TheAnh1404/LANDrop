@@ -14,6 +14,7 @@ import com.landrop.database.model.WorkspaceRole;
 import com.landrop.database.repository.DeviceRepository;
 import com.landrop.database.repository.UserRepository;
 import com.landrop.database.repository.WorkspaceRepository;
+import com.landrop.device.dto.DeviceDto;
 import com.landrop.server.clients.ClientConnection;
 import com.landrop.server.clients.ClientRegistry;
 import com.landrop.server.config.ServerConfig;
@@ -153,6 +154,21 @@ public class AdminControlCenterService {
         return Optional.of(AdminUserDto.from(userOpt.get(), activeSessions));
     }
 
+    public Optional<AdminUserIdentityDto> getUserIdentity(UUID id) throws SQLException {
+        Optional<AdminUserDto> user = getUser(id);
+        if (user.isEmpty()) return Optional.empty();
+
+        List<DeviceDto> devices = deviceRepository == null ? List.of()
+                : deviceRepository.findByUserId(id).stream()
+                    .map(device -> DeviceDto.from(device,
+                            clientRegistry != null && clientRegistry.isDeviceOnline(device.id())))
+                    .toList();
+        List<AdminSessionDto> sessions = listSessions(false, id, 500, 0);
+        List<AdminClientDto> connections = clientRegistry == null ? List.of()
+                : clientRegistry.findByUserId(id).stream().map(AdminClientDto::from).toList();
+        return Optional.of(new AdminUserIdentityDto(user.get(), devices, sessions, connections));
+    }
+
     public boolean disableUser(UUID targetUserId, UUID actingAdminId, String actingAdminUsername) throws SQLException {
         if (userRepository == null || targetUserId == null) return false;
 
@@ -180,7 +196,7 @@ public class AdminControlCenterService {
             }
 
             logService.warn(
-                "USER_DISABLED",
+                "ACCOUNT_DISABLED",
                 actingAdminUsername != null ? actingAdminUsername : "ADMIN",
                 targetUserId.toString(),
                 "User account '" + user.username() + "' was disabled. Revoked " + revokedSessions + " active session(s)."

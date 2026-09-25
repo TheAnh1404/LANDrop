@@ -5,6 +5,8 @@ import com.landrop.auth.exception.UnauthorizedException;
 import com.landrop.auth.model.AuthErrorCode;
 import com.landrop.auth.security.JwtClaims;
 import com.landrop.auth.security.JwtService;
+import com.landrop.auth.security.SessionVerifier;
+import com.landrop.auth.repository.RefreshTokenRepository;
 import com.landrop.database.model.User;
 import com.landrop.database.repository.UserRepository;
 import com.sun.net.httpserver.HttpExchange;
@@ -19,14 +21,21 @@ public class AuthMiddleware {
 
     private final JwtService jwtService;
     private final UserRepository userRepository;
+    private final RefreshTokenRepository sessionRepository;
 
     public AuthMiddleware(JwtService jwtService) {
         this(jwtService, null);
     }
 
     public AuthMiddleware(JwtService jwtService, UserRepository userRepository) {
+        this(jwtService, userRepository, null);
+    }
+
+    public AuthMiddleware(JwtService jwtService, UserRepository userRepository,
+                          RefreshTokenRepository sessionRepository) {
         this.jwtService = jwtService;
         this.userRepository = userRepository;
+        this.sessionRepository = sessionRepository;
     }
 
     /**
@@ -54,15 +63,19 @@ public class AuthMiddleware {
 
         JwtClaims claims = jwtService.verifyToken(token, false);
 
-        if (userRepository != null) {
-            try {
+        try {
+            if (sessionRepository != null) {
+                SessionVerifier.requireActive(sessionRepository, claims);
+            }
+            if (userRepository != null) {
                 Optional<User> userOpt = userRepository.findById(claims.userId());
-                if (userOpt.isPresent() && userOpt.get().isDisabled()) {
+                User user = userOpt.orElseThrow(() -> new UnauthorizedException("User account not found"));
+                if (user.isDisabled()) {
                     throw new ForbiddenException("User account is disabled", AuthErrorCode.ACCOUNT_DISABLED);
                 }
-            } catch (SQLException ignored) {
-                // Database connectivity issues should not crash token verification if offline
             }
+        } catch (SQLException unavailable) {
+            throw new UnauthorizedException("Authentication state is unavailable", AuthErrorCode.UNAUTHORIZED);
         }
 
         return claims;

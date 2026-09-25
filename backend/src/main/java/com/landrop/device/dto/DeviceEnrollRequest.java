@@ -22,6 +22,15 @@ public record DeviceEnrollRequest(
         if (resolved == null || resolved.isBlank()) {
             throw new ValidationException("deviceName (or name) is required");
         }
+        if (clientInstanceId.trim().length() > 100) {
+            throw new ValidationException("clientInstanceId must be at most 100 characters");
+        }
+        if (resolved.length() > 255) {
+            throw new ValidationException("deviceName must be at most 255 characters");
+        }
+        if (resolvedPlatform().length() > 50 || resolvedClientVersion().length() > 50) {
+            throw new ValidationException("platform and clientVersion must be at most 50 characters");
+        }
     }
 
     public String resolvedName() {
