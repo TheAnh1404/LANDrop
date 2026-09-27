@@ -273,4 +273,31 @@ public final class FileTransferUtils {
         }
         return hash.substring(0, 10) + "...";
     }
+
+    /**
+     * Efficiently transfers data from a FileChannel to a WritableByteChannel (e.g. SocketChannel)
+     * using OS zero-copy mechanisms to eliminate user/kernel context switches.
+     */
+    public static long transferFromFileChannel(java.nio.channels.FileChannel source, long position, long count, java.nio.channels.WritableByteChannel target) throws IOException {
+        long transferred = 0;
+        while (transferred < count) {
+            long written = source.transferTo(position + transferred, count - transferred, target);
+            if (written <= 0) break;
+            transferred += written;
+        }
+        return transferred;
+    }
+
+    /**
+     * Efficiently transfers data from a ReadableByteChannel into a FileChannel at a given position.
+     */
+    public static long transferToFileChannel(java.nio.channels.ReadableByteChannel source, java.nio.channels.FileChannel target, long position, long count) throws IOException {
+        long transferred = 0;
+        while (transferred < count) {
+            long read = target.transferFrom(source, position + transferred, count - transferred);
+            if (read <= 0) break;
+            transferred += read;
+        }
+        return transferred;
+    }
 }

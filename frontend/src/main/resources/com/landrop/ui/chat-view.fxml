@@ -41,7 +41,7 @@
         </VBox>
     </VBox>
 
-    <!-- 2. Cột Giữa: Khung Trò Chuyện & Chia sẻ File Lớn (Chat & File Share Area) -->
+    <!-- 2. Cột Giữa: Khung Trò Chuyện & Chia sẻ File Lớn / Kho Tài Liệu Nhóm -->
     <VBox styleClass="chat-container" HBox.hgrow="ALWAYS" spacing="6" style="-fx-padding: 0 12px 0 12px;">
         <!-- Header kênh chat -->
         <HBox alignment="CENTER_LEFT" styleClass="chat-header"
@@ -60,61 +60,105 @@
             </HBox>
         </HBox>
 
-        <Label fx:id="errorLabel" styleClass="chat-error-label" wrapText="true"/>
+        <!-- TabPane chứa 2 Tab: Trò chuyện và Kho tài liệu nhóm -->
+        <TabPane fx:id="mainTabPane" id="mainTabPane" VBox.vgrow="ALWAYS" tabClosingPolicy="UNAVAILABLE">
+            <!-- Tab 1: Trò chuyện -->
+            <Tab fx:id="chatTab" text="💬 Trò chuyện">
+                <VBox spacing="6" VBox.vgrow="ALWAYS" style="-fx-padding: 6px 0 0 0;">
+                    <Label fx:id="errorLabel" styleClass="chat-error-label" wrapText="true"/>
 
-        <!-- Nút tải tin nhắn cũ hơn -->
-        <Button fx:id="loadOlderButton" text="↑ Tải tin nhắn cũ hơn" onAction="#onLoadOlder" styleClass="message-action-button" maxWidth="Infinity"/>
+                    <!-- Nút tải tin nhắn cũ hơn -->
+                    <Button fx:id="loadOlderButton" text="↑ Tải tin nhắn cũ hơn" onAction="#onLoadOlder" styleClass="message-action-button" maxWidth="Infinity"/>
 
-        <!-- Danh sách tin nhắn -->
-        <StackPane VBox.vgrow="ALWAYS" style="-fx-background-color: #ffffff; -fx-background-radius: 8px; -fx-border-color: #e2e8f0; -fx-border-radius: 8px;">
-            <ScrollPane fx:id="chatScrollPane" fitToWidth="true" styleClass="chat-messages-scroll"
-                        style="-fx-background-color: transparent; -fx-background: transparent;">
-                <VBox fx:id="messagesContainer" styleClass="chat-messages-container" spacing="10" style="-fx-padding: 14px;"/>
-            </ScrollPane>
-            <VBox fx:id="emptyMessagesContainer" alignment="CENTER" maxWidth="420" maxHeight="160" styleClass="empty-state-box" spacing="6">
-                <Label text="💬 Chưa có tin nhắn nào" styleClass="empty-state-title" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
-                <Label text="Hãy bắt đầu cuộc trò chuyện hoặc kéo thả file lớn vào đây để chia sẻ với nhóm." styleClass="empty-state-desc" wrapText="true" style="-fx-text-alignment: center; -fx-text-fill: #64748b;"/>
-            </VBox>
-        </StackPane>
+                    <!-- Danh sách tin nhắn -->
+                    <StackPane VBox.vgrow="ALWAYS" style="-fx-background-color: #ffffff; -fx-background-radius: 8px; -fx-border-color: #e2e8f0; -fx-border-radius: 8px;">
+                        <ScrollPane fx:id="chatScrollPane" fitToWidth="true" styleClass="chat-messages-scroll"
+                                    style="-fx-background-color: transparent; -fx-background: transparent;">
+                            <VBox fx:id="messagesContainer" styleClass="chat-messages-container" spacing="10" style="-fx-padding: 14px;"/>
+                        </ScrollPane>
+                        <VBox fx:id="emptyMessagesContainer" alignment="CENTER" maxWidth="420" maxHeight="160" styleClass="empty-state-box" spacing="6">
+                            <Label text="💬 Chưa có tin nhắn nào" styleClass="empty-state-title" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+                            <Label text="Hãy bắt đầu cuộc trò chuyện hoặc kéo thả file lớn vào đây để chia sẻ với nhóm." styleClass="empty-state-desc" wrapText="true" style="-fx-text-alignment: center; -fx-text-fill: #64748b;"/>
+                        </VBox>
+                    </StackPane>
 
-        <!-- Thanh trả lời (Reply Bar) -->
-        <HBox fx:id="replyBar" spacing="8" alignment="CENTER_LEFT" visible="false" managed="false" styleClass="reply-bar"
-              style="-fx-background-color: #e0e7ff; -fx-padding: 6px 12px; -fx-background-radius: 6px;">
-            <Label text="↩" style="-fx-font-size: 14px; -fx-text-fill: #4338ca;"/>
-            <Label fx:id="replyLabel" HBox.hgrow="ALWAYS" style="-fx-font-size: 12px; -fx-text-fill: #3730a3;"/>
-            <Button text="✕" onAction="#onCancelReply" styleClass="message-action-button"/>
-        </HBox>
+                    <!-- Thanh trả lời (Reply Bar) -->
+                    <HBox fx:id="replyBar" spacing="8" alignment="CENTER_LEFT" visible="false" managed="false" styleClass="reply-bar"
+                          style="-fx-background-color: #e0e7ff; -fx-padding: 6px 12px; -fx-background-radius: 6px;">
+                        <Label text="↩" style="-fx-font-size: 14px; -fx-text-fill: #4338ca;"/>
+                        <Label fx:id="replyLabel" HBox.hgrow="ALWAYS" style="-fx-font-size: 12px; -fx-text-fill: #3730a3;"/>
+                        <Button text="✕" onAction="#onCancelReply" styleClass="message-action-button"/>
+                    </HBox>
 
-        <!-- Thanh xem trước file đính kèm lớn (Attachment Preview Bar) -->
-        <HBox fx:id="attachmentBar" spacing="10" alignment="CENTER_LEFT" visible="false" managed="false"
-              style="-fx-background-color: #ecfdf5; -fx-padding: 8px 12px; -fx-background-radius: 6px; -fx-border-color: #a7f3d0; -fx-border-radius: 6px;">
-            <Label fx:id="attachmentIconLabel" text="📦" style="-fx-font-size: 18px;"/>
-            <VBox HBox.hgrow="ALWAYS" spacing="1">
-                <Label fx:id="attachmentNameLabel" text="file_name.zip" style="-fx-font-weight: bold; -fx-font-size: 12px; -fx-text-fill: #065f46;"/>
-                <Label fx:id="attachmentSizeLabel" text="Dung lượng: 0 B" style="-fx-font-size: 11px; -fx-text-fill: #047857;"/>
-            </VBox>
-            <Button text="✕ Huỷ đính kèm" onAction="#onCancelAttachment" styleClass="message-action-button" style="-fx-text-fill: #b91c1c;"/>
-        </HBox>
+                    <!-- Thanh xem trước file đính kèm lớn (Attachment Preview Bar) -->
+                    <HBox fx:id="attachmentBar" spacing="10" alignment="CENTER_LEFT" visible="false" managed="false"
+                          style="-fx-background-color: #ecfdf5; -fx-padding: 8px 12px; -fx-background-radius: 6px; -fx-border-color: #a7f3d0; -fx-border-radius: 6px;">
+                        <Label fx:id="attachmentIconLabel" text="📦" style="-fx-font-size: 18px;"/>
+                        <VBox HBox.hgrow="ALWAYS" spacing="1">
+                            <Label fx:id="attachmentNameLabel" text="file_name.zip" style="-fx-font-weight: bold; -fx-font-size: 12px; -fx-text-fill: #065f46;"/>
+                            <Label fx:id="attachmentSizeLabel" text="Dung lượng: 0 B" style="-fx-font-size: 11px; -fx-text-fill: #047857;"/>
+                        </VBox>
+                        <Button text="✕ Huỷ đính kèm" onAction="#onCancelAttachment" styleClass="message-action-button" style="-fx-text-fill: #b91c1c;"/>
+                    </HBox>
 
-        <!-- Thanh nhập tin nhắn và nút đính kèm file -->
-        <HBox alignment="CENTER_LEFT" spacing="8" styleClass="chat-input-bar"
-              style="-fx-padding: 8px 12px; -fx-background-color: #ffffff; -fx-background-radius: 8px; -fx-border-color: #e2e8f0; -fx-border-radius: 8px;">
-            <!-- Nút đính kèm tệp lớn -->
-            <Button fx:id="attachFileButton" text="📎 Đính kèm tệp" onAction="#onAttachFile"
-                    styleClass="secondary-button" style="-fx-font-size: 12px; -fx-font-weight: bold;"/>
+                    <!-- Thanh nhập tin nhắn và nút đính kèm file -->
+                    <HBox alignment="CENTER_LEFT" spacing="8" styleClass="chat-input-bar"
+                          style="-fx-padding: 8px 12px; -fx-background-color: #ffffff; -fx-background-radius: 8px; -fx-border-color: #e2e8f0; -fx-border-radius: 8px;">
+                        <!-- Nút đính kèm tệp lớn -->
+                        <Button fx:id="attachFileButton" text="📎 Đính kèm tệp" onAction="#onAttachFile"
+                                styleClass="secondary-button" style="-fx-font-size: 12px; -fx-font-weight: bold;"/>
 
-            <!-- Ô nhập nội dung tin nhắn -->
-            <TextField fx:id="messageInput" promptText="Nhập tin nhắn... (hoặc kéo thả file vào khung chat, Enter để gửi)"
-                       onAction="#onSendMessage" styleClass="text-input-field" HBox.hgrow="ALWAYS"/>
+                        <!-- Ô nhập nội dung tin nhắn -->
+                        <TextField fx:id="messageInput" promptText="Nhập tin nhắn... (hoặc kéo thả file vào khung chat, Enter để gửi)"
+                                   onAction="#onSendMessage" styleClass="text-input-field" HBox.hgrow="ALWAYS"/>
 
-            <!-- Nút Gửi -->
-            <Button fx:id="sendButton" text="Gửi" onAction="#onSendMessage"
-                    styleClass="primary-button" style="-fx-font-size: 12px; -fx-font-weight: bold; -fx-padding: 6px 16px;"/>
-        </HBox>
+                        <!-- Nút Gửi -->
+                        <Button fx:id="sendButton" text="Gửi" onAction="#onSendMessage"
+                                styleClass="primary-button" style="-fx-font-size: 12px; -fx-font-weight: bold; -fx-padding: 6px 16px;"/>
+                    </HBox>
+                </VBox>
+            </Tab>
+
+            <!-- Tab 2: Kho tài liệu nhóm (Documents Vault) -->
+            <Tab fx:id="vaultTab" text="📁 Kho tài liệu nhóm">
+                <VBox spacing="8" VBox.vgrow="ALWAYS" style="-fx-padding: 6px 0 0 0;">
+                    <!-- Thanh công cụ Kho tài liệu -->
+                    <HBox alignment="CENTER_LEFT" spacing="8" style="-fx-padding: 8px 12px; -fx-background-color: #ffffff; -fx-background-radius: 8px; -fx-border-color: #e2e8f0; -fx-border-radius: 8px;">
+                        <Button fx:id="vaultRootButton" id="vaultRootButton" text="🏠 Gốc" onAction="#onVaultRoot" styleClass="secondary-button" style="-fx-font-size: 11.5px;"/>
+                        <Label fx:id="vaultBreadcrumbLabel" id="vaultBreadcrumbLabel" text="Kho tài liệu" style="-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #1e293b;"/>
+                        <Region HBox.hgrow="ALWAYS"/>
+                        <TextField fx:id="vaultSearchField" id="vaultSearchField" promptText="🔍 Tìm tài liệu..." styleClass="text-input-field" style="-fx-font-size: 11.5px; -fx-pref-width: 160px; -fx-padding: 5px 8px;"/>
+                        <Button fx:id="vaultNewFolderButton" id="vaultNewFolderButton" text="+ Thư mục mới" onAction="#onVaultNewFolder" styleClass="secondary-button" style="-fx-font-size: 11.5px;"/>
+                        <Button fx:id="vaultUploadButton" id="vaultUploadButton" text="⬆ Tải lên" onAction="#onVaultUpload" styleClass="primary-button" style="-fx-font-size: 11.5px;"/>
+                        <Button fx:id="vaultRefreshButton" id="vaultRefreshButton" text="🔄" onAction="#onVaultRefresh" styleClass="message-action-button" style="-fx-font-size: 11.5px;"/>
+                    </HBox>
+
+                    <!-- Vùng nội dung Files & Folders -->
+                    <StackPane VBox.vgrow="ALWAYS" style="-fx-background-color: #ffffff; -fx-background-radius: 8px; -fx-border-color: #e2e8f0; -fx-border-radius: 8px;">
+                        <ScrollPane fitToWidth="true" styleClass="chat-messages-scroll" style="-fx-background-color: transparent; -fx-background: transparent;">
+                            <VBox spacing="10" style="-fx-padding: 12px;">
+                                <VBox fx:id="vaultFoldersContainer" id="vaultFoldersContainer" spacing="4"/>
+                                <VBox fx:id="vaultFilesContainer" id="vaultFilesContainer" spacing="6"/>
+                            </VBox>
+                        </ScrollPane>
+                        <VBox fx:id="vaultEmptyContainer" alignment="CENTER" maxWidth="420" maxHeight="150" styleClass="empty-state-box" spacing="6">
+                            <Label text="📂 Chưa có tài liệu nào" styleClass="empty-state-title" style="-fx-font-size: 15px; -fx-font-weight: bold;"/>
+                            <Label text="Thư mục hiện tại chưa có tài liệu nào. Bấm 'Tải lên' để chia sẻ tệp với các thành viên." styleClass="empty-state-desc" wrapText="true" style="-fx-text-alignment: center; -fx-text-fill: #64748b;"/>
+                        </VBox>
+                    </StackPane>
+
+                    <!-- Status bar phía dưới của Kho tài liệu -->
+                    <HBox alignment="CENTER_LEFT" spacing="10" style="-fx-padding: 6px 10px; -fx-background-color: #f8fafc; -fx-background-radius: 6px; -fx-border-color: #e2e8f0; -fx-border-radius: 6px;">
+                        <Label fx:id="vaultDetailsLabel" text="0 thư mục, 0 tệp tin" style="-fx-font-size: 11px; -fx-text-fill: #64748b;" HBox.hgrow="ALWAYS"/>
+                        <Label fx:id="vaultStatusLabel" text="" style="-fx-font-size: 11px; -fx-text-fill: #059669; -fx-font-weight: bold;"/>
+                    </HBox>
+                </VBox>
+            </Tab>
+        </TabPane>
     </VBox>
 
-    <!-- 3. Cột Phải: Danh Sách Thành Viên & Thiết Bị Trực Tuyến trong Nhóm (Group Members Sidebar) -->
-    <VBox prefWidth="220" minWidth="190" maxWidth="250" styleClass="channel-sidebar" spacing="10"
+    <!-- 3. Cột Phải: Danh Sách Thành Viên & Khay Điều Khiển Truyền Tải (Members & Transfer HUD) -->
+    <VBox prefWidth="230" minWidth="200" maxWidth="270" styleClass="channel-sidebar" spacing="10"
           style="-fx-background-color: #ffffff; -fx-background-radius: 8px; -fx-border-color: #e2e8f0; -fx-border-radius: 8px;">
         <padding>
             <Insets top="12" right="12" bottom="12" left="12"/>
@@ -131,6 +175,19 @@
                     style="-fx-background-color: transparent; -fx-background: transparent;">
             <VBox fx:id="membersListContainer" spacing="6"/>
         </ScrollPane>
+
+        <!-- Khay điều khiển truyền tải tập trung (Transfer Status HUD) -->
+        <VBox fx:id="transferHudPanel" id="transferHudPanel" spacing="6" style="-fx-background-color: #f8fafc; -fx-padding: 8px 10px; -fx-background-radius: 6px; -fx-border-color: #cbd5e1; -fx-border-radius: 6px;">
+            <HBox alignment="CENTER_LEFT" spacing="6">
+                <Label text="⚡ TRUYỀN TẢI LAN" style="-fx-font-size: 11px; -fx-font-weight: bold; -fx-text-fill: #0f172a;" HBox.hgrow="ALWAYS" maxWidth="Infinity"/>
+                <Label fx:id="totalBandwidthLabel" id="totalBandwidthLabel" text="0.0 MB/s" style="-fx-font-size: 10px; -fx-font-weight: bold; -fx-text-fill: #2563eb; -fx-background-color: #dbeafe; -fx-padding: 2px 6px; -fx-background-radius: 8px;"/>
+            </HBox>
+            <ScrollPane fitToWidth="true" maxHeight="160" minHeight="70" styleClass="channel-list-scroll" style="-fx-background-color: transparent; -fx-background: transparent;">
+                <VBox fx:id="hudTransfersContainer" id="hudTransfersContainer" spacing="6">
+                    <Label fx:id="emptyHudLabel" id="emptyHudLabel" text="Không có phiên truyền tải nào" style="-fx-font-size: 10.5px; -fx-text-fill: #94a3b8;"/>
+                </VBox>
+            </ScrollPane>
+        </VBox>
 
         <!-- Thống kê chia sẻ mạng LAN -->
         <VBox spacing="4" style="-fx-background-color: #f8fafc; -fx-padding: 10px; -fx-background-radius: 6px; -fx-border-color: #e2e8f0; -fx-border-radius: 6px;">

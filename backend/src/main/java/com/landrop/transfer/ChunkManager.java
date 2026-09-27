@@ -1,5 +1,13 @@
 package com.landrop.transfer;
 
+import java.io.BufferedInputStream;
+import java.io.BufferedOutputStream;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.BitSet;
@@ -294,5 +302,75 @@ public class ChunkManager {
                     ", progress=" + String.format("%.1f", getProgressPercentage()) + "%" +
                     '}';
         }
+    }
+
+    public static final int META_MAGIC = 0x4C414E44; // "LAND"
+    public static final int META_VERSION = 1;
+
+    /**
+     * Persists the ChunkManager's completion bitmap and total chunks into a .landrop-meta file.
+     *
+     * @param metaFile destination metadata file path
+     * @throws IOException if writing fails
+     */
+    public void saveToMetaFile(Path metaFile) throws IOException {
+        if (metaFile == null) return;
+        if (metaFile.getParent() != null) {
+            Files.createDirectories(metaFile.getParent());
+        }
+        Path tmp = metaFile.resolveSibling(metaFile.getFileName().toString() + ".tmp");
+        try (DataOutputStream dos = new DataOutputStream(new BufferedOutputStream(Files.newOutputStream(tmp)))) {
+            dos.writeInt(META_MAGIC);
+            dos.writeInt(META_VERSION);
+            dos.writeInt(totalChunks);
+            byte[] bytes;
+            synchronized (lock) {
+                bytes = completedChunks.toByteArray();
+            }
+            dos.writeInt(bytes.length);
+            dos.write(bytes);
+            dos.flush();
+        }
+        try {
+            Files.move(tmp, metaFile, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+        } catch (Exception e) {
+            Files.move(tmp, metaFile, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    /**
+     * Reconstructs a ChunkManager from an existing .landrop-meta file.
+     *
+     * @param metaFile path to .landrop-meta file
+     * @return restored ChunkManager, or null if file does not exist or format is invalid
+     */
+    public static ChunkManager loadFromMetaFile(Path metaFile) {
+        if (metaFile == null || !Files.exists(metaFile)) return null;
+        try (DataInputStream dis = new DataInputStream(new BufferedInputStream(Files.newInputStream(metaFile)))) {
+            int magic = dis.readInt();
+            if (magic != META_MAGIC) return null;
+            int version = dis.readInt();
+            if (version > META_VERSION) return null;
+            int total = dis.readInt();
+            int byteLen = dis.readInt();
+            if (byteLen < 0 || byteLen > 10 * 1024 * 1024) return null;
+            byte[] bytes = new byte[byteLen];
+            dis.readFully(bytes);
+            BitSet bitSet = BitSet.valueOf(bytes);
+            return new ChunkManager(total, bitSet);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * Extracts the completed BitSet from a .landrop-meta file.
+     *
+     * @param metaFile path to .landrop-meta file
+     * @return completed BitSet or null
+     */
+    public static BitSet loadBitSetFromMetaFile(Path metaFile) {
+        ChunkManager cm = loadFromMetaFile(metaFile);
+        return cm != null ? cm.getCompletedChunksBitSet() : null;
     }
 }

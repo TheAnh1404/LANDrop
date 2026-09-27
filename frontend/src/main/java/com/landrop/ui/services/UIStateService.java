@@ -950,6 +950,14 @@ public class UIStateService {
         });
     }
 
+    public CompletableFuture<Void> pauseTransfer(String transferId) {
+        return CompletableFuture.runAsync(() -> {
+            if (fileTransferService != null) {
+                fileTransferService.pauseTransfer(transferId);
+            }
+        });
+    }
+
     public CompletableFuture<Void> resumeTransfer(String transferId) {
         return CompletableFuture.runAsync(() -> {
             if (fileTransferService != null) {

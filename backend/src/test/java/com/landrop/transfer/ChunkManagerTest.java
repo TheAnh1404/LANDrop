@@ -193,4 +193,51 @@ public class ChunkManagerTest {
         assertEquals(totalChunks, cm.getCompletedChunkCount());
         assertEquals(totalChunks, successfulCompletions.get());
     }
+
+    @Test
+    @DisplayName("Verify ChunkManager save to .landrop-meta and load from meta file")
+    void testMetaFilePersistence(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) throws Exception {
+        java.nio.file.Path metaPath = tempDir.resolve("sample_file.landrop-meta");
+
+        ChunkManager cm = new ChunkManager(100);
+        cm.markCompleted(0);
+        cm.markCompleted(5);
+        cm.markCompleted(42);
+        cm.markCompleted(99);
+
+        cm.saveToMetaFile(metaPath);
+        assertTrue(java.nio.file.Files.exists(metaPath));
+
+        ChunkManager loaded = ChunkManager.loadFromMetaFile(metaPath);
+        assertNotNull(loaded);
+        assertEquals(100, loaded.getTotalChunks());
+        assertEquals(4, loaded.getCompletedChunkCount());
+        assertTrue(loaded.isCompleted(0));
+        assertTrue(loaded.isCompleted(5));
+        assertTrue(loaded.isCompleted(42));
+        assertTrue(loaded.isCompleted(99));
+        assertFalse(loaded.isCompleted(1));
+        assertFalse(loaded.isCompleted(41));
+
+        BitSet bitSet = ChunkManager.loadBitSetFromMetaFile(metaPath);
+        assertNotNull(bitSet);
+        assertEquals(4, bitSet.cardinality());
+        assertTrue(bitSet.get(42));
+    }
+
+    @Test
+    @DisplayName("Verify dynamic chunk sizing for large files")
+    void testDynamicChunkSizing() {
+        // Files <= 500MB use 1MB default
+        assertEquals(1024 * 1024, FileChunk.determineOptimalChunkSize(100 * 1024 * 1024L));
+        assertEquals(1024 * 1024, FileChunk.determineOptimalChunkSize(500 * 1024 * 1024L));
+
+        // Files > 500MB and <= 2GB use 1MB
+        assertEquals(1024 * 1024, FileChunk.determineOptimalChunkSize(1000 * 1024 * 1024L));
+        assertEquals(1024 * 1024, FileChunk.determineOptimalChunkSize(2L * 1024 * 1024 * 1024L));
+
+        // Files > 2GB use 2MB
+        assertEquals(2 * 1024 * 1024, FileChunk.determineOptimalChunkSize(3L * 1024 * 1024 * 1024L));
+        assertEquals(2 * 1024 * 1024, FileChunk.determineOptimalChunkSize(50L * 1024 * 1024 * 1024L));
+    }
 }

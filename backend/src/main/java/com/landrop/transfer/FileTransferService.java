@@ -335,6 +335,9 @@ public class FileTransferService implements AutoCloseable {
         // Calculate SHA-256 streaming hash
         String sha256 = FileTransferUtils.calculateSha256(file.toPath());
         int chunkSize = configuredChunkSize;
+        if (configuredChunkSize == DEFAULT_CHUNK_SIZE) {
+            chunkSize = FileChunk.determineOptimalChunkSize(fileSize, configuredChunkSize);
+        }
         int totalChunks = FileChunk.calculateTotalChunks(fileSize, chunkSize);
 
         FileTransfer transfer = new FileTransfer(
@@ -428,9 +431,17 @@ public class FileTransferService implements AutoCloseable {
             return;
         }
 
-        // Prepare partial file path: <destPath>.landrop.part
+        // Prepare partial file path: <destPath>.landrop.part and metadata: <destPath>.landrop-meta
         Path tempPartPath = destPath.resolveSibling(destPath.getFileName().toString() + ".landrop.part");
-        Files.deleteIfExists(tempPartPath);
+        Path metaPath = getMetaPath(tempPartPath);
+        BitSet restoredBits = null;
+        if (Files.exists(metaPath) && Files.exists(tempPartPath)) {
+            restoredBits = ChunkManager.loadBitSetFromMetaFile(metaPath);
+        }
+        if (restoredBits == null) {
+            Files.deleteIfExists(tempPartPath);
+            Files.deleteIfExists(metaPath);
+        }
 
         FileChannel channel = FileChannel.open(tempPartPath,
                 StandardOpenOption.CREATE,
@@ -438,6 +449,14 @@ public class FileTransferService implements AutoCloseable {
                 StandardOpenOption.WRITE);
 
         long now = System.currentTimeMillis();
+        BitSet receivedBits = (restoredBits != null) ? restoredBits : new BitSet(transfer.getTotalChunks());
+        if (restoredBits != null) {
+            for (int i = 0; i < transfer.getTotalChunks(); i++) {
+                if (restoredBits.get(i)) {
+                    transfer.markChunkCompleted(i);
+                }
+            }
+        }
         ReceiverContext ctx = new ReceiverContext(
                 channel,
                 tempPartPath,
@@ -446,7 +465,7 @@ public class FileTransferService implements AutoCloseable {
                 transfer.getChunkSize(),
                 transfer.getTotalChunks(),
                 transfer.getFileSha256(),
-                new BitSet(transfer.getTotalChunks()),
+                receivedBits,
                 now,
                 new AtomicLong(now)
         );
@@ -531,6 +550,7 @@ public class FileTransferService implements AutoCloseable {
             receiver.closeChannel();
             try {
                 Files.deleteIfExists(receiver.tempPartPath());
+                Files.deleteIfExists(getMetaPath(receiver.tempPartPath()));
             } catch (Exception ignored) {
             }
         }
@@ -566,8 +586,35 @@ public class FileTransferService implements AutoCloseable {
         if (transfer.getDirection() == FileTransferDirection.INCOMING) {
             ReceiverContext ctx = openReceivers.get(transferId);
             if (ctx == null) {
+                Path tempPartPath = downloadDirectory.resolve(transfer.getFileName() + ".landrop.part");
+                Path metaPath = getMetaPath(tempPartPath);
+                if (Files.exists(tempPartPath) && Files.exists(metaPath)) {
+                    BitSet restored = ChunkManager.loadBitSetFromMetaFile(metaPath);
+                    if (restored != null) {
+                        try {
+                            FileChannel ch = FileChannel.open(tempPartPath, StandardOpenOption.READ, StandardOpenOption.WRITE);
+                            ctx = new ReceiverContext(
+                                ch,
+                                tempPartPath,
+                                downloadDirectory.resolve(transfer.getFileName()),
+                                transfer.getFileSize(),
+                                transfer.getChunkSize(),
+                                transfer.getTotalChunks(),
+                                transfer.getFileSha256(),
+                                restored,
+                                System.currentTimeMillis(),
+                                new AtomicLong(System.currentTimeMillis())
+                            );
+                            openReceivers.put(transferId, ctx);
+                        } catch (Exception ignored) {}
+                    }
+                }
+            }
+            if (ctx == null) {
                 return;
             }
+            ctx.cancelled().set(false);
+            final ReceiverContext finalCtx = ctx;
 
             Thread.ofVirtual().name("resume-incoming-" + transferId).start(() -> {
                 try {
@@ -577,7 +624,7 @@ public class FileTransferService implements AutoCloseable {
                             " fromChunk=" + fromChunk + "/" + transfer.getTotalChunks());
                     notifyResuming(transfer, fromChunk, transfer.getTotalChunks());
 
-                    ResumeRequestMessage req = ResumeRequestMessage.of(transfer, ctx.receivedChunks());
+                    ResumeRequestMessage req = ResumeRequestMessage.of(transfer, finalCtx.receivedChunks());
                     CompletableFuture<ResumeResponseMessage> respFuture = new CompletableFuture<>();
                     pendingResumeResponses.put(transferId, respFuture);
 
@@ -598,7 +645,7 @@ public class FileTransferService implements AutoCloseable {
                     transfer.setStatus(FileTransferStatus.TRANSFERRING);
                     transfer.setErrorMessage("");
 
-                    startChunkPullerWorker(transfer, ctx);
+                    startChunkPullerWorker(transfer, finalCtx);
 
                 } catch (TimeoutException te) {
                     pendingResumeResponses.remove(transferId);
@@ -688,6 +735,13 @@ public class FileTransferService implements AutoCloseable {
                             transfer.setCurrentChunk(nextMissing + 1);
                             transfer.addTransferredBytes(chunkResp.chunkLength());
 
+                            // Persist Chunk Bitmap to .landrop-meta
+                            try {
+                                Path metaPath = getMetaPath(ctx.tempPartPath());
+                                ChunkManager metaMgr = new ChunkManager(ctx.totalChunks(), ctx.receivedChunks());
+                                metaMgr.saveToMetaFile(metaPath);
+                            } catch (Exception ignored) {}
+
                             // Clear retry indicators
                             transfer.setChunkRetryAttempt(0);
                             transfer.setChunkRetryIndex(-1);
@@ -756,6 +810,15 @@ public class FileTransferService implements AutoCloseable {
             f.completeExceptionally(new IOException("Connection lost: " + reason));
         }
         pendingResumeResponses.clear();
+
+        // Persist chunk bitmap to .landrop-meta for all active receivers
+        for (ReceiverContext ctx : openReceivers.values()) {
+            try {
+                Path metaPath = getMetaPath(ctx.tempPartPath());
+                ChunkManager metaMgr = new ChunkManager(ctx.totalChunks(), ctx.receivedChunks());
+                metaMgr.saveToMetaFile(metaPath);
+            } catch (Exception ignored) {}
+        }
 
         FileTransfer incomingToReconnect = null;
 
@@ -1265,6 +1328,10 @@ public class FileTransferService implements AutoCloseable {
                         StandardCopyOption.REPLACE_EXISTING);
             }
 
+            try {
+                Files.deleteIfExists(getMetaPath(ctx.tempPartPath()));
+            } catch (Exception ignored) {}
+
             transfer.setHashVerified(true);
             transfer.setLocalPath(ctx.finalDestPath());
             transfer.setStatus(FileTransferStatus.COMPLETED);
@@ -1685,5 +1752,48 @@ public class FileTransferService implements AutoCloseable {
 
             listeners.clear();
         }
+    }
+
+    /**
+     * Resolves the corresponding .landrop-meta file path for a given file or partial file path.
+     */
+    public static Path getMetaPath(Path path) {
+        if (path == null) return null;
+        String name = path.getFileName().toString();
+        if (name.endsWith(".landrop.part")) {
+            name = name.substring(0, name.length() - ".landrop.part".length());
+        }
+        return path.resolveSibling(name + ".landrop-meta");
+    }
+
+    /**
+     * Pauses an active file transfer, preserving partial data and .landrop-meta state.
+     *
+     * @param transferId the unique transfer identifier
+     */
+    public void pauseTransfer(String transferId) {
+        FileTransfer transfer = transfers.get(transferId);
+        if (transfer == null || transfer.isTerminal()) {
+            return;
+        }
+
+        ReceiverContext ctx = openReceivers.get(transferId);
+        if (ctx != null) {
+            ctx.cancelled().set(true);
+            try {
+                Path metaPath = getMetaPath(ctx.tempPartPath());
+                ChunkManager metaMgr = new ChunkManager(ctx.totalChunks(), ctx.receivedChunks());
+                metaMgr.saveToMetaFile(metaPath);
+            } catch (Exception ignored) {}
+            ctx.closeChannel();
+        }
+
+        SenderContext sender = activeSenders.get(transferId);
+        if (sender != null) {
+            sender.cancelled().set(true);
+        }
+
+        transfer.setStatus(FileTransferStatus.INTERRUPTED);
+        notifyInterrupted(transfer, "Transfer paused by user");
     }
 }

@@ -97,4 +97,33 @@ public record FileChunk(String transferId, int chunkIndex, long offset, int leng
         int length = calculateChunkLength(chunkIndex, totalChunks, chunkSize, fileSize);
         return new FileChunk(transferId, chunkIndex, offset, length);
     }
+
+    /**
+     * Determines optimal chunk size based on file size for large file transfers (1GB - 50GB):
+     * - > 2 GB: 2 MiB (2,097,152 bytes)
+     * - > 500 MB: 1 MiB (1,048,576 bytes)
+     * - Otherwise: baseChunkSize (defaults to 1 MiB)
+     *
+     * @param fileSize file size in bytes
+     * @return optimal chunk size in bytes
+     */
+    public static int determineOptimalChunkSize(long fileSize) {
+        return determineOptimalChunkSize(fileSize, 1024 * 1024);
+    }
+
+    /**
+     * Determines optimal chunk size based on file size with custom base chunk size fallback.
+     *
+     * @param fileSize file size in bytes
+     * @param baseChunkSize default chunk size to use for files <= 500MB
+     * @return optimal chunk size in bytes
+     */
+    public static int determineOptimalChunkSize(long fileSize, int baseChunkSize) {
+        if (fileSize > 2L * 1024 * 1024 * 1024L) {
+            return 2 * 1024 * 1024;
+        } else if (fileSize > 500L * 1024 * 1024L) {
+            return 1024 * 1024;
+        }
+        return baseChunkSize > 0 ? baseChunkSize : 1024 * 1024;
+    }
 }

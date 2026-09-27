@@ -9,6 +9,7 @@ import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Node;
 import javafx.scene.Parent;
+import javafx.scene.control.TabPane;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
@@ -108,6 +109,21 @@ public class FXMLLoaderTest {
 
         UIStateService stateService = new UIStateService();
         assertDoesNotThrow(() -> controller.init(stateService, new MainController()));
+
+        // Verify TabPane and both Tabs are loaded
+        TabPane tabPane = (TabPane) loader.getNamespace().get("mainTabPane");
+        assertNotNull(tabPane, "mainTabPane must exist");
+        assertEquals(2, tabPane.getTabs().size(), "mainTabPane should have 2 tabs");
+
+        // Verify Transfer HUD controls
+        assertNotNull(loader.getNamespace().get("transferHudPanel"), "transferHudPanel must exist");
+        assertNotNull(loader.getNamespace().get("hudTransfersContainer"), "hudTransfersContainer must exist");
+        assertNotNull(loader.getNamespace().get("totalBandwidthLabel"), "totalBandwidthLabel must exist");
+
+        // Verify Vault tab controls
+        assertNotNull(loader.getNamespace().get("vaultFoldersContainer"), "vaultFoldersContainer must exist");
+        assertNotNull(loader.getNamespace().get("vaultFilesContainer"), "vaultFilesContainer must exist");
+        assertNotNull(loader.getNamespace().get("vaultBreadcrumbLabel"), "vaultBreadcrumbLabel must exist");
     }
 
     @Test

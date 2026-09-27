@@ -13,5 +13,7 @@ public interface LanTransferService {
     CompletableFuture<Void> accept(String transferId);
     CompletableFuture<Void> reject(String transferId, String reason);
     CompletableFuture<Void> cancel(String transferId);
+    default CompletableFuture<Void> pause(String transferId) { return CompletableFuture.completedFuture(null); }
+    default CompletableFuture<Void> resume(String transferId) { return CompletableFuture.completedFuture(null); }
     void setOnTransferUpdated(Consumer<FileTransfer> listener);
 }

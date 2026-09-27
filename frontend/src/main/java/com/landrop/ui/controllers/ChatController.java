@@ -1,5 +1,9 @@
 package com.landrop.ui.controllers;
 
+import com.landrop.transfer.FileTransfer;
+import com.landrop.transfer.FileTransferDirection;
+import com.landrop.transfer.FileTransferStatus;
+import com.landrop.transfer.FileTransferUtils;
 import com.landrop.ui.cloud.model.Domain;
 import com.landrop.ui.lan.LanTransferService;
 import com.landrop.ui.models.NavigationTab;
@@ -25,13 +29,13 @@ import java.io.File;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.Objects;
-import java.util.UUID;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * Enhanced Group Collaboration Chat Controller.
- * Provides real-time team messaging, inline large file sharing via LAN P2P,
- * drag-and-drop file attachments, and active workspace members directory.
+ * Provides real-time team messaging, inline large file sharing via LAN P2P with live progress HUD,
+ * integrated Group Documents Vault tab, drag-and-drop file attachments, and active workspace members directory.
  */
 public final class ChatController {
 
@@ -44,16 +48,35 @@ public final class ChatController {
     @FXML private ScrollPane chatScrollPane;
     @FXML private HBox replyBar, attachmentBar;
 
+    // Group Documents Vault FXML controls
+    @FXML private TabPane mainTabPane;
+    @FXML private Tab chatTab, vaultTab;
+    @FXML private Label vaultBreadcrumbLabel, vaultDetailsLabel, vaultStatusLabel;
+    @FXML private TextField vaultSearchField;
+    @FXML private Button vaultRootButton, vaultNewFolderButton, vaultUploadButton, vaultRefreshButton;
+    @FXML private VBox vaultFoldersContainer, vaultFilesContainer, vaultEmptyContainer;
+
+    // Transfer Status HUD controls
+    @FXML private VBox transferHudPanel, hudTransfersContainer;
+    @FXML private Label totalBandwidthLabel, emptyHudLabel;
+
     private WorkspaceChatStateService chat;
     private WorkspaceStateService workspaces;
     private MainController mainController;
+    private LanTransferService lanTransfer;
+    private FileManagerStateService files;
 
     private Domain.Message replyingTo, editing;
     private boolean initialHistory = true;
     private double olderContentHeight = -1, olderScrollValue;
+    private long lastHudRenderMs = 0;
 
     // File attachment staging
     private File pendingAttachmentFile;
+
+    // Track active inline cards for reactive real-time progress updates
+    private record AttachmentCardBindings(ProgressBar progressBar, Label statusLabel, Button downloadBtn, Button openDirBtn) {}
+    private final Map<String, AttachmentCardBindings> activeAttachmentCards = new ConcurrentHashMap<>();
 
     /** Compatibility hook for legacy tests; production uses workspace chat state. */
     @Deprecated
@@ -68,6 +91,11 @@ public final class ChatController {
         this.chat = Objects.requireNonNull(chat);
         this.workspaces = Objects.requireNonNull(workspaces);
         this.mainController = mainController;
+
+        if (mainController != null && mainController.getMainApp() != null) {
+            this.lanTransfer = mainController.getMainApp().getLanTransferService();
+            this.files = mainController.getMainApp().getFileManagerStateService();
+        }
 
         // Enable send button if text or attachment is present
         updateSendButtonState();
@@ -101,11 +129,40 @@ public final class ChatController {
             renderChannels();
             updateCreateControls();
             renderMembers();
+            renderVaultFiles();
         }));
         workspaces.currentUserMemberProperty().addListener((o, old, now) -> Platform.runLater(() -> {
             updateCreateControls();
             renderMembers();
         }));
+
+        // Vault listeners
+        if (files != null) {
+            files.folders().addListener((ListChangeListener<Domain.Folder>) c -> Platform.runLater(this::renderVaultFiles));
+            files.files().addListener((ListChangeListener<Domain.File>) c -> Platform.runLater(this::renderVaultFiles));
+            files.breadcrumbs().addListener((ListChangeListener<Domain.Folder>) c -> Platform.runLater(this::renderVaultBreadcrumbs));
+            files.errorProperty().addListener((o, old, err) -> Platform.runLater(() -> {
+                if (vaultStatusLabel != null && err != null) vaultStatusLabel.setText(err);
+            }));
+            files.successProperty().addListener((o, old, ok) -> Platform.runLater(() -> {
+                if (vaultStatusLabel != null && ok != null) vaultStatusLabel.setText(ok);
+            }));
+        }
+        if (vaultSearchField != null) {
+            vaultSearchField.textProperty().addListener((o, old, text) -> renderVaultFiles());
+        }
+
+        // LAN Transfer & HUD listeners
+        if (lanTransfer != null) {
+            lanTransfer.transfers().addListener((ListChangeListener<FileTransfer>) c -> {
+                scheduleHudRender();
+                Platform.runLater(this::updateChatAttachmentTransfers);
+            });
+            lanTransfer.setOnTransferUpdated(t -> {
+                scheduleHudRender();
+                Platform.runLater(this::updateChatAttachmentTransfers);
+            });
+        }
 
         // Setup drag and drop for files on the chat area
         setupDragAndDrop();
@@ -119,6 +176,9 @@ public final class ChatController {
         renderConnection();
         updateCreateControls();
         renderMembers();
+        renderVaultBreadcrumbs();
+        renderVaultFiles();
+        renderTransferHud();
     }
 
     private void updateSendButtonState() {
@@ -187,7 +247,10 @@ public final class ChatController {
 
     @FXML
     private void onOpenDocumentsVault() {
-        if (mainController != null) {
+        if (mainTabPane != null && vaultTab != null) {
+            mainTabPane.getSelectionModel().select(vaultTab);
+            renderVaultFiles();
+        } else if (mainController != null) {
             mainController.navigateTo(NavigationTab.TRANSFERS);
         }
     }
@@ -364,7 +427,7 @@ public final class ChatController {
                     accompanying.getStyleClass().add("message-text");
                     bubble.getChildren().add(accompanying);
                 }
-                // Render beautiful large file attachment card
+                // Render beautiful large file attachment card with live progress controls
                 bubble.getChildren().add(createFileAttachmentCard(fileInfo, mine, m));
             } else {
                 Label content = new Label(m.content());
@@ -411,7 +474,7 @@ public final class ChatController {
     }
 
     /**
-     * Builds an interactive Card for inline shared large files.
+     * Builds an interactive Card for inline shared large files with live progress bar and open directory action.
      */
     private VBox createFileAttachmentCard(FileUtils.FileShareInfo fileInfo, boolean mine, Domain.Message msg) {
         VBox card = new VBox(6);
@@ -457,23 +520,111 @@ public final class ChatController {
             downloadBtn.getStyleClass().add("primary-button-small");
             downloadBtn.setStyle("-fx-font-size: 11px; -fx-padding: 4px 10px;");
 
+            ProgressBar progressBar = new ProgressBar(0);
+            progressBar.setPrefWidth(160);
+            progressBar.setMaxHeight(8);
+            progressBar.setVisible(false);
+            progressBar.setManaged(false);
+
             Label statusLabel = new Label("");
             statusLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #2563eb;");
 
+            Button openDirBtn = new Button("📁 Mở thư mục chứa");
+            openDirBtn.getStyleClass().add("secondary-button");
+            openDirBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3px 8px;");
+            openDirBtn.setVisible(false);
+            openDirBtn.setManaged(false);
+
+            // Register card bindings for reactive transfer progress updates
+            activeAttachmentCards.put(fileInfo.fileName().toLowerCase(),
+                    new AttachmentCardBindings(progressBar, statusLabel, downloadBtn, openDirBtn));
+
+            FileTransfer matched = findTransferForFile(fileInfo.fileName());
+            if (matched != null) {
+                if (matched.isCompleted() && matched.getLocalPath() != null) {
+                    downloadBtn.setVisible(false);
+                    downloadBtn.setManaged(false);
+                    progressBar.setProgress(1.0);
+                    progressBar.setVisible(true);
+                    progressBar.setManaged(true);
+                    statusLabel.setText("✅ Hoàn tất (Đã xác minh SHA-256)");
+                    statusLabel.setStyle("-fx-font-size: 11px; -fx-text-fill: #059669; -fx-font-weight: bold;");
+                    openDirBtn.setVisible(true);
+                    openDirBtn.setManaged(true);
+                    openDirBtn.setOnAction(e -> openFileLocation(matched.getLocalPath()));
+                } else if (matched.getStatus() == FileTransferStatus.TRANSFERRING) {
+                    downloadBtn.setDisable(true);
+                    downloadBtn.setText("Đang tải...");
+                    progressBar.setProgress(matched.getProgress());
+                    progressBar.setVisible(true);
+                    progressBar.setManaged(true);
+                    statusLabel.setText(matched.getFormattedSpeed() + " • " + matched.getProgressPercent() + "%");
+                }
+            }
+
             downloadBtn.setOnAction(e -> {
                 downloadBtn.setDisable(true);
+                progressBar.setVisible(true);
+                progressBar.setManaged(true);
                 statusLabel.setText("Đang yêu cầu kết nối P2P...");
-                initiateFileDownload(fileInfo, msg.senderId(), statusLabel, downloadBtn);
+                initiateFileDownload(fileInfo, msg.senderId(), statusLabel, downloadBtn, progressBar, openDirBtn);
             });
 
-            actionBox.getChildren().addAll(downloadBtn, statusLabel);
+            actionBox.getChildren().addAll(downloadBtn, progressBar, statusLabel, openDirBtn);
         }
 
         card.getChildren().add(actionBox);
         return card;
     }
 
-    private void initiateFileDownload(FileUtils.FileShareInfo fileInfo, String uploaderUserId, Label statusLabel, Button downloadBtn) {
+    private FileTransfer findTransferForFile(String fileName) {
+        if (lanTransfer == null || fileName == null) return null;
+        for (FileTransfer t : lanTransfer.transfers()) {
+            if (fileName.equalsIgnoreCase(t.getFileName())) {
+                return t;
+            }
+        }
+        return null;
+    }
+
+    private void updateChatAttachmentTransfers() {
+        if (lanTransfer == null || activeAttachmentCards.isEmpty()) return;
+        for (FileTransfer t : lanTransfer.transfers()) {
+            AttachmentCardBindings b = activeAttachmentCards.get(t.getFileName().toLowerCase());
+            if (b != null) {
+                if (t.getStatus() == FileTransferStatus.TRANSFERRING) {
+                    b.progressBar().setProgress(t.getProgress());
+                    b.progressBar().setVisible(true);
+                    b.progressBar().setManaged(true);
+                    b.statusLabel().setText(t.getFormattedSpeed() + " • " + t.getProgressPercent() + "%");
+                    b.statusLabel().setStyle("-fx-font-size: 11px; -fx-text-fill: #2563eb;");
+                    b.downloadBtn().setDisable(true);
+                    b.downloadBtn().setText("Đang tải...");
+                } else if (t.isCompleted() && t.getLocalPath() != null) {
+                    b.progressBar().setProgress(1.0);
+                    b.progressBar().setVisible(true);
+                    b.progressBar().setManaged(true);
+                    b.statusLabel().setText("✅ Hoàn tất (Đã xác minh SHA-256)");
+                    b.statusLabel().setStyle("-fx-font-size: 11px; -fx-text-fill: #059669; -fx-font-weight: bold;");
+                    b.downloadBtn().setVisible(false);
+                    b.downloadBtn().setManaged(false);
+                    b.openDirBtn().setVisible(true);
+                    b.openDirBtn().setManaged(true);
+                    b.openDirBtn().setOnAction(e -> openFileLocation(t.getLocalPath()));
+                } else if (t.getStatus() == FileTransferStatus.INTERRUPTED) {
+                    b.statusLabel().setText("Đã tạm dừng (" + t.getProgressPercent() + "%)");
+                    b.statusLabel().setStyle("-fx-font-size: 11px; -fx-text-fill: #d97706;");
+                } else if (t.getStatus() == FileTransferStatus.FAILED) {
+                    b.statusLabel().setText("Tải thất bại: " + t.getErrorMessage());
+                    b.statusLabel().setStyle("-fx-font-size: 11px; -fx-text-fill: #dc2626;");
+                    b.downloadBtn().setDisable(false);
+                    b.downloadBtn().setText("⬇ Thử lại");
+                }
+            }
+        }
+    }
+
+    private void initiateFileDownload(FileUtils.FileShareInfo fileInfo, String uploaderUserId, Label statusLabel, Button downloadBtn, ProgressBar progressBar, Button openDirBtn) {
         if (mainController == null || mainController.getMainApp() == null) {
             statusLabel.setText("Lỗi: Không tìm thấy dịch vụ truyền tệp");
             downloadBtn.setDisable(false);
@@ -481,7 +632,6 @@ public final class ChatController {
         }
 
         var filesService = mainController.getMainApp().getFileManagerStateService();
-        var lanTransfer = mainController.getMainApp().getLanTransferService();
 
         if (filesService == null) {
             statusLabel.setText("Đang kết nối máy chủ tệp...");
@@ -529,17 +679,369 @@ public final class ChatController {
                             statusLabel.setText("Yêu cầu tải thất bại: " + transferErr.getMessage());
                             downloadBtn.setDisable(false);
                         } else {
-                            statusLabel.setText("Đã bắt đầu truyền tải! Xem ở mục Transfers.");
+                            statusLabel.setText("Đã bắt đầu truyền tải! Xem ở khay tiến trình.");
                             downloadBtn.setText("Đang tải...");
                         }
                     }));
         }));
     }
 
+    private void openFileLocation(Path path) {
+        try {
+            if (path != null && java.nio.file.Files.exists(path)) {
+                File file = path.toFile();
+                if (Desktop.isDesktopSupported()) {
+                    File parent = file.getParentFile();
+                    Desktop.getDesktop().open(parent != null ? parent : file);
+                }
+            }
+        } catch (Exception ignored) {}
+    }
+
+    // --------------------------------------------------------------------------
+    // Transfer Status HUD / Drawer
+    // --------------------------------------------------------------------------
+
+    private void scheduleHudRender() {
+        long now = System.currentTimeMillis();
+        if (now - lastHudRenderMs < 100) return;
+        lastHudRenderMs = now;
+        Platform.runLater(this::renderTransferHud);
+    }
+
+    private void renderTransferHud() {
+        if (hudTransfersContainer == null || lanTransfer == null) return;
+        hudTransfersContainer.getChildren().clear();
+
+        var transfers = lanTransfer.transfers();
+        if (transfers.isEmpty()) {
+            if (emptyHudLabel != null) {
+                emptyHudLabel.setVisible(true);
+                emptyHudLabel.setManaged(true);
+                hudTransfersContainer.getChildren().add(emptyHudLabel);
+            }
+            if (totalBandwidthLabel != null) {
+                totalBandwidthLabel.setText("0.0 MB/s");
+            }
+            return;
+        }
+
+        double totalSpeed = 0.0;
+        for (FileTransfer t : transfers) {
+            if (t.getStatus() == FileTransferStatus.TRANSFERRING) {
+                totalSpeed += t.getSpeedBytesPerSec();
+            }
+            hudTransfersContainer.getChildren().add(createHudTransferRow(t));
+        }
+
+        if (totalBandwidthLabel != null) {
+            totalBandwidthLabel.setText(FileTransferUtils.formatSpeed(totalSpeed));
+        }
+    }
+
+    private HBox createHudTransferRow(FileTransfer t) {
+        boolean outgoing = t.getDirection() == FileTransferDirection.OUTGOING;
+        HBox row = new HBox(6);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.setStyle("-fx-padding: 4px 6px; -fx-background-color: #ffffff; -fx-background-radius: 4px; -fx-border-color: #e2e8f0; -fx-border-radius: 4px;");
+
+        Label dirIcon = new Label(outgoing ? "📤" : "📥");
+        dirIcon.setStyle("-fx-font-size: 11px;");
+
+        VBox info = new VBox(1);
+        HBox.setHgrow(info, Priority.ALWAYS);
+        String displayName = t.getFileName();
+        if (displayName.length() > 16) {
+            displayName = displayName.substring(0, 13) + "…";
+        }
+        Label name = new Label(displayName);
+        name.setStyle("-fx-font-weight: bold; -fx-font-size: 11px; -fx-text-fill: #1e293b;");
+
+        ProgressBar bar = new ProgressBar(t.getStatus() == FileTransferStatus.TRANSFERRING ? t.getProgress() : (t.getStatus() == FileTransferStatus.COMPLETED ? 1.0 : 0.0));
+        bar.setPrefWidth(90);
+        bar.setMaxHeight(6);
+
+        String statusStr;
+        if (t.getStatus() == FileTransferStatus.TRANSFERRING) {
+            statusStr = t.getProgressPercent() + "% • " + (t.getSpeedBytesPerSec() > 0 ? t.getFormattedSpeed() : "");
+        } else if (t.getStatus() == FileTransferStatus.COMPLETED) {
+            statusStr = "Hoàn tất";
+        } else if (t.getStatus() == FileTransferStatus.INTERRUPTED) {
+            statusStr = "Đã tạm dừng";
+        } else {
+            statusStr = t.getStatus().getLabel();
+        }
+        Label statusLabel = new Label(statusStr);
+        statusLabel.setStyle("-fx-font-size: 9.5px; -fx-text-fill: #64748b;");
+
+        info.getChildren().addAll(name, bar, statusLabel);
+
+        HBox actions = new HBox(2);
+        actions.setAlignment(Pos.CENTER_RIGHT);
+
+        if (t.getStatus() == FileTransferStatus.PENDING && !outgoing) {
+            Button acceptBtn = smallIcon("✓", "Chấp nhận", e -> lanTransfer.accept(t.getTransferId()));
+            Button rejectBtn = smallIcon("✕", "Từ chối", e -> lanTransfer.reject(t.getTransferId(), "User declined"));
+            actions.getChildren().addAll(acceptBtn, rejectBtn);
+        } else if (t.getStatus() == FileTransferStatus.TRANSFERRING) {
+            Button pauseBtn = smallIcon("⏸", "Tạm dừng", e -> lanTransfer.pause(t.getTransferId()));
+            Button cancelBtn = smallIcon("✕", "Huỷ", e -> lanTransfer.cancel(t.getTransferId()));
+            actions.getChildren().addAll(pauseBtn, cancelBtn);
+        } else if (t.getStatus() == FileTransferStatus.INTERRUPTED) {
+            Button resumeBtn = smallIcon("▶", "Tiếp tục tải", e -> lanTransfer.resume(t.getTransferId()));
+            Button cancelBtn = smallIcon("✕", "Huỷ", e -> lanTransfer.cancel(t.getTransferId()));
+            actions.getChildren().addAll(resumeBtn, cancelBtn);
+        } else if (t.isCompleted() && t.getLocalPath() != null) {
+            Button openBtn = smallIcon("📁", "Mở thư mục", e -> openFileLocation(t.getLocalPath()));
+            actions.getChildren().add(openBtn);
+        } else if (!t.getStatus().isTerminal() && t.getStatus() != FileTransferStatus.VERIFYING) {
+            Button cancelBtn = smallIcon("✕", "Huỷ", e -> lanTransfer.cancel(t.getTransferId()));
+            actions.getChildren().add(cancelBtn);
+        }
+
+        row.getChildren().addAll(dirIcon, info, actions);
+        return row;
+    }
+
+    private Button smallIcon(String text, String tooltip, javafx.event.EventHandler<javafx.event.ActionEvent> h) {
+        Button b = new Button(text);
+        b.setTooltip(new Tooltip(tooltip));
+        b.setStyle("-fx-font-size: 10px; -fx-padding: 2px 5px; -fx-background-radius: 3px;");
+        b.setOnAction(h);
+        return b;
+    }
+
+    // --------------------------------------------------------------------------
+    // Group Documents Vault Tab
+    // --------------------------------------------------------------------------
+
+    private void renderVaultBreadcrumbs() {
+        if (vaultBreadcrumbLabel == null || files == null) return;
+        StringBuilder text = new StringBuilder("📁 Kho tài liệu");
+        for (Domain.Folder f : files.breadcrumbs()) {
+            text.append("  /  ").append(f.name());
+        }
+        vaultBreadcrumbLabel.setText(text.toString());
+    }
+
+    private void renderVaultFiles() {
+        if (vaultFoldersContainer == null || vaultFilesContainer == null || files == null) return;
+        vaultFoldersContainer.getChildren().clear();
+        vaultFilesContainer.getChildren().clear();
+
+        String query = vaultSearchField != null && vaultSearchField.getText() != null
+                ? vaultSearchField.getText().trim().toLowerCase() : "";
+
+        var folderList = files.folders().stream()
+                .filter(f -> query.isEmpty() || f.name().toLowerCase().contains(query))
+                .toList();
+
+        var fileList = files.files().stream()
+                .filter(f -> query.isEmpty() || f.name().toLowerCase().contains(query))
+                .toList();
+
+        boolean empty = folderList.isEmpty() && fileList.isEmpty();
+        if (vaultEmptyContainer != null) {
+            vaultEmptyContainer.setVisible(empty);
+            vaultEmptyContainer.setManaged(empty);
+        }
+
+        for (Domain.Folder folder : folderList) {
+            vaultFoldersContainer.getChildren().add(createVaultFolderRow(folder));
+        }
+
+        for (Domain.File file : fileList) {
+            vaultFilesContainer.getChildren().add(createVaultFileRow(file));
+        }
+
+        if (vaultDetailsLabel != null) {
+            vaultDetailsLabel.setText(folderList.size() + " thư mục, " + fileList.size() + " tệp tin");
+        }
+    }
+
+    private HBox createVaultFolderRow(Domain.Folder folder) {
+        HBox row = new HBox(8);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.setStyle("-fx-padding: 6px 10px; -fx-background-color: #f8fafc; -fx-background-radius: 6px; -fx-border-color: #e2e8f0; -fx-border-radius: 6px;");
+
+        Button open = new Button("📁 " + folder.name());
+        open.setStyle("-fx-font-weight: bold; -fx-font-size: 12px; -fx-background-color: transparent; -fx-cursor: hand;");
+        open.setOnAction(e -> files.openFolder(folder));
+
+        Region gap = new Region();
+        HBox.setHgrow(gap, Priority.ALWAYS);
+
+        Button deleteBtn = small("Xoá", e -> {
+            Alert a = new Alert(Alert.AlertType.CONFIRMATION, "Bạn có muốn xoá thư mục ‘" + folder.name() + "’ không?", ButtonType.CANCEL, ButtonType.OK);
+            a.setHeaderText("Xoá thư mục");
+            if (a.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
+                files.deleteFolder(folder);
+            }
+        });
+
+        row.getChildren().addAll(open, gap, deleteBtn);
+        return row;
+    }
+
+    private HBox createVaultFileRow(Domain.File file) {
+        HBox row = new HBox(8);
+        row.setAlignment(Pos.CENTER_LEFT);
+        row.setStyle("-fx-padding: 6px 10px; -fx-background-color: #ffffff; -fx-background-radius: 6px; -fx-border-color: #e2e8f0; -fx-border-radius: 6px;");
+
+        Label icon = new Label(FileUtils.getFileIcon(file.name(), file.mimeType()));
+        icon.setStyle("-fx-font-size: 16px;");
+
+        VBox meta = new VBox(2);
+        HBox.setHgrow(meta, Priority.ALWAYS);
+
+        Label name = new Label(file.name());
+        name.setStyle("-fx-font-weight: bold; -fx-font-size: 12px; -fx-text-fill: #1e293b;");
+
+        Label sub = new Label(FileUtils.formatSize(file.sizeBytes()) + " • " + senderName(file.uploadedById()) + " • " +
+                DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm").withZone(ZoneId.systemDefault()).format(file.createdAt()));
+        sub.setStyle("-fx-font-size: 10.5px; -fx-text-fill: #64748b;");
+
+        meta.getChildren().addAll(name, sub);
+
+        Button downloadBtn = new Button("⬇ Tải về (LAN)");
+        downloadBtn.setStyle("-fx-font-size: 11px; -fx-padding: 3px 8px;");
+        downloadBtn.getStyleClass().add("primary-button-small");
+        downloadBtn.setOnAction(e -> {
+            downloadBtn.setDisable(true);
+            downloadBtn.setText("Đang gửi yêu cầu...");
+            requestVaultFileDownload(file, downloadBtn);
+        });
+
+        Button deleteBtn = small("Xoá", e -> {
+            Alert a = new Alert(Alert.AlertType.CONFIRMATION, "Bạn có muốn xoá tệp ‘" + file.name() + "’ không?", ButtonType.CANCEL, ButtonType.OK);
+            a.setHeaderText("Xoá tệp");
+            if (a.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
+                files.deleteFile(file);
+            }
+        });
+
+        row.getChildren().addAll(icon, meta, downloadBtn, deleteBtn);
+        return row;
+    }
+
+    private void requestVaultFileDownload(Domain.File file, Button downloadBtn) {
+        if (files == null) {
+            downloadBtn.setDisable(false);
+            downloadBtn.setText("⬇ Tải về (LAN)");
+            return;
+        }
+
+        // Locate uploader's device
+        files.devicesFor(file.uploadedById()).whenComplete((devices, err) -> Platform.runLater(() -> {
+            if (err != null || devices == null || devices.isEmpty()) {
+                if (vaultStatusLabel != null) vaultStatusLabel.setText("Người tải lên hiện không có thiết bị online trên LAN.");
+                downloadBtn.setDisable(false);
+                downloadBtn.setText("⬇ Tải về (LAN)");
+                return;
+            }
+
+            var reachable = devices.stream().filter(Domain.Device::lanAvailable).findFirst();
+            if (reachable.isEmpty()) {
+                if (vaultStatusLabel != null) vaultStatusLabel.setText("Thiết bị của người gửi đang bận hoặc offline.");
+                downloadBtn.setDisable(false);
+                downloadBtn.setText("⬇ Tải về (LAN)");
+                return;
+            }
+
+            Domain.Device device = reachable.get();
+            files.requestExistingTransfer(file, file.uploadedById(), device.id())
+                    .whenComplete((res, transferErr) -> Platform.runLater(() -> {
+                        if (transferErr != null) {
+                            if (vaultStatusLabel != null) vaultStatusLabel.setText("Yêu cầu tải thất bại: " + transferErr.getMessage());
+                            downloadBtn.setDisable(false);
+                            downloadBtn.setText("⬇ Tải về (LAN)");
+                        } else {
+                            if (vaultStatusLabel != null) vaultStatusLabel.setText("Đã bắt đầu truyền tải " + file.name() + " qua LAN!");
+                            downloadBtn.setText("Đã yêu cầu");
+                        }
+                    }));
+        }));
+    }
+
+    @FXML
+    private void onVaultRoot() {
+        if (files != null) files.openRoot();
+    }
+
+    @FXML
+    private void onVaultNewFolder() {
+        if (files == null) return;
+        TextInputDialog d = new TextInputDialog();
+        d.setTitle("Thư mục mới");
+        d.setHeaderText("Tạo thư mục mới trong Kho tài liệu");
+        d.setContentText("Tên thư mục:");
+        d.showAndWait().ifPresent(name -> {
+            if (name != null && !name.trim().isEmpty()) {
+                files.createFolder(name.trim());
+            }
+        });
+    }
+
+    @FXML
+    private void onVaultUpload() {
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Chọn tệp để chia sẻ lên Kho tài liệu");
+        File file = chooser.showOpenDialog(vaultUploadButton.getScene().getWindow());
+        if (file == null || !file.exists()) return;
+
+        if (lanTransfer != null) {
+            lanTransfer.offerLocalFile(file);
+        }
+
+        if (files != null && workspaces != null && workspaces.getActiveWorkspace() != null) {
+            var otherMembers = workspaces.getActiveMembers().stream()
+                    .filter(m -> !m.userId().equals(workspaces.currentUserId()))
+                    .toList();
+            if (otherMembers.isEmpty()) {
+                if (vaultStatusLabel != null) vaultStatusLabel.setText("Tệp đã sẵn sàng chia sẻ trên LAN: " + file.getName());
+                return;
+            }
+
+            // Show recipient dialog
+            ChoiceDialog<Domain.WorkspaceMember> dialog = new ChoiceDialog<>(otherMembers.get(0), otherMembers);
+            dialog.setTitle("Chia sẻ tệp lên Kho tài liệu");
+            dialog.setHeaderText("Chọn thành viên nhận thông báo tệp");
+            dialog.setContentText("Thành viên:");
+            dialog.showAndWait().ifPresent(recipient -> {
+                files.devicesFor(recipient.userId()).whenComplete((devices, err) -> Platform.runLater(() -> {
+                    if (err != null || devices == null || devices.isEmpty()) {
+                        if (vaultStatusLabel != null) vaultStatusLabel.setText("Đã chia sẻ LAN: " + file.getName());
+                        return;
+                    }
+                    var reachable = devices.stream().filter(Domain.Device::lanAvailable).findFirst();
+                    String devId = reachable.map(Domain.Device::id).orElse(devices.get(0).id());
+                    files.registerAndRequest(file.toPath(), recipient.userId(), devId);
+                    if (vaultStatusLabel != null) vaultStatusLabel.setText("Đã tải lên Kho tài liệu: " + file.getName());
+                }));
+            });
+        }
+    }
+
+    @FXML
+    private void onVaultRefresh() {
+        if (files != null) files.refresh();
+    }
+
+    // --------------------------------------------------------------------------
+    // Chat Message Helpers
+    // --------------------------------------------------------------------------
+
     private Button action(String text, javafx.event.EventHandler<javafx.event.ActionEvent> handler) {
         Button b = new Button(text);
         b.getStyleClass().add("message-action-button");
         b.setOnAction(handler);
+        return b;
+    }
+
+    private Button small(String text, javafx.event.EventHandler<javafx.event.ActionEvent> h) {
+        Button b = new Button(text);
+        b.getStyleClass().add("message-action-button");
+        b.setOnAction(h);
         return b;
     }
 
@@ -638,20 +1140,14 @@ public final class ChatController {
 
     private void offerAndSendFileMessage(File file, String accompanyingText, String replyToId) {
         if (mainController != null && mainController.getMainApp() != null) {
-            LanTransferService lanTransfer = mainController.getMainApp().getLanTransferService();
-            if (lanTransfer != null) {
+            LanTransferService localLanTransfer = mainController.getMainApp().getLanTransferService();
+            if (localLanTransfer != null) {
                 // Announce file to local LAN transfer service so peers can download it
-                lanTransfer.offerLocalFile(file);
+                localLanTransfer.offerLocalFile(file);
             }
 
             FileManagerStateService fileManager = mainController.getMainApp().getFileManagerStateService();
             if (fileManager != null && workspaces.getActiveWorkspace() != null) {
-                // Register in workspace file vault in background
-                Path filePath = file.toPath();
-                var ws = workspaces.getActiveWorkspace();
-                var currentFolder = fileManager.currentFolder();
-                String folderId = currentFolder != null ? currentFolder.id() : null;
-
                 // Build inline file share tag
                 String fileId = UUID.randomUUID().toString();
                 String fileTag = FileUtils.buildFileShareTag(fileId, file.getName(), file.length(), "");

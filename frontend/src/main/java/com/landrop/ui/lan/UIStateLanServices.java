@@ -34,6 +34,8 @@ public final class UIStateLanServices implements LanDiscoveryService, LanTransfe
     @Override public CompletableFuture<Void> accept(String transferId) { return engine.acceptTransfer(transferId); }
     @Override public CompletableFuture<Void> reject(String transferId, String reason) { return engine.rejectTransfer(transferId, reason); }
     @Override public CompletableFuture<Void> cancel(String transferId) { return engine.cancelTransfer(transferId); }
+    @Override public CompletableFuture<Void> pause(String transferId) { return engine.pauseTransfer(transferId); }
+    @Override public CompletableFuture<Void> resume(String transferId) { return engine.resumeTransfer(transferId); }
     @Override public void setOnTransferUpdated(java.util.function.Consumer<FileTransfer> listener) { engine.setOnFileTransferUpdatedCallback(listener); }
     private void refreshMapped() { devices.setAll(engine.getDiscoveredPeers().stream().map(p -> new DiscoveredDevice(p.getPeerId(), p.getDisplayName(), p.getPeerId(), p.getHost(), p.getPort())).toList()); }
 }
