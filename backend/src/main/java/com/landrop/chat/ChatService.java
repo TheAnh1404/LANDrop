@@ -47,8 +47,9 @@ public class ChatService implements AutoCloseable {
         this.localSender = (localSender != null && !localSender.isBlank()) ? localSender : "You";
         this.history = Objects.requireNonNull(history, "ChatHistory cannot be null");
 
-        // Register custom handler for CHAT_MESSAGE packets
+        // Register custom handler for CHAT_MESSAGE and CLIPBOARD_SHARE packets
         this.connection.registerHandler(MessageType.CHAT_MESSAGE, this::handleIncomingChatPacket);
+        this.connection.registerHandler(MessageType.CLIPBOARD_SHARE, this::handleIncomingClipboardPacket);
 
         // Attach connection listener for lifecycle bridging
         this.connection.addListener(new ConnectionListener() {
@@ -111,6 +112,38 @@ public class ChatService implements AutoCloseable {
 
         history.add(message);
         notifyMessageReceived(message);
+    }
+
+    /**
+     * Sends a clipboard text snippet to the remote peer.
+     *
+     * @param text the text payload to share
+     * @return the created ClipboardMessage
+     * @throws IOException if network transmission fails
+     */
+    public com.landrop.protocol.ClipboardMessage sendClipboard(String text) throws IOException {
+        if (text == null || text.isBlank()) {
+            throw new IllegalArgumentException("Clipboard content cannot be empty");
+        }
+        long requestId = connection.getRequestIdGenerator().nextId();
+        com.landrop.protocol.ClipboardMessage clip = new com.landrop.protocol.ClipboardMessage(requestId, localSender, text.trim());
+        Packet packet = Packet.of(MessageType.CLIPBOARD_SHARE, requestId, clip.encodePayload());
+        connection.send(packet);
+        return clip;
+    }
+
+    private void handleIncomingClipboardPacket(Packet packet) {
+        try {
+            com.landrop.protocol.ClipboardMessage clip = com.landrop.protocol.ClipboardMessage.decodePayload(packet.getRequestId(), packet.getPayload());
+            for (ChatListener listener : listeners) {
+                try {
+                    listener.onClipboardReceived(clip);
+                } catch (Exception ignored) {
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("[ChatService] Failed to decode incoming clipboard packet: " + e.getMessage());
+        }
     }
 
     /**

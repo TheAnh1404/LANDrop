@@ -21,6 +21,13 @@ public interface ChatListener {
     default void onMessageSent(ChatMessage message) {}
 
     /**
+     * Invoked when a clipboard text snippet is received from the remote peer.
+     *
+     * @param message the received ClipboardMessage
+     */
+    default void onClipboardReceived(com.landrop.protocol.ClipboardMessage message) {}
+
+    /**
      * Invoked when a chat or network error occurs.
      *
      * @param error the exception encountered
