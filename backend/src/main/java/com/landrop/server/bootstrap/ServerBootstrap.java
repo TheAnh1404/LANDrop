@@ -98,6 +98,14 @@ public class ServerBootstrap {
             return;
         }
 
+        if ("production".equalsIgnoreCase(config.getEnvironment())) {
+            String adminPassword = System.getenv("ADMIN_PASSWORD");
+            if (adminPassword == null || adminPassword.isBlank()) {
+                adminPassword = System.getProperty("landrop.admin.password");
+            }
+            requireProductionAdminPassword(adminPassword);
+        }
+
         // 1. Check database connectivity gracefully (database decoupling)
         boolean dbConnected = checkDatabaseConnectivity();
         if (dbConnected) {
@@ -238,6 +246,14 @@ public class ServerBootstrap {
 
         // 6. Log startup banner
         printStartupBanner();
+    }
+
+    static void requireProductionAdminPassword(String password) {
+        if (password == null || password.length() < 12
+                || password.startsWith("replace-with-")
+                || com.landrop.admin.security.AdminBootstrapService.DEFAULT_ADMIN_PASSWORD.equals(password)) {
+            throw new IllegalStateException("Production requires ADMIN_PASSWORD with at least 12 characters");
+        }
     }
 
     public synchronized void stop() {
