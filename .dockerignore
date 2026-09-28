@@ -1,0 +1,9 @@
+.git
+.codex
+.mvn
+.env
+**/target
+**/.idea
+**/.vscode
+docs
+prisma
