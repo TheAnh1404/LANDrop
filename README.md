@@ -31,6 +31,12 @@ Các chức năng đã có trong mã nguồn:
 
 > **Phạm vi:** Metadata và điều phối đi qua server; luồng file LAN sử dụng kết nối trực tiếp giữa các peer. Server không tự biến ứng dụng thành dịch vụ truyền file qua Internet.
 
+## Quick LAN Share không cần server
+
+Mở client và chọn **Dùng chế độ mạng nội bộ P2P**, hoặc chạy `start-peer-standalone.bat` trên Windows (`./start-peer-standalone.sh` trên macOS/Linux). Các thiết bị LANDrop trên cùng LAN tự tìm nhau qua UDP multicast cổng 8889. Vào **Peers** để kết nối, rồi dùng tab **LAN Direct Messages** để gửi tin nhắn, file, thư mục ZIP hoặc văn bản từ clipboard.
+
+Để tạo bản Windows portable có runtime đi kèm, chạy `powershell -File scripts/package-windows.ps1 -Type app-image`. Xem [trạng thái triển khai](docs/EXPANSION_STATUS.md) để biết các phần đã kiểm thử và giới hạn bảo mật hiện tại.
+
 ## Bắt đầu nhanh
 
 ### Yêu cầu
@@ -141,6 +147,6 @@ Tài liệu kỹ thuật chính:
 
 LANDrop có mã nguồn, migration, giao diện và test cho cả luồng LAN lẫn các tính năng dùng server. Đây **chưa phải bản triển khai production**: chưa có NAT traversal/relay để kết nối peer qua Internet; truyền TCP P2P cốt lõi chưa được mã hóa đầu cuối; một số tình huống cần kiểm thử thủ công trên nhiều thiết bị thật.
 
-**Lưu ý bảo mật quan trọng:** Tài khoản quản trị hệ thống hiện được tạo/đồng bộ với thông tin đăng nhập cố định `admin` / `admin123` trong [`AdminBootstrapService`](backend/src/main/java/com/landrop/admin/security/AdminBootstrapService.java). Không đưa server ra Internet hoặc mạng không tin cậy với cơ chế này. Cần thay cơ chế khởi tạo và quản lý mật khẩu admin trước khi triển khai thực tế.
+**Lưu ý bảo mật quan trọng:** Môi trường development/test vẫn có mật khẩu admin mặc định `admin123`. Khi `NODE_ENV=production`, server yêu cầu `ADMIN_PASSWORD` riêng dài ít nhất 12 ký tự và từ chối giá trị mẫu. Đường truyền P2P và REST/WebSocket vẫn chưa mã hóa; không đưa server ra Internet hoặc mạng không tin cậy trước khi hoàn thành TLS/HTTPS và rà soát bảo mật.
 
 Một số tài liệu `CORE_*`, `FINAL_ACCEPTANCE.md` và `PRODUCTION_ROADMAP.md` ghi lại mốc P2P cũ; chúng không phản ánh đầy đủ phần xác thực, workspace, chat nhóm và quản trị đã được bổ sung sau đó. README này cùng mã nguồn và các hợp đồng API mới là điểm bắt đầu phù hợp để tìm hiểu trạng thái hiện tại.
