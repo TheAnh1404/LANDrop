@@ -97,6 +97,14 @@ public final class TransfersController {
         } else if(!t.getStatus().isTerminal()&&t.getStatus()!=FileTransferStatus.VERIFYING){
             actions.getChildren().add(small("Huỷ",e->lanTransfer.cancel(t.getTransferId())));
         }
+        if(t.isCompleted() && t.getLocalPath() != null && com.landrop.ui.util.ImagePreviewHelper.isImageFile(t.getFileName())) {
+            javafx.scene.image.ImageView thumb = new javafx.scene.image.ImageView();
+            thumb.setFitWidth(36);
+            thumb.setFitHeight(36);
+            thumb.setPreserveRatio(true);
+            com.landrop.ui.util.ImagePreviewHelper.loadThumbnailAsync(t.getLocalPath().toFile(), 72, 72, thumb::setImage);
+            row.getChildren().add(thumb);
+        }
         row.getChildren().addAll(info,gap,bar,status,actions);
         return row;
     }

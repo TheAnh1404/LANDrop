@@ -69,6 +69,34 @@ public class WorkspaceController {
     private WorkspaceStateService stateService;
     private MainController mainController;
 
+    public void initOffline(MainController mainController) {
+        this.mainController = mainController;
+        if (workspaceTitleLabel != null) workspaceTitleLabel.setText("Chế độ Ngoại tuyến (Offline P2P)");
+        if (workspaceDescriptionLabel != null) {
+            workspaceDescriptionLabel.setText("Tính năng Workspace và Chat nhóm yêu cầu máy chủ LANDrop Server. Bạn có thể sử dụng các tab Peers và Transfers để gửi nhận file trực tiếp trong mạng LAN.");
+        }
+        if (emptyStateContainer != null) {
+            emptyStateContainer.setVisible(false);
+            emptyStateContainer.setManaged(false);
+        }
+        if (inviteMemberContainer != null) {
+            inviteMemberContainer.setVisible(false);
+            inviteMemberContainer.setManaged(false);
+        }
+        if (settingsContainer != null) {
+            settingsContainer.setVisible(false);
+            settingsContainer.setManaged(false);
+        }
+        if (leaveWorkspaceBtn != null) {
+            leaveWorkspaceBtn.setVisible(false);
+            leaveWorkspaceBtn.setManaged(false);
+        }
+        if (deleteWorkspaceBtn != null) {
+            deleteWorkspaceBtn.setVisible(false);
+            deleteWorkspaceBtn.setManaged(false);
+        }
+    }
+
     public void init(WorkspaceStateService stateService, MainController mainController) {
         this.stateService = stateService;
         this.mainController = mainController;

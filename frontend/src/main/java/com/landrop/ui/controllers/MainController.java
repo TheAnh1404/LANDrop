@@ -44,6 +44,9 @@ public class MainController {
     private Label topPeerIdentityBadge;
 
     @FXML
+    private Button themeToggleButton;
+
+    @FXML
     private Button logoutButton;
 
     @FXML
@@ -136,6 +139,8 @@ public class MainController {
         this.workspaceController = wsLoader.getController();
         if (mainApp != null && mainApp.getWorkspaceStateService() != null) {
             workspaceController.init(mainApp.getWorkspaceStateService(), this);
+        } else if (mainApp != null && mainApp.isOfflineMode()) {
+            workspaceController.initOffline(this);
         }
         viewCache.put(NavigationTab.WORKSPACES, wsNode);
 
@@ -152,6 +157,8 @@ public class MainController {
         this.chatController = chatLoader.getController();
         if (mainApp != null && mainApp.getWorkspaceChatStateService() != null && mainApp.getWorkspaceStateService() != null) {
             chatController.init(mainApp.getWorkspaceChatStateService(), mainApp.getWorkspaceStateService(), this);
+        } else {
+            chatController.init(stateService, this);
         }
         viewCache.put(NavigationTab.CHAT, chatNode);
 
@@ -231,6 +238,8 @@ public class MainController {
             getWorkspaceStateService().activeWorkspaceProperty().addListener((obs, oldVal, newVal) -> {
                 Platform.runLater(() -> updateWorkspaceDisplay(newVal));
             });
+        } else if (mainApp != null && mainApp.isOfflineMode() && topWorkspaceBadge != null) {
+            topWorkspaceBadge.setText("Quick LAN Share");
         }
     }
 
@@ -266,7 +275,9 @@ public class MainController {
         }
         topDiscoveryDot.setFill(Color.web(status.getColorHex()));
         topDiscoveryStatusLabel.setText(status.getLabel());
-        bottomDiscoveryStatusLabel.setText("Discovery: " + status.name() + " (" + stateService.getDiscoveryHost() + ":" + stateService.getDiscoveryPort() + ")");
+        bottomDiscoveryStatusLabel.setText(mainApp != null && mainApp.isOfflineMode()
+                ? "LAN discovery: UDP " + com.landrop.discovery.UdpDiscoveryService.DEFAULT_UDP_PORT + " (" + status.name() + ")"
+                : "Discovery: " + status.name() + " (" + stateService.getDiscoveryHost() + ":" + stateService.getDiscoveryPort() + ")");
     }
 
     private void updateP2pDisplay(P2PStatus status) {
@@ -283,6 +294,12 @@ public class MainController {
     }
 
     private void updateServerDisplay(ConnectionState state) {
+        if (mainApp != null && mainApp.isOfflineMode()) {
+            if (topServerDot != null) topServerDot.setFill(Color.web("#94a3b8"));
+            if (topServerStatusLabel != null) topServerStatusLabel.setText("Workspace: Offline");
+            if (bottomServerStatusLabel != null) bottomServerStatusLabel.setText("Workspace: Offline");
+            return;
+        }
         ConnectionState safe = state == null ? ConnectionState.DISCONNECTED : state;
         String label = switch (safe) {
             case CONNECTED -> "Server: Connected";
@@ -354,6 +371,25 @@ public class MainController {
     @FXML
     private void onSettingsNavClicked() {
         navigateTo(NavigationTab.SETTINGS);
+    }
+
+    private boolean isDarkTheme = false;
+
+    @FXML
+    private void onToggleTheme() {
+        isDarkTheme = !isDarkTheme;
+        if (contentArea != null && contentArea.getScene() != null && contentArea.getScene().getRoot() != null) {
+            javafx.scene.Parent root = contentArea.getScene().getRoot();
+            if (isDarkTheme) {
+                if (!root.getStyleClass().contains("dark-theme")) {
+                    root.getStyleClass().add("dark-theme");
+                }
+                if (themeToggleButton != null) themeToggleButton.setText("☀️");
+            } else {
+                root.getStyleClass().remove("dark-theme");
+                if (themeToggleButton != null) themeToggleButton.setText("🌙");
+            }
+        }
     }
 
     @FXML

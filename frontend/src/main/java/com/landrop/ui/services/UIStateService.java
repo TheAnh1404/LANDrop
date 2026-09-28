@@ -5,6 +5,7 @@ import com.landrop.chat.ChatMessage;
 import com.landrop.chat.ChatService;
 import com.landrop.discovery.DiscoveryClient;
 import com.landrop.discovery.PeerInfo;
+import com.landrop.discovery.UdpDiscoveryService;
 import com.landrop.peer.ConnectionListener;
 import com.landrop.peer.ConnectionPurpose;
 import com.landrop.peer.PeerConnection;
@@ -14,6 +15,7 @@ import com.landrop.transfer.FileTransfer;
 import com.landrop.transfer.FileTransferDirection;
 import com.landrop.transfer.FileTransferListener;
 import com.landrop.transfer.FileTransferService;
+import com.landrop.transfer.FolderArchiveService;
 import com.landrop.transfer.FileTransferUtils;
 import com.landrop.transfer.MultiPeerDownload;
 import com.landrop.transfer.MultiPeerDownloadCoordinator;
@@ -80,6 +82,9 @@ public class UIStateService {
     private final IntegerProperty totalMessagesCount = new SimpleIntegerProperty(0);
 
     private final ObservableList<PeerInfo> discoveredPeers = FXCollections.observableArrayList();
+    private final Map<String, PeerInfo> allDiscoveredPeers = new ConcurrentHashMap<>();
+    private final java.util.Set<String> registryPeerIds = ConcurrentHashMap.newKeySet();
+    private volatile UdpDiscoveryService udpDiscovery;
     private final ObservableList<UIMessage> activeChatMessages = FXCollections.observableArrayList();
 
     // In-memory chat history storage keyed by remote peer display name
@@ -103,10 +108,14 @@ public class UIStateService {
 
     private final ObservableList<FileTransfer> transfers = FXCollections.observableArrayList();
     private Consumer<FileTransfer> onFileTransferOfferedCallback;
+    private volatile java.util.function.BiConsumer<FileTransfer, Boolean> transferNotificationListener;
+    private final java.util.List<Consumer<FileTransfer>> transferCompletionListeners = new CopyOnWriteArrayList<>();
+    private volatile boolean autoAcceptTransfers;
     private Consumer<FileTransfer> onFileTransferUpdatedCallback;
 
     private final ObservableList<MultiPeerDownload> multiPeerDownloads = FXCollections.observableArrayList();
     private final Map<String, MultiPeerDownloadCoordinator> multiPeerCoordinators = new ConcurrentHashMap<>();
+    private final Map<String, Path> temporaryFolderArchives = new ConcurrentHashMap<>();
     private Consumer<MultiPeerDownload> onMultiPeerDownloadUpdatedCallback;
 
     private final AtomicBoolean running = new AtomicBoolean(false);
@@ -161,6 +170,17 @@ public class UIStateService {
             String discHost,
             int discPort,
             String advHost) {
+        return connectInternal(displayName, localPort, discHost, discPort, advHost, true);
+    }
+
+    /** Starts the local TCP listener and UDP discovery without contacting a server. */
+    public CompletableFuture<Void> connectLanOnly(String displayName, int localPort,
+            String discHost, int discPort, String advHost) {
+        return connectInternal(displayName, localPort, discHost, discPort, advHost, false);
+    }
+
+    private CompletableFuture<Void> connectInternal(String displayName, int localPort,
+            String discHost, int discPort, String advHost, boolean useRegistry) {
 
         CompletableFuture<Void> future = new CompletableFuture<>();
 
@@ -201,7 +221,7 @@ public class UIStateService {
 
                 // Discovery is an optional LAN enhancement. The authenticated Server
                 // client must remain usable when the standalone port 8888 service is offline.
-                try {
+                if (useRegistry) try {
                     if (discoveryClient != null) {
                         try { discoveryClient.close(); } catch (Exception ignored) { }
                     }
@@ -237,7 +257,15 @@ public class UIStateService {
                     });
                 }
 
-                startPeriodicPeerPolling();
+                if (useRegistry && discoveryClient != null) startPeriodicPeerPolling();
+                boolean udpReady = startUdpDiscovery();
+                if (!useRegistry) {
+                    if (!udpReady) throw new IOException("UDP discovery could not bind to the LAN");
+                    Platform.runLater(() -> {
+                        discoveryStatus.set(DiscoveryStatus.CONNECTED);
+                        future.complete(null);
+                    });
+                }
 
             } catch (Throwable t) {
                 System.err.println("[LANDrop ERROR] connectAndRegister failed: " + t.getMessage());
@@ -437,6 +465,22 @@ public class UIStateService {
             }
 
             @Override
+            public void onClipboardReceived(com.landrop.protocol.ClipboardMessage message) {
+                Platform.runLater(() -> {
+                    try {
+                        javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+                        javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+                        content.putString(message.text());
+                        clipboard.setContent(content);
+                    } catch (Exception ignored) {
+                    }
+                    if (clipboardNotificationListener != null) {
+                        clipboardNotificationListener.accept(message.sender(), message.text());
+                    }
+                });
+            }
+
+            @Override
             public void onChatDisconnected() {
                 Platform.runLater(() -> {
                     p2pStatus.set(P2PStatus.DISCONNECTED);
@@ -497,10 +541,7 @@ public class UIStateService {
         CompletableFuture.runAsync(() -> {
             if (discoveryClient == null || !discoveryClient.isConnected()) {
                 Platform.runLater(() -> {
-                    discoveryStatus.set(DiscoveryStatus.DISCONNECTED);
-                    discoveredPeers.clear();
-                    onlinePeersCount.set(0);
-                    future.complete(Collections.emptyList());
+                    future.complete(List.copyOf(discoveredPeers));
                 });
                 return;
             }
@@ -542,12 +583,68 @@ public class UIStateService {
 
     private void updateDiscoveredPeersList(List<PeerInfo> peers) {
         String selfId = identity != null ? identity.getPeerId() : "";
-        List<PeerInfo> filtered = peers.stream()
-                .filter(p -> !p.getPeerId().equals(selfId))
-                .toList();
+        for (String oldId : registryPeerIds) {
+            if (udpDiscovery == null || !udpDiscovery.getDiscoveredPeers().containsKey(oldId)) {
+                allDiscoveredPeers.remove(oldId);
+            }
+        }
+        registryPeerIds.clear();
+        for (PeerInfo p : peers) {
+            if (!p.getPeerId().equals(selfId)) {
+                allDiscoveredPeers.put(p.getPeerId(), p);
+                registryPeerIds.add(p.getPeerId());
+            }
+        }
+        syncDiscoveredPeersToUi();
+    }
 
-        discoveredPeers.setAll(filtered);
-        onlinePeersCount.set(filtered.size());
+    public synchronized boolean startUdpDiscovery() {
+        if (udpDiscovery != null) {
+            try { udpDiscovery.close(); } catch (Exception ignored) {}
+            udpDiscovery = null;
+        }
+        try {
+            String selfId = identity != null ? identity.getPeerId() : java.util.UUID.randomUUID().toString();
+            String selfName = identity != null ? identity.getDisplayName() : "LANDrop Client";
+            udpDiscovery = new UdpDiscoveryService(selfId, selfName, localP2pPort);
+            udpDiscovery.addPeerDiscoveredListener(this::onUdpPeerDiscovered);
+            udpDiscovery.addPeerLostListener(this::onUdpPeerLost);
+            udpDiscovery.start();
+            return true;
+        } catch (Exception e) {
+            System.err.println("[LANDrop] Failed starting UDP discovery: " + e.getMessage());
+            udpDiscovery = null;
+            return false;
+        }
+    }
+
+    private void onUdpPeerDiscovered(PeerInfo peer) {
+        String selfId = identity != null ? identity.getPeerId() : "";
+        if (peer.getPeerId().equals(selfId)) return;
+
+        allDiscoveredPeers.put(peer.getPeerId(), peer);
+        syncDiscoveredPeersToUi();
+    }
+
+    private void onUdpPeerLost(String peerId) {
+        allDiscoveredPeers.remove(peerId);
+        syncDiscoveredPeersToUi();
+    }
+
+    private void syncDiscoveredPeersToUi() {
+        Runnable update = () -> {
+            discoveredPeers.setAll(allDiscoveredPeers.values().stream()
+                    .sorted(java.util.Comparator.comparing(PeerInfo::getDisplayName, String.CASE_INSENSITIVE_ORDER)).toList());
+            onlinePeersCount.set(discoveredPeers.size());
+            if (!discoveredPeers.isEmpty() && discoveryStatus.get() != DiscoveryStatus.CONNECTED) {
+                discoveryStatus.set(DiscoveryStatus.CONNECTED);
+            }
+        };
+        if (Platform.isFxApplicationThread()) {
+            update.run();
+        } else {
+            Platform.runLater(update);
+        }
     }
 
     /**
@@ -568,6 +665,40 @@ public class UIStateService {
                 activeChatService.sendMessage(text);
             } catch (IOException e) {
                 throw new RuntimeException("Failed to send message: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    /** Sends through the active LAN socket even when a Workspace session exists. */
+    public CompletableFuture<Void> sendDirectMessage(String text) {
+        if (text == null || text.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Message is empty"));
+        }
+        return CompletableFuture.runAsync(() -> {
+            if (activeChatService == null || !activeChatService.isConnected()) {
+                throw new IllegalStateException("Connect to a LAN peer first");
+            }
+            try {
+                activeChatService.sendMessage(text);
+            } catch (IOException e) {
+                throw new java.util.concurrent.CompletionException(e);
+            }
+        });
+    }
+
+    /** Sends a text snippet to the remote peer's clipboard over the direct P2P socket. */
+    public CompletableFuture<Void> sendClipboard(String text) {
+        if (text == null || text.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalArgumentException("Clipboard text is empty"));
+        }
+        return CompletableFuture.runAsync(() -> {
+            if (activeChatService == null || !activeChatService.isConnected()) {
+                throw new IllegalStateException("Connect to a LAN peer first");
+            }
+            try {
+                activeChatService.sendClipboard(text.trim());
+            } catch (IOException e) {
+                throw new java.util.concurrent.CompletionException(e);
             }
         });
     }
@@ -654,6 +785,8 @@ public class UIStateService {
                     if (onFileTransferOfferedCallback != null) {
                         onFileTransferOfferedCallback.accept(transfer);
                     }
+                    if (transferNotificationListener != null) transferNotificationListener.accept(transfer, false);
+                    if (autoAcceptTransfers) acceptTransfer(transfer.getTransferId());
                     if (onFileTransferUpdatedCallback != null) {
                         onFileTransferUpdatedCallback.accept(transfer);
                     }
@@ -728,7 +861,10 @@ public class UIStateService {
 
             @Override
             public void onTransferCompleted(FileTransfer transfer) {
+                deleteTemporaryArchive(transfer.getTransferId());
                 Platform.runLater(() -> {
+                    if (transferNotificationListener != null) transferNotificationListener.accept(transfer, true);
+                    for (Consumer<FileTransfer> listener : transferCompletionListeners) listener.accept(transfer);
                     if (onFileTransferUpdatedCallback != null) {
                         onFileTransferUpdatedCallback.accept(transfer);
                     }
@@ -737,6 +873,7 @@ public class UIStateService {
 
             @Override
             public void onTransferRejected(FileTransfer transfer, String reason) {
+                deleteTemporaryArchive(transfer.getTransferId());
                 Platform.runLater(() -> {
                     if (onFileTransferUpdatedCallback != null) {
                         onFileTransferUpdatedCallback.accept(transfer);
@@ -746,6 +883,7 @@ public class UIStateService {
 
             @Override
             public void onTransferFailed(FileTransfer transfer, String reason) {
+                deleteTemporaryArchive(transfer.getTransferId());
                 Platform.runLater(() -> {
                     if (onFileTransferUpdatedCallback != null) {
                         onFileTransferUpdatedCallback.accept(transfer);
@@ -760,6 +898,14 @@ public class UIStateService {
      */
     public void shutdown() {
         running.set(false);
+
+        if (udpDiscovery != null) {
+            udpDiscovery.close();
+            udpDiscovery = null;
+        }
+        allDiscoveredPeers.clear();
+        registryPeerIds.clear();
+        temporaryFolderArchives.keySet().forEach(this::deleteTemporaryArchive);
 
         disconnectP2P();
 
@@ -916,6 +1062,33 @@ public class UIStateService {
         return future;
     }
 
+    /** Packages a directory without loading it into memory, then offers its ZIP over P2P. */
+    public CompletableFuture<FileTransfer> offerFolder(Path folder) {
+        if (!isP2pConnected()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Connect to a LAN peer first"));
+        }
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return FolderArchiveService.createArchive(folder);
+            } catch (IOException e) {
+                throw new java.util.concurrent.CompletionException(e);
+            }
+        }).thenCompose(archive -> offerFile(archive.toFile()).whenComplete((transfer, error) -> {
+            if (error == null && transfer != null) {
+                temporaryFolderArchives.put(transfer.getTransferId(), archive);
+            } else {
+                try { FolderArchiveService.deleteArchive(archive); } catch (IOException ignored) {}
+            }
+        }));
+    }
+
+    private void deleteTemporaryArchive(String transferId) {
+        Path archive = temporaryFolderArchives.remove(transferId);
+        if (archive != null) {
+            try { FolderArchiveService.deleteArchive(archive); } catch (IOException ignored) {}
+        }
+    }
+
     public CompletableFuture<Void> acceptTransfer(String transferId) {
         return CompletableFuture.runAsync(() -> {
             if (fileTransferService == null) {
@@ -947,6 +1120,7 @@ public class UIStateService {
             if (fileTransferService != null) {
                 fileTransferService.cancelTransfer(transferId);
             }
+            deleteTemporaryArchive(transferId);
         });
     }
 
@@ -981,6 +1155,23 @@ public class UIStateService {
     public void setOnFileTransferOfferedCallback(Consumer<FileTransfer> callback) {
         this.onFileTransferOfferedCallback = callback;
     }
+
+    public void setTransferNotificationListener(java.util.function.BiConsumer<FileTransfer, Boolean> listener) {
+        this.transferNotificationListener = listener;
+    }
+
+    private java.util.function.BiConsumer<String, String> clipboardNotificationListener;
+
+    public void setClipboardNotificationListener(java.util.function.BiConsumer<String, String> listener) {
+        this.clipboardNotificationListener = listener;
+    }
+
+    public void addTransferCompletionListener(Consumer<FileTransfer> listener) {
+        if (listener != null) transferCompletionListeners.add(listener);
+    }
+
+    public void setAutoAcceptTransfers(boolean enabled) { this.autoAcceptTransfers = enabled; }
+    public boolean isAutoAcceptTransfers() { return autoAcceptTransfers; }
 
     public void setOnFileTransferUpdatedCallback(Consumer<FileTransfer> callback) {
         this.onFileTransferUpdatedCallback = callback;

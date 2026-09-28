@@ -245,7 +245,33 @@ public class PeersController {
             });
         });
 
-        card.getChildren().addAll(icon, info, gap, availability, connect);
+        Button clipBtn = new Button("📋 Gửi Clipboard");
+        clipBtn.getStyleClass().add("secondary-button");
+        clipBtn.setStyle("-fx-font-size: 11.5px; -fx-padding: 6px 12px;");
+        clipBtn.setOnAction(e -> {
+            javafx.scene.input.Clipboard clipboard = javafx.scene.input.Clipboard.getSystemClipboard();
+            if (clipboard.hasString() && !clipboard.getString().isBlank()) {
+                String text = clipboard.getString();
+                clipBtn.setText("Đang gửi...");
+                stateService.sendClipboard(text).thenRun(() -> Platform.runLater(() -> {
+                    clipBtn.setText("✓ Đã gửi!");
+                    new Thread(() -> {
+                        try { Thread.sleep(2000); } catch (Exception ignored) {}
+                        Platform.runLater(() -> clipBtn.setText("📋 Gửi Clipboard"));
+                    }).start();
+                })).exceptionally(err -> {
+                    Platform.runLater(() -> {
+                        clipBtn.setText("📋 Gửi Clipboard");
+                        AlertUtils.showError("Gửi Clipboard", "Không thể gửi clipboard", message(err));
+                    });
+                    return null;
+                });
+            } else {
+                AlertUtils.showError("Clipboard trống", "Không có nội dung văn bản", "Hãy copy một đoạn text hoặc link trước khi gửi.");
+            }
+        });
+
+        card.getChildren().addAll(icon, info, gap, availability, clipBtn, connect);
         return card;
     }
 

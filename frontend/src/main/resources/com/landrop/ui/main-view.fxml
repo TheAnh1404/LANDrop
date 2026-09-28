@@ -34,6 +34,7 @@
 
                 <Label fx:id="topWorkspaceBadge" text="Workspace" styleClass="topbar-workspace-badge" onMouseClicked="#onWorkspaceBadgeClicked"/>
                 <Label fx:id="topPeerIdentityBadge" text="Peer" styleClass="topbar-identity-badge"/>
+                <Button fx:id="themeToggleButton" text="🌙" styleClass="theme-toggle-button" onAction="#onToggleTheme"/>
                 <Button fx:id="logoutButton" text="Sign out" styleClass="secondary-button" onAction="#onLogoutClicked"/>
             </HBox>
         </HBox>

@@ -11,11 +11,12 @@ import javafx.scene.control.Label;
 import javafx.scene.control.PasswordField;
 import javafx.scene.control.TextField;
 
-/** Login page controller. Authentication calls remain in AuthStateService. */
+/** Login page controller. Supports normal server sign in and zero-login LAN P2P mode. */
 public final class LoginController {
     @FXML private TextField emailField;
     @FXML private PasswordField passwordField;
     @FXML private Button submitButton;
+    @FXML private Button offlineModeButton;
     @FXML private Hyperlink registerLink;
     @FXML private Label errorLabel;
     @FXML private Label serverAddressLabel;
@@ -57,4 +58,10 @@ public final class LoginController {
     @FXML private void onRegister() { mainApp.showRegisterView(); }
 
     @FXML private void onAutoDetectServer() { mainApp.startServerDiscovery(); }
+
+    @FXML private void onContinueOffline() {
+        if (mainApp != null) {
+            mainApp.startOfflineMode();
+        }
+    }
 }

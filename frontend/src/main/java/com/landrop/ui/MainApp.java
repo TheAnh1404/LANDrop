@@ -68,6 +68,10 @@ public class MainApp extends Application {
     private Scene readyScene;
     private String configurationError;
     private boolean showServerConfiguration;
+    private volatile boolean offlineMode = false;
+    private boolean launchOffline;
+    private com.landrop.ui.desktop.DesktopTrayService desktopTray;
+    public boolean isOfflineMode() { return offlineMode; }
 
     private final ServerDiscoveryService serverDiscoveryService = new ServerDiscoveryService();
     private javafx.scene.control.Label discoveryStatusLabel;
@@ -131,6 +135,7 @@ public class MainApp extends Application {
     private void parseParameters() {
         Parameters params = getParameters();
         Map<String, String> named = params.getNamed();
+        launchOffline = Boolean.parseBoolean(named.getOrDefault("offline", System.getProperty("landrop.offline", "false")));
 
         // 1. Display Name
         if (named.containsKey("display-name")) {
@@ -224,8 +229,15 @@ public class MainApp extends Application {
         stage.toFront();
         stage.requestFocus();
 
-        initializeBootstrap();
-        startServerDiscovery();
+        desktopTray = new com.landrop.ui.desktop.DesktopTrayService(stage, stateService);
+        desktopTray.install();
+
+        if (launchOffline) {
+            startOfflineMode();
+        } else {
+            initializeBootstrap();
+            startServerDiscovery();
+        }
     }
 
     private void initializeBootstrap() {
@@ -267,7 +279,7 @@ public class MainApp extends Application {
             });
         });
         bootstrap.stateProperty().addListener((obs, old, next) -> Platform.runLater(() -> {
-            if (bootstrap != owner || owner.state() != next) return;
+            if (offlineMode || bootstrap != owner || owner.state() != next) return;
             switch (next) {
                 case READY -> { if (!featuresMounted) onAuthenticated(); else if (readyScene != null) primaryStage.setScene(readyScene); }
                 case AUTH_REQUIRED -> { cleanupFeatures(); showLoginView(); }
@@ -279,6 +291,7 @@ public class MainApp extends Application {
     }
 
     public void startServerDiscovery() {
+        if (offlineMode) return;
         if (bootstrap != null && bootstrap.isReady()) {
             return;
         }
@@ -288,6 +301,7 @@ public class MainApp extends Application {
     }
 
     private void onServerDiscovered(ServerDiscoveryService.DiscoveredServer server) {
+        if (offlineMode) return;
         System.out.println("[LANDrop Auto-Discovery] Found server at " + server.displayAddress() + " (v" + server.serverVersion() + ")");
         showServerConfiguration = false;
         if (discoveryStatusLabel != null) {
@@ -369,7 +383,13 @@ public class MainApp extends Application {
             });
         });
 
-        card.getChildren().addAll(logoBox, subtitle, spinner, heading, discoveryStatusLabel, infoBox, scanNowBtn);
+        var offlineBtn = new javafx.scene.control.Button("⚡ Bỏ qua máy chủ & Sử dụng chế độ mạng nội bộ P2P (Offline Mode)");
+        offlineBtn.getStyleClass().add("secondary-button");
+        offlineBtn.setMaxWidth(Double.MAX_VALUE);
+        offlineBtn.setStyle("-fx-font-size: 12px; -fx-font-weight: bold; -fx-text-fill: #4338ca; -fx-padding: 8px 12px;");
+        offlineBtn.setOnAction(e -> startOfflineMode());
+
+        card.getChildren().addAll(logoBox, subtitle, spinner, heading, discoveryStatusLabel, infoBox, scanNowBtn, offlineBtn);
         root.getChildren().add(card);
 
         var scene = new Scene(root, DEFAULT_WIDTH, DEFAULT_HEIGHT);
@@ -546,6 +566,7 @@ public class MainApp extends Application {
     }
 
     public void logout() {
+        offlineMode = false;
         if (bootstrap != null) bootstrap.logout();
         cleanupFeatures();
         showLoginView();
@@ -587,7 +608,7 @@ public class MainApp extends Application {
      * Displays the initial peer setup and network connection view.
      */
     public void showSetupView() {
-        if (bootstrap == null || !bootstrap.isReady()) return;
+        if (!offlineMode && (bootstrap == null || !bootstrap.isReady())) return;
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/setup-view.fxml"));
             Parent root = loader.load();
@@ -616,8 +637,47 @@ public class MainApp extends Application {
     /**
      * Transitions from setup to the 3-section Main Dashboard interface.
      */
+    public void startOfflineMode() {
+        if (offlineMode) return;
+        this.offlineMode = true;
+        this.featuresMounted = false;
+        System.out.println("[LANDrop Client] Entering OFFLINE LAN P2P Mode (Zero-server/No-database standalone)");
+
+        if (serverDiscoveryService != null) {
+            serverDiscoveryService.stopDiscovery();
+        }
+
+        if (this.stateService == null) {
+            this.stateService = new UIStateService();
+        }
+
+        String displayName = configuredDisplayName;
+        if (displayName == null || displayName.isBlank() || "Peer A".equalsIgnoreCase(displayName)) {
+            displayName = clientInstanceService == null
+                    ? System.getProperty("user.name", "LANDrop User")
+                    : clientInstanceService.deviceName();
+        }
+        this.configuredDisplayName = displayName;
+        stateService.setAuthenticatedIdentity(displayName);
+        this.lanServices = new com.landrop.ui.lan.UIStateLanServices(this.stateService);
+
+        stateService.connectLanOnly(displayName, configuredLocalPort,
+                configuredDiscoveryHost, configuredDiscoveryPort, configuredAdvertisedHost)
+                .whenComplete((ignored, error) -> Platform.runLater(() -> {
+                    if (error == null) {
+                        configuredLocalPort = stateService.getLocalP2pPort();
+                        showMainView();
+                    } else {
+                        offlineMode = false;
+                        showServerDiscoveryView();
+                        new javafx.scene.control.Alert(javafx.scene.control.Alert.AlertType.ERROR,
+                                "Không thể khởi động LAN: " + error.getMessage()).showAndWait();
+                    }
+                }));
+    }
+
     public void showMainView() {
-        if (bootstrap == null || !bootstrap.isReady()) return;
+        if (!offlineMode && (bootstrap == null || !bootstrap.isReady())) return;
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/main-view.fxml"));
             Parent root = loader.load();
@@ -648,6 +708,7 @@ public class MainApp extends Application {
 
     @Override
     public void stop() {
+        if (desktopTray != null) desktopTray.close();
         serverDiscoveryService.close();
         if (localProfileCoordinator != null) localProfileCoordinator.close();
         if (bootstrap != null) bootstrap.close();

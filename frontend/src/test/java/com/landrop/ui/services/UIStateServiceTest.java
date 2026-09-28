@@ -30,6 +30,51 @@ public class UIStateServiceTest {
     }
 
     @Test
+    void offlinePeersDiscoverAndChatWithoutRegistry(@org.junit.jupiter.api.io.TempDir java.nio.file.Path tempDir) throws Exception {
+        UIStateService alice = new UIStateService();
+        UIStateService bob = new UIStateService();
+        alice.setConfiguredDownloadDirectory(java.nio.file.Files.createDirectory(tempDir.resolve("alice")));
+        bob.setConfiguredDownloadDirectory(java.nio.file.Files.createDirectory(tempDir.resolve("bob")));
+        try {
+            alice.connectLanOnly("Alice offline", 0, "127.0.0.1", 1, "127.0.0.1")
+                    .get(5, TimeUnit.SECONDS);
+            bob.connectLanOnly("Bob offline", 0, "127.0.0.1", 1, "127.0.0.1")
+                    .get(5, TimeUnit.SECONDS);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(8);
+            while (alice.getDiscoveredPeers().isEmpty() && System.nanoTime() < deadline) {
+                Thread.sleep(100);
+            }
+            assertFalse(alice.getDiscoveredPeers().isEmpty(), "UDP should discover Bob without a registry");
+            PeerInfo found = alice.getDiscoveredPeers().stream()
+                    .filter(p -> p.getPeerId().equals(bob.getIdentity().getPeerId())).findFirst().orElseThrow();
+            alice.connectToPeer(found).get(5, TimeUnit.SECONDS);
+            alice.sendDirectMessage("Offline hello").get(5, TimeUnit.SECONDS);
+            deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (bob.getActiveChatMessages().isEmpty() && System.nanoTime() < deadline) {
+                Thread.sleep(100);
+            }
+            assertEquals("Offline hello", bob.getActiveChatMessages().getFirst().content());
+        } finally {
+            alice.shutdown();
+            bob.shutdown();
+        }
+    }
+
+    @Test
+    void startsOfflineLanWithoutDiscoveryServerOrDatabase() throws Exception {
+        UIStateService peer = new UIStateService();
+        try {
+            peer.connectLanOnly("Offline peer", 0, "127.0.0.1", 1, "127.0.0.1")
+                    .get(5, TimeUnit.SECONDS);
+            assertTrue(peer.getLocalP2pPort() > 0);
+            assertEquals(DiscoveryStatus.CONNECTED, peer.discoveryStatusProperty().get());
+            assertTrue(peer.refreshPeerList().get(5, TimeUnit.SECONDS).isEmpty());
+        } finally {
+            peer.shutdown();
+        }
+    }
+
+    @Test
     void fallsBackToAnotherP2pPortWhenTheRequestedPortIsOccupied() throws Exception {
         DiscoveryServer discoveryServer = new DiscoveryServer(0);
         discoveryServer.startAsync();
@@ -195,6 +240,8 @@ public class UIStateServiceTest {
         java.nio.file.Path tempDir = java.nio.file.Files.createTempDirectory("landrop_ui_test_");
         java.nio.file.Path sampleFile = tempDir.resolve("sample.txt");
         java.nio.file.Files.writeString(sampleFile, "LANDrop Phase 7 UI File Transfer Verification");
+        peerA.setConfiguredDownloadDirectory(java.nio.file.Files.createDirectory(tempDir.resolve("sender")));
+        peerB.setConfiguredDownloadDirectory(java.nio.file.Files.createDirectory(tempDir.resolve("receiver")));
 
         try {
             peerA.connectAndRegister("Peer A", 0, "127.0.0.1", discPort, "127.0.0.1").get(5, TimeUnit.SECONDS);

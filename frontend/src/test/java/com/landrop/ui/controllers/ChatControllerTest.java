@@ -50,6 +50,21 @@ public class ChatControllerTest {
     }
 
     @Test
+    void offlineChatAddsDirectMessagesAndDisablesWorkspaceTabs() throws Exception {
+        FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/chat-view.fxml"));
+        loader.load();
+        ChatController controller = loader.getController();
+        TabPane tabs = (TabPane) loader.getNamespace().get("mainTabPane");
+        java.util.concurrent.CompletableFuture.runAsync(() -> {
+            controller.initDirect(new UIStateService(), null, true);
+            assertEquals(3, tabs.getTabs().size());
+            assertEquals("LAN Direct Messages", tabs.getSelectionModel().getSelectedItem().getText());
+            assertTrue(((Tab) loader.getNamespace().get("chatTab")).isDisable());
+            assertTrue(((Tab) loader.getNamespace().get("vaultTab")).isDisable());
+        }, Platform::runLater).get(5, TimeUnit.SECONDS);
+    }
+
+    @Test
     void testChatViewTabStructureAndSwitching() throws Exception {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/com/landrop/ui/chat-view.fxml"));
         Node root = loader.load();

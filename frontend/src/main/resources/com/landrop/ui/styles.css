@@ -1033,3 +1033,105 @@
     -fx-border-radius: 6px;
     -fx-background-radius: 6px;
 }
+
+/* --------------------------------------------------------------------------
+   Theme Toggle Button & Dark Mode Styles
+   -------------------------------------------------------------------------- */
+.theme-toggle-button {
+    -fx-background-color: #f1f5f9;
+    -fx-text-fill: #1e293b;
+    -fx-font-size: 13px;
+    -fx-padding: 4px 10px;
+    -fx-background-radius: 6px;
+    -fx-border-color: #cbd5e1;
+    -fx-border-width: 1px;
+    -fx-border-radius: 6px;
+    -fx-cursor: hand;
+}
+
+.theme-toggle-button:hover {
+    -fx-background-color: #e2e8f0;
+}
+
+.root.dark-theme {
+    -fx-base: #0f172a;
+    -fx-background-color: #0f172a;
+    -fx-text-fill: #f1f5f9;
+}
+
+.root.dark-theme .topbar {
+    -fx-background-color: #1e293b;
+    -fx-border-color: #334155;
+}
+
+.root.dark-theme .app-title {
+    -fx-text-fill: #f8fafc;
+}
+
+.root.dark-theme .sidebar {
+    -fx-background-color: #1e293b;
+    -fx-border-color: #334155;
+}
+
+.root.dark-theme .sidebar-btn {
+    -fx-text-fill: #94a3b8;
+}
+
+.root.dark-theme .sidebar-btn:hover {
+    -fx-background-color: #334155;
+    -fx-text-fill: #f8fafc;
+}
+
+.root.dark-theme .sidebar-btn.active {
+    -fx-background-color: #4338ca;
+    -fx-text-fill: #ffffff;
+}
+
+.root.dark-theme .card,
+.root.dark-theme .card-accent,
+.root.dark-theme .card-stat {
+    -fx-background-color: #1e293b;
+    -fx-border-color: #334155;
+}
+
+.root.dark-theme .card-title {
+    -fx-text-fill: #f8fafc;
+}
+
+.root.dark-theme .card-subtitle,
+.root.dark-theme .page-subtitle,
+.root.dark-theme .status-text {
+    -fx-text-fill: #94a3b8;
+}
+
+.root.dark-theme .page-title {
+    -fx-text-fill: #f8fafc;
+}
+
+.root.dark-theme .text-input-field,
+.root.dark-theme .text-area-input {
+    -fx-background-color: #0f172a;
+    -fx-text-fill: #f8fafc;
+    -fx-border-color: #475569;
+}
+
+.root.dark-theme .status-indicator-box {
+    -fx-background-color: #0f172a;
+    -fx-border-color: #334155;
+}
+
+.root.dark-theme .topbar-identity-badge {
+    -fx-background-color: #334155;
+    -fx-border-color: #475569;
+    -fx-text-fill: #cbd5e1;
+}
+
+.root.dark-theme .theme-toggle-button {
+    -fx-background-color: #334155;
+    -fx-text-fill: #fef08a;
+    -fx-border-color: #475569;
+}
+
+.root.dark-theme .theme-toggle-button:hover {
+    -fx-background-color: #475569;
+}

@@ -1,6 +1,7 @@
 package com.landrop.ui.controllers;
 
 import com.landrop.transfer.FileTransfer;
+import com.landrop.discovery.PeerInfo;
 import com.landrop.transfer.FileTransferDirection;
 import com.landrop.transfer.FileTransferStatus;
 import com.landrop.transfer.FileTransferUtils;
@@ -8,6 +9,8 @@ import com.landrop.ui.cloud.model.Domain;
 import com.landrop.ui.lan.LanTransferService;
 import com.landrop.ui.models.NavigationTab;
 import com.landrop.ui.models.RealtimeConnectionStatus;
+import com.landrop.ui.models.UIMessage;
+import com.landrop.ui.services.UIStateService;
 import com.landrop.ui.util.FileUtils;
 import com.landrop.ui.workspace.chat.services.WorkspaceChatStateService;
 import com.landrop.ui.workspace.files.services.FileManagerStateService;
@@ -20,9 +23,14 @@ import javafx.scene.control.*;
 import javafx.scene.input.Dragboard;
 import javafx.scene.input.TransferMode;
 import javafx.scene.layout.*;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.scene.paint.Color;
 import javafx.scene.shape.Circle;
 import javafx.stage.FileChooser;
+import javafx.stage.DirectoryChooser;
 
 import java.awt.Desktop;
 import java.io.File;
@@ -51,6 +59,11 @@ public final class ChatController {
     // Group Documents Vault FXML controls
     @FXML private TabPane mainTabPane;
     @FXML private Tab chatTab, vaultTab;
+    private Tab directTab;
+    private ListView<PeerInfo> directPeerList;
+    private VBox directMessagesContainer;
+    private TextField directMessageInput;
+    private Label directPeerTitle, directErrorLabel;
     @FXML private Label vaultBreadcrumbLabel, vaultDetailsLabel, vaultStatusLabel;
     @FXML private TextField vaultSearchField;
     @FXML private Button vaultRootButton, vaultNewFolderButton, vaultUploadButton, vaultRefreshButton;
@@ -65,6 +78,7 @@ public final class ChatController {
     private MainController mainController;
     private LanTransferService lanTransfer;
     private FileManagerStateService files;
+    private UIStateService directState;
 
     private Domain.Message replyingTo, editing;
     private boolean initialHistory = true;
@@ -77,6 +91,200 @@ public final class ChatController {
     // Track active inline cards for reactive real-time progress updates
     private record AttachmentCardBindings(ProgressBar progressBar, Label statusLabel, Button downloadBtn, Button openDirBtn) {}
     private final Map<String, AttachmentCardBindings> activeAttachmentCards = new ConcurrentHashMap<>();
+
+    /** Shows direct LAN conversations beside Workspace channels. */
+    public void initDirect(UIStateService state, MainController controller, boolean offline) {
+        directState = Objects.requireNonNull(state);
+        mainController = controller;
+        buildDirectTab();
+        directPeerList.setItems(state.getDiscoveredPeers());
+        directPeerList.setCellFactory(list -> new ListCell<>() {
+            @Override protected void updateItem(PeerInfo peer, boolean empty) {
+                super.updateItem(peer, empty);
+                setText(empty || peer == null ? null : peer.getDisplayName() + "  •  " + peer.getHost());
+            }
+        });
+        directPeerList.getSelectionModel().selectedItemProperty().addListener((obs, old, peer) -> {
+            if (peer == null) return;
+            if (state.isP2pConnected() && peer.getDisplayName().equals(state.activeRemotePeerNameProperty().get())) {
+                renderDirectMessages();
+                return;
+            }
+            directPeerTitle.setText("Đang kết nối " + peer.getDisplayName() + "...");
+            state.connectToPeer(peer).whenComplete((ok, error) -> Platform.runLater(() -> {
+                directErrorLabel.setText(error == null ? "" : error.getMessage());
+                if (error == null) renderDirectMessages();
+            }));
+        });
+        state.getActiveChatMessages().addListener((ListChangeListener<UIMessage>) c -> renderDirectMessages());
+        state.getTransfers().addListener((ListChangeListener<FileTransfer>) c -> renderDirectMessages());
+        state.addTransferCompletionListener(transfer -> renderDirectMessages());
+        state.activeRemotePeerNameProperty().addListener((obs, old, name) -> Platform.runLater(() -> {
+            if (name != null && !name.isBlank()) {
+                directPeerTitle.setText("Tin nhắn trực tiếp: " + name);
+                state.getDiscoveredPeers().stream().filter(p -> name.equals(p.getDisplayName())).findFirst()
+                        .ifPresent(p -> directPeerList.getSelectionModel().select(p));
+                renderDirectMessages();
+            }
+        }));
+        if (offline) {
+            chatTab.setDisable(true);
+            vaultTab.setDisable(true);
+            createChannelBox.setVisible(false);
+            createChannelBox.setManaged(false);
+            workspaceNameLabel.setText("Quick LAN Share");
+            mainTabPane.getSelectionModel().select(directTab);
+        }
+        renderDirectMessages();
+    }
+
+    public void showDirectChat() {
+        if (mainTabPane != null && directTab != null) mainTabPane.getSelectionModel().select(directTab);
+    }
+
+    private void renderDirectMessages() {
+        if (directState == null || directMessagesContainer == null) return;
+        directMessagesContainer.getChildren().clear();
+        for (UIMessage message : directState.getActiveChatMessages()) {
+            VBox bubble = new VBox(3);
+            bubble.getStyleClass().add(message.isLocal() ? "message-bubble-local" : "message-bubble-remote");
+            Label sender = new Label(message.senderLabel() + "  " + message.formattedTime());
+            sender.getStyleClass().add("message-sender");
+            Label body = new Label(message.content());
+            body.setWrapText(true);
+            Button copy = new Button("Sao chép");
+            copy.getStyleClass().add("message-action-button");
+            copy.setOnAction(e -> {
+                ClipboardContent content = new ClipboardContent();
+                content.putString(message.content());
+                Clipboard.getSystemClipboard().setContent(content);
+            });
+            bubble.getChildren().addAll(sender, body, copy);
+            HBox row = new HBox(bubble);
+            row.setAlignment(message.isLocal() ? Pos.CENTER_RIGHT : Pos.CENTER_LEFT);
+            directMessagesContainer.getChildren().add(row);
+        }
+        int imagePreviews = 0;
+        String activePeer = directState.activeRemotePeerNameProperty().get();
+        for (FileTransfer transfer : directState.getTransfers()) {
+            if (transfer.getDirection() != FileTransferDirection.INCOMING
+                    || transfer.getStatus() != FileTransferStatus.COMPLETED
+                    || activePeer == null || !activePeer.equals(transfer.getRemotePeerName())
+                    || transfer.getLocalPath() == null || !java.nio.file.Files.isRegularFile(transfer.getLocalPath())) {
+                continue;
+            }
+            String fileName = transfer.getFileName().toLowerCase(Locale.ROOT);
+            if (!fileName.endsWith(".png") && !fileName.endsWith(".jpg")
+                    && !fileName.endsWith(".jpeg") && !fileName.endsWith(".webp")) continue;
+            if (imagePreviews++ >= 10) break;
+            VBox card = new VBox(5);
+            card.getStyleClass().add("message-bubble-remote");
+            card.getChildren().add(new Label("Ảnh đã nhận: " + transfer.getFileName()));
+            Image image = new Image(transfer.getLocalPath().toUri().toString(), 360, 240, true, true, true);
+            ImageView preview = new ImageView(image);
+            preview.setFitWidth(360);
+            preview.setFitHeight(240);
+            preview.setPreserveRatio(true);
+            card.getChildren().add(preview);
+            image.errorProperty().addListener((obs, old, failed) -> {
+                if (failed) card.getChildren().setAll(new Label("Không thể xem trước " + transfer.getFileName()));
+            });
+            directMessagesContainer.getChildren().add(card);
+        }
+    }
+
+    @FXML private void onDirectSend() {
+        if (directState == null || directMessageInput == null) return;
+        String message = directMessageInput.getText();
+        if (message == null || message.isBlank()) return;
+        directState.sendDirectMessage(message.trim()).whenComplete((ok, error) -> Platform.runLater(() -> {
+            if (error == null) directMessageInput.clear();
+            directErrorLabel.setText(error == null ? "" : error.getMessage());
+        }));
+    }
+
+    @FXML private void onDirectAttachFile() {
+        if (!requireDirectConnection()) return;
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Chọn file để gửi qua LAN");
+        File file = chooser.showOpenDialog(directMessageInput.getScene().getWindow());
+        if (file != null) directState.offerFile(file).exceptionally(error -> {
+            Platform.runLater(() -> directErrorLabel.setText(error.getMessage()));
+            return null;
+        });
+    }
+
+    @FXML private void onDirectAttachFolder() {
+        if (!requireDirectConnection()) return;
+        DirectoryChooser chooser = new DirectoryChooser();
+        chooser.setTitle("Chọn thư mục để gửi qua LAN dưới dạng ZIP");
+        File folder = chooser.showDialog(directMessageInput.getScene().getWindow());
+        if (folder != null) directState.offerFolder(folder.toPath()).exceptionally(error -> {
+            Platform.runLater(() -> directErrorLabel.setText(error.getMessage()));
+            return null;
+        });
+    }
+
+    private boolean requireDirectConnection() {
+        if (directState != null && directState.isP2pConnected()) return true;
+        directErrorLabel.setText("Hãy kết nối với một thiết bị trước khi gửi.");
+        return false;
+    }
+
+    private void buildDirectTab() {
+        directTab = new Tab("LAN Direct Messages");
+        directPeerList = new ListView<>();
+        directPeerList.setPrefWidth(200);
+        VBox peers = new VBox(6, new Label("Thiết bị trong LAN"), directPeerList);
+        peers.setPrefWidth(200);
+        VBox.setVgrow(directPeerList, Priority.ALWAYS);
+
+        directPeerTitle = new Label("Chọn một thiết bị để trò chuyện");
+        directPeerTitle.getStyleClass().add("card-title");
+        directErrorLabel = new Label();
+        directErrorLabel.getStyleClass().add("chat-error-label");
+        directErrorLabel.setWrapText(true);
+        directMessagesContainer = new VBox(8);
+        directMessagesContainer.setStyle("-fx-padding: 12px;");
+        ScrollPane history = new ScrollPane(directMessagesContainer);
+        history.setFitToWidth(true);
+        VBox.setVgrow(history, Priority.ALWAYS);
+
+        Button attach = new Button("Gửi file");
+        attach.getStyleClass().add("secondary-button");
+        attach.setOnAction(e -> onDirectAttachFile());
+        Button folder = new Button("Gửi thư mục");
+        folder.getStyleClass().add("secondary-button");
+        folder.setOnAction(e -> onDirectAttachFolder());
+        Button clipboard = new Button("Gửi clipboard");
+        clipboard.getStyleClass().add("secondary-button");
+        clipboard.setOnAction(e -> onDirectSendClipboard());
+        directMessageInput = new TextField();
+        directMessageInput.setPromptText("Nhập tin nhắn trực tiếp...");
+        directMessageInput.setOnAction(e -> onDirectSend());
+        HBox.setHgrow(directMessageInput, Priority.ALWAYS);
+        Button send = new Button("Gửi");
+        send.getStyleClass().add("primary-button");
+        send.setOnAction(e -> onDirectSend());
+        HBox composer = new HBox(8, attach, folder, clipboard, directMessageInput, send);
+        VBox conversation = new VBox(8, directPeerTitle, directErrorLabel, history, composer);
+        HBox.setHgrow(conversation, Priority.ALWAYS);
+        HBox content = new HBox(10, peers, conversation);
+        content.setStyle("-fx-padding: 8px;");
+        directTab.setContent(content);
+        mainTabPane.getTabs().add(directTab);
+    }
+
+    private void onDirectSendClipboard() {
+        if (!requireDirectConnection()) return;
+        String text = Clipboard.getSystemClipboard().getString();
+        if (text == null || text.isBlank()) {
+            directErrorLabel.setText("Clipboard không có văn bản để gửi.");
+            return;
+        }
+        directState.sendDirectMessage(text).whenComplete((ok, error) -> Platform.runLater(() ->
+                directErrorLabel.setText(error == null ? "" : error.getMessage())));
+    }
 
     /** Compatibility hook for legacy tests; production uses workspace chat state. */
     @Deprecated
