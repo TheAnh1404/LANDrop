@@ -28,7 +28,11 @@ public enum MessageType {
     RESUME_REQUEST((byte) 18),
     RESUME_RESPONSE((byte) 19),
     FILE_QUERY((byte) 20),
-    FILE_QUERY_RESPONSE((byte) 21);
+    FILE_QUERY_RESPONSE((byte) 21),
+    CLIPBOARD_SHARE((byte) 22),
+    ENCRYPTED_PAYLOAD((byte) 23),
+    KEY_EXCHANGE((byte) 24),
+    KEY_EXCHANGE_ACK((byte) 25);
 
     private final byte code;
 
