@@ -171,6 +171,25 @@ export interface FileTransfer {
   completedAt?: string;
 }
 
+export interface WebRTCSignalingPayload {
+  transferId: string;
+  fromConnectionId?: string;
+  toConnectionId?: string;
+  type: 'offer' | 'answer' | 'candidate';
+  sdp?: { type: 'offer' | 'answer'; sdp: string };
+  candidate?: { candidate: string; sdpMid?: string | null; sdpMLineIndex?: number | null };
+}
+
+export interface TransferMetadataHeader {
+  type: 'header';
+  transferId: string;
+  fileName: string;
+  fileSize: number;
+  fileType: string;
+  totalChunks: number;
+  sha256?: string;
+}
+
 export interface ServerConnectionInfo {
   serverUrl: string;
   serverName: string;

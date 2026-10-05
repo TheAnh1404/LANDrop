@@ -11,6 +11,7 @@ export class RealtimeClient {
   private isConnecting = false;
   private isConnected = false;
   private serverUrl = '';
+  private connectionId: string | null = null;
 
   private constructor() {}
 
@@ -19,6 +20,10 @@ export class RealtimeClient {
       RealtimeClient.instance = new RealtimeClient();
     }
     return RealtimeClient.instance;
+  }
+
+  public getConnectionId(): string | null {
+    return this.connectionId;
   }
 
   public connect(url: string = 'ws://localhost:3001'): void {
@@ -37,14 +42,28 @@ export class RealtimeClient {
         this.isConnected = true;
         this.isConnecting = false;
         this.emit('connection.state', { status: 'connected' });
+
+        const clientId = localStorage.getItem('landrop_client_instance_id') || `browser_${Math.random().toString(36).slice(2, 10)}`;
+        localStorage.setItem('landrop_client_instance_id', clientId);
+
+        this.send('hello', {
+          protocolVersion: 1,
+          clientInstanceId: clientId,
+          deviceName: navigator.userAgent ? 'Browser Client' : 'Web Session'
+        });
+
         this.startHeartbeat();
       };
 
       this.ws.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          if (message.type) {
-            this.emit(message.type, message.payload || message.data || message);
+          const type = message.type || message.event;
+          if (type === 'welcome') {
+            this.connectionId = message.connectionId || message.payload?.connectionId || null;
+          }
+          if (type) {
+            this.emit(type, message.payload || message.data || message);
           }
         } catch {
           // non-json payload

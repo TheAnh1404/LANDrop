@@ -62,6 +62,12 @@ public final class ProtocolConstants {
     public static final String EVENT_ERROR = "error";
     public static final String EVENT_DISCONNECT = "disconnect";
 
+    // WebRTC Signaling Event Types (Client <-> Server <-> Client)
+    public static final String EVENT_WEBRTC_SIGNAL = "webrtc.signal";
+    public static final String EVENT_WEBRTC_OFFER = "webrtc.offer";
+    public static final String EVENT_WEBRTC_ANSWER = "webrtc.answer";
+    public static final String EVENT_WEBRTC_CANDIDATE = "webrtc.ice_candidate";
+
     // Error Codes
     public static final String ERR_PROTOCOL_VERSION_UNSUPPORTED = "PROTOCOL_VERSION_UNSUPPORTED";
     public static final String ERR_UNAUTHORIZED_HANDSHAKE = "UNAUTHORIZED_HANDSHAKE";

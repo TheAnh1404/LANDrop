@@ -201,6 +201,12 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
                 case ProtocolConstants.EVENT_TRANSFER_CANCEL -> {
                     handleTransferCancel(connection, root, requestId);
                 }
+                case ProtocolConstants.EVENT_WEBRTC_SIGNAL,
+                     ProtocolConstants.EVENT_WEBRTC_OFFER,
+                     ProtocolConstants.EVENT_WEBRTC_ANSWER,
+                     ProtocolConstants.EVENT_WEBRTC_CANDIDATE -> {
+                    handleWebRTCSignal(connection, root, type, requestId);
+                }
                 case "channel.join" -> handleChannelJoin(connection, root.path("payload"), requestId);
                 case "channel.leave" -> handleChannelLeave(connection, root.path("payload"), requestId);
                 default -> {
@@ -263,6 +269,69 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
             sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INVALID_PAYLOAD,
                     "A valid channelId is required."));
             return null;
+        }
+    }
+
+    /**
+     * WebRTC signaling relay transferring SDP offers, answers, and ICE candidates
+     * directly between authenticated browser sessions without the server ever touching file bytes.
+     */
+    private void handleWebRTCSignal(ClientConnection connection, JsonNode root, String eventType, String requestId) {
+        JsonNode payload = root.path("payload");
+        if (payload.isMissingNode() || payload.isNull()) {
+            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INVALID_PAYLOAD,
+                    "Payload is required for WebRTC signaling."));
+            return;
+        }
+
+        String transferId = payload.hasNonNull("transferId") ? payload.path("transferId").asText(null) : null;
+        String toConnId = payload.hasNonNull("toConnectionId") ? payload.path("toConnectionId").asText(null) : null;
+
+        // Resolve destination connection via active TransferRecord if only transferId was supplied
+        if ((toConnId == null || toConnId.isBlank()) && transferId != null && !transferId.isBlank()) {
+            TransferRecord record = transferCoordinator.getTransfer(transferId).orElse(null);
+            if (record != null) {
+                if (record.senderConnectionId().equals(connection.connectionId())) {
+                    toConnId = record.receiverConnectionId();
+                } else if (record.receiverConnectionId().equals(connection.connectionId())) {
+                    toConnId = record.senderConnectionId();
+                }
+            }
+        }
+
+        if (toConnId == null || toConnId.isBlank()) {
+            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INVALID_PAYLOAD,
+                    "Target receiver connection or valid transferId is required for WebRTC signaling."));
+            return;
+        }
+
+        ClientConnection target = clientRegistry.get(toConnId).orElse(null);
+        if (target == null || !target.isOpen()) {
+            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_RECEIVER_NOT_FOUND,
+                    "Target peer for WebRTC signaling is offline or not found."));
+            return;
+        }
+
+        // Convert payload into a map and stamp sender metadata
+        Map<String, Object> forwardedPayload = new HashMap<>();
+        Iterator<Map.Entry<String, JsonNode>> fields = payload.fields();
+        while (fields.hasNext()) {
+            Map.Entry<String, JsonNode> entry = fields.next();
+            forwardedPayload.put(entry.getKey(), entry.getValue());
+        }
+        forwardedPayload.put("fromConnectionId", connection.connectionId());
+        forwardedPayload.put("fromUserId", connection.userId() != null ? connection.userId().toString() : "");
+        forwardedPayload.put("fromDeviceName", connection.deviceName() != null ? connection.deviceName() : "Browser Session");
+
+        // Forward signaling envelope directly to target peer
+        sendEnvelope(target.socket(), EventEnvelope.event(eventType, null, forwardedPayload));
+
+        // Acknowledge delivery to sender if client specified a requestId
+        if (requestId != null && !requestId.isBlank()) {
+            sendEnvelope(connection.socket(), EventEnvelope.event(eventType + "_ack", requestId, Map.of(
+                "status", "delivered",
+                "toConnectionId", toConnId
+            )));
         }
     }
 

@@ -4,6 +4,7 @@ import React, { createContext, useContext, useState, useEffect } from 'react';
 import { FileTransfer, TransferStatus, User, DeviceSession } from '../types';
 import { MOCK_TRANSFERS, CURRENT_USER, CURRENT_DEVICE_SESSION } from '../mock-data';
 import { WebRTCTransferService } from '../webrtc/webrtc-transfer-service';
+import { realtime } from '../realtime/realtime-client';
 import { generateId } from '../utils';
 
 interface TransferContextType {
@@ -38,6 +39,93 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
   const [servicesMap] = useState<Map<string, WebRTCTransferService>>(new Map());
 
   const activeTransfer = transfers.find((t) => t.id === activeTransferId) || null;
+
+  useEffect(() => {
+    // Listen for incoming transfer requests from remote peers
+    const unsubReq = realtime.on('transfer.request', (payload: any) => {
+      if (!payload || !payload.transferId) return;
+
+      const incoming: FileTransfer = {
+        id: payload.transferId,
+        fileName: payload.fileName || 'incoming_file.dat',
+        fileSize: payload.fileSize || 0,
+        fileType: (payload.fileName || '').split('.').pop() || 'bin',
+        sender: {
+          userId: payload.fromUserId || payload.senderConnectionId || 'usr_peer',
+          userName: payload.senderDeviceName || 'Remote Peer',
+          sessionId: payload.senderConnectionId,
+          sessionName: payload.senderDeviceName || 'Remote Peer (Browser)',
+        },
+        receiver: {
+          userId: CURRENT_USER.id,
+          userName: CURRENT_USER.name,
+          sessionId: CURRENT_DEVICE_SESSION.id,
+          sessionName: `${CURRENT_USER.name} (Chrome on Windows)`,
+        },
+        mode: 'Direct P2P (WebRTC)',
+        status: 'waiting',
+        transferredBytes: 0,
+        speedBytesPerSec: 0,
+        progressPercent: 0,
+        etaSeconds: 0,
+        sha256: payload.sha256 || undefined,
+        createdAt: new Date().toISOString(),
+      };
+
+      setIncomingTransfer(incoming);
+      setTransfers((prev) => {
+        if (prev.some((t) => t.id === incoming.id)) return prev;
+        return [incoming, ...prev];
+      });
+    });
+
+    // Listen for acceptance of transfers we sent
+    const unsubAccept = realtime.on('transfer.accept', (payload: any) => {
+      if (payload && payload.transferId) {
+        setTransfers((prev) =>
+          prev.map((t) => (t.id === payload.transferId ? { ...t, status: 'connecting' as TransferStatus } : t))
+        );
+      }
+    });
+
+    // Listen for rejection of transfers we sent
+    const unsubReject = realtime.on('transfer.reject', (payload: any) => {
+      if (payload && payload.transferId) {
+        setTransfers((prev) =>
+          prev.map((t) =>
+            t.id === payload.transferId
+              ? { ...t, status: 'declined' as TransferStatus, errorMessage: payload.reason || 'Declined by peer' }
+              : t
+          )
+        );
+      }
+    });
+
+    // Listen for cancellation of active transfers
+    const unsubCancel = realtime.on('transfer.cancel', (payload: any) => {
+      if (payload && payload.transferId) {
+        const service = servicesMap.get(payload.transferId);
+        if (service) {
+          service.cancel();
+          servicesMap.delete(payload.transferId);
+        }
+        setTransfers((prev) =>
+          prev.map((t) =>
+            t.id === payload.transferId
+              ? { ...t, status: 'cancelled' as TransferStatus, errorMessage: payload.reason || 'Cancelled by peer' }
+              : t
+          )
+        );
+      }
+    });
+
+    return () => {
+      unsubReq();
+      unsubAccept();
+      unsubReject();
+      unsubCancel();
+    };
+  }, [servicesMap]);
 
   const openSendModal = (file?: { name: string; size: number }) => {
     if (file) setSelectedFileToSend(file);
@@ -85,7 +173,15 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
     setActiveTransferId(id);
     closeSendModal();
 
-    // Start WebRTC service
+    // Signal transfer request to remote receiver over realtime WebSocket
+    realtime.send('transfer.request', {
+      transferId: id,
+      receiverConnectionId: session.id,
+      fileName: file.name,
+      fileSize: file.size,
+    });
+
+    // Start WebRTC sender service
     const service = new WebRTCTransferService(id);
     servicesMap.set(id, service);
 
@@ -137,11 +233,15 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
       prev.map((t) => (t.id === transferId ? { ...t, status: 'connecting' as TransferStatus } : t))
     );
 
+    // Notify sender over realtime WebSocket
+    realtime.send('transfer.accept', { transferId: transfer.id });
+
     const service = new WebRTCTransferService(transfer.id);
     servicesMap.set(transfer.id, service);
 
-    service.sendFile(
-      { name: transfer.fileName, size: transfer.fileSize },
+    // SINK: Receive incoming binary stream over WebRTC DataChannel
+    service.receiveFile(
+      transfer,
       (transferred, speed, percent, eta) => {
         setTransfers((prev) =>
           prev.map((t) =>
@@ -175,6 +275,7 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
   };
 
   const declineIncomingTransfer = (transferId: string) => {
+    realtime.send('transfer.reject', { transferId, reason: 'Declined by receiver' });
     setTransfers((prev) =>
       prev.map((t) =>
         t.id === transferId
@@ -190,6 +291,7 @@ export function TransferProvider({ children }: { children: React.ReactNode }) {
   };
 
   const cancelTransfer = (transferId: string) => {
+    realtime.send('transfer.cancel', { transferId, reason: 'Cancelled by user' });
     const service = servicesMap.get(transferId);
     if (service) {
       service.cancel();
