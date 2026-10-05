@@ -4,8 +4,8 @@ import React from 'react';
 import { AlertCircle, ArrowUpRight, Check, File, Loader2, RefreshCw, Search, X } from 'lucide-react';
 import { cn, formatBytes } from '@/lib/utils';
 
-export function Action({ children, tone = 'primary', busy, className, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: 'primary' | 'secondary' | 'ghost' | 'danger'; busy?: boolean }) {
-  return <button type="button" className={cn('action', `action-${tone}`, className)} disabled={busy || props.disabled} {...props}>{busy && <Loader2 size={16} className="animate-spin" />}{children}</button>;
+export function Action({ children, tone = 'primary', busy, disabled, className, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement> & { tone?: 'primary' | 'secondary' | 'ghost' | 'danger'; busy?: boolean }) {
+  return <button type="button" className={cn('action', `action-${tone}`, className)} disabled={busy || disabled} {...props}>{busy && <Loader2 size={16} className="animate-spin" />}{children}</button>;
 }
 export function Tag({ children, tone = 'neutral' }: { children: React.ReactNode; tone?: 'neutral' | 'green' | 'amber' | 'blue' | 'red' }) { return <span className={`tag tag-${tone}`}>{children}</span>; }
 export function Initials({ name, size = 'normal' }: { name: string; size?: 'normal' | 'large' }) {
