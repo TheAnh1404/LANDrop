@@ -17,6 +17,8 @@ target/
 node_modules/
 dist/
 build/
+.next/
+out/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

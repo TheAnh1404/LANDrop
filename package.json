@@ -8,8 +8,11 @@
     "server:backend": "node scripts/start-server.mjs --backend-only",
     "server:admin": "node scripts/start-server.mjs --admin-only",
     "server:test": "node --test scripts/start-server.test.mjs",
-    "client": "node scripts/start-client.mjs",
-    "client:ui": "node scripts/start-client.mjs --ui-only",
+    "dev": "npm --prefix frontend run dev",
+    "build": "npm --prefix frontend run build",
+    "web": "npm --prefix frontend run dev",
+    "client": "npm --prefix frontend run dev",
+    "client:ui": "npm --prefix frontend run dev",
     "client:test": "node --test scripts/start-client.test.mjs",
     "test": "node --test scripts/*.test.mjs"
   },
