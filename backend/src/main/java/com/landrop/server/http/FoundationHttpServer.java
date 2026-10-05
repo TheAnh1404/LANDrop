@@ -182,6 +182,9 @@ public class FoundationHttpServer {
     }
 
     private void handleHealth(HttpExchange exchange) throws IOException {
+        if (handlePublicCors(exchange)) {
+            return;
+        }
         if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
             exchange.sendResponseHeaders(405, -1);
             return;
@@ -196,6 +199,9 @@ public class FoundationHttpServer {
     }
 
     private void handleStatus(HttpExchange exchange) throws IOException {
+        if (handlePublicCors(exchange)) {
+            return;
+        }
         if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
             exchange.sendResponseHeaders(405, -1);
             return;
@@ -209,5 +215,16 @@ public class FoundationHttpServer {
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);
         }
+    }
+
+    private boolean handlePublicCors(HttpExchange exchange) throws IOException {
+        exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+        exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, OPTIONS");
+        if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+            return true;
+        }
+        return false;
     }
 }

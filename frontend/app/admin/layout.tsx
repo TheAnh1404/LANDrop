@@ -1,16 +1,6 @@
-import React from 'react';
-import { AdminSidebar } from '@/components/layout/admin-sidebar';
+import type { ReactNode } from 'react';
+import { AdminShell, AuthGate } from '@/components/system/app-shell';
 
-export default function AdminLayout({ children }: { children: React.ReactNode }) {
-  return (
-    <div className="flex h-screen w-screen overflow-hidden bg-slate-50 font-sans">
-      {/* Persistent Admin Sidebar */}
-      <AdminSidebar />
-
-      {/* Main Admin Content */}
-      <div className="flex-1 flex flex-col min-w-0 h-full overflow-hidden bg-white">
-        {children}
-      </div>
-    </div>
-  );
+export default function Layout({ children }: { children: ReactNode }) {
+  return <AuthGate admin><AdminShell>{children}</AdminShell></AuthGate>;
 }

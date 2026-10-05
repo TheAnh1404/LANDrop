@@ -101,13 +101,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const nextOrigin = normalizeServerUrl(input);
       if (typeof location !== 'undefined' && nextOrigin === location.origin) throw new ApiError('Đây là cổng frontend. Hãy nhập cổng backend, mặc định localhost:3100 khi chạy cùng máy.');
       const start = performance.now();
-      const health = await fetchJson<{ status: string; version?: string; protocolVersion?: number }>(nextOrigin, '/health');
+      const health = await fetchJson<{ status: string; serverVersion?: string; protocolVersion?: number }>(nextOrigin, '/health');
       if (health.status !== 'ok') throw new ApiError('Server chưa sẵn sàng.');
       clear();
       origin.current = nextOrigin;
       localStorage.setItem('landrop.server', nextOrigin);
       setMode('live');
-      setServerInfo({ ...defaultServer, serverUrl: nextOrigin, status: 'connected', latencyMs: Math.round(performance.now() - start), version: health.version || '', protocol: String(health.protocolVersion || 1) });
+      setServerInfo({ ...defaultServer, serverUrl: nextOrigin, status: 'connected', latencyMs: Math.round(performance.now() - start), version: health.serverVersion || '', protocol: String(health.protocolVersion || 1) });
       return true;
     } catch (failure) { setError(errorMessage(failure)); setServerInfo(s => ({ ...s, status: 'error' })); return false; }
   };

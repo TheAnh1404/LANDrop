@@ -77,6 +77,7 @@ compose.yaml                Backend và PostgreSQL chạy bằng Docker Compose
 Chỉ dùng `compose.yaml` cho Compose. Dockerfile đóng gói backend; chưa đóng gói Next.js. Database mới cần áp dụng migrations trước khi dùng API phụ thuộc database.
 
 - [Danh mục tài liệu](docs/README.md)
+- [Hướng dẫn khởi chạy hệ thống (Run Guide)](docs/guides/RUN_GUIDE.md)
 - [Backend và các entrypoint](backend/README.md)
 - [Frontend](frontend/README.md)
 - [Demo LAN qua CLI](docs/guides/CLI_DEMO.md)

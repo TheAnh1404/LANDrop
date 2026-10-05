@@ -23,6 +23,7 @@ Các đặc tả được viết qua nhiều giai đoạn. Khi tích hợp clien
 | [LAN_CORE](architecture/LAN_CORE.md) | Engine TCP P2P, discovery và swarm |
 | [LAN_PROTOCOL](architecture/LAN_PROTOCOL.md) | Framing nhị phân, message, chunk/resume TCP LAN |
 | [DATABASE](architecture/DATABASE.md) | JDBC, schema và SQL migration |
+| [RUN_GUIDE](guides/RUN_GUIDE.md) | Hướng dẫn chạy Frontend, Backend, Server & Client (Browser & CLI) |
 | [CLI_DEMO](guides/CLI_DEMO.md) | Demo discovery/peer backend CLI |
 | [MULTI_DEVICE](guides/MULTI_DEVICE.md) | Harness chat xác thực nhiều thiết bị |
 | [PERFORMANCE](guides/PERFORMANCE.md) | Benchmark TCP loopback lịch sử, không phải tốc độ frontend/WebRTC |

@@ -1,0 +1,26 @@
+'use client';
+
+import React, { useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
+import { ArrowRight, FolderOpen, Network, Plus, Search, Users } from 'lucide-react';
+import { useSession } from '@/lib/session/session-provider';
+import { useWorkspaces } from '@/lib/data/use-workspaces';
+import { addDemoWorkspace } from '@/lib/data/workspace-provider';
+import { mapWorkspace, WireWorkspace } from '@/lib/api/models';
+import { errorMessage } from '@/lib/api/client';
+import { Action, Dialog, Empty, Feedback, Field, Heading, Initials, Notice, SearchBox, Tag } from '../system/primitives';
+
+export function WorkspacesScreen() {
+  const { mode, user, request } = useSession();
+  const { workspaces, loading, error, refresh } = useWorkspaces();
+  const [query, setQuery] = useState('');
+  const [create, setCreate] = useState(false);
+  const [name, setName] = useState('');
+  const [description, setDescription] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState('');
+  const router = useRouter();
+  const filtered = workspaces.filter(item => `${item.name} ${item.description || ''}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  return <><Heading eyebrow="KHÔNG GIAN CỦA BẠN" title={`Chào ${user?.name.split(' ')[0] || 'bạn'}, bắt đầu cùng nhóm.`} description="Chọn một không gian để tiếp tục thảo luận, tìm tài liệu và quản lý hoạt động của nhóm." action={<Action onClick={() => { setCreate(true); setFailure(''); }}><Plus size={16} />Tạo không gian</Action>} /><div className="hero"><div className="hero-copy"><p className="eyebrow">MỌI THỨ Ở CÙNG MỘT NƠI</p><h2>Ít chuyển đổi hơn.<br />Cộng tác tốt hơn.</h2><p>Mỗi workspace có kênh thảo luận, kho tài liệu và quyền thành viên riêng. Dữ liệu file LAN được quản lý độc lập với thông tin trên server.</p><div className="hero-actions"><Action onClick={() => { setCreate(true); setFailure(''); }}>Tạo workspace đầu tiên <ArrowRight size={14} /></Action><Link className="action action-secondary" href="/connect">Thiết lập kết nối</Link></div></div><div className="hero-diagram"><span className="hero-node"><Users size={25} /></span><span className="hero-line" /><span className="hero-node hero-center"><Network size={33} /></span><span className="hero-line" /><span className="hero-node"><FolderOpen size={25} /></span></div></div><div className="toolbar mt-7"><div><h2 className="text-sm font-semibold">Các không gian làm việc <span className="ml-2 text-xs font-normal text-slate-400">{workspaces.length}</span></h2><p className="text-xs text-slate-400 mt-1">Chỉ hiển thị những nhóm bạn có quyền truy cập.</p></div><SearchBox value={query} onChange={setQuery} placeholder="Tìm tên không gian…" /></div><Feedback loading={loading} error={error} retry={refresh} />{!loading && !error && (filtered.length ? <div className="workspace-grid">{filtered.map(workspace => <Link key={workspace.id} href={`/w/${workspace.id}`} className="workspace-card"><div className="workspace-card-head"><Initials name={workspace.name} size="large" /><Tag tone={workspace.role === 'OWNER' ? 'green' : 'neutral'}>{workspace.role === 'OWNER' ? 'Chủ nhóm' : workspace.role === 'ADMIN' ? 'Quản trị nhóm' : 'Thành viên'}</Tag></div><div><h2>{workspace.name}</h2><p>{workspace.description || 'Không gian dành cho trao đổi và tài liệu của nhóm.'}</p></div><div className="workspace-card-footer"><span>{mode === 'demo' ? `${workspace.membersCount} thành viên · Dữ liệu mẫu` : 'Quyền truy cập đã xác thực'}</span><ArrowRight size={15} /></div></Link>)}</div> : <Empty icon={<Search size={23} />} title={query ? 'Không tìm thấy không gian' : 'Bạn chưa có workspace'} description={query ? 'Thử một tên khác hoặc xóa bộ lọc.' : 'Tạo không gian mới hoặc nhờ chủ nhóm thêm email của bạn.'} action={!query && <Action onClick={() => setCreate(true)}><Plus size={15} />Tạo không gian</Action>} />)}{create && <Dialog title="Tạo không gian làm việc" description="Bạn sẽ là chủ nhóm và có thể thêm các tài khoản đã đăng ký." onClose={() => !busy && setCreate(false)}><form className="form-stack" onSubmit={async event => { event.preventDefault(); setBusy(true); setFailure(''); try { const workspace = mode === 'demo' ? addDemoWorkspace(name.trim(), description.trim(), user!.id) : mapWorkspace((await request<{ data: WireWorkspace }>('/api/workspaces', { method: 'POST', body: JSON.stringify({ name: name.trim(), description: description.trim() || null }) })).data); setCreate(false); setName(''); setDescription(''); refresh(); router.push(`/w/${workspace.id}`); } catch (error) { setFailure(errorMessage(error)); } finally { setBusy(false); } }}>{failure && <Notice danger>{failure}</Notice>}<Field label="Tên workspace" value={name} onChange={event => setName(event.target.value)} required maxLength={100} placeholder="Ví dụ: Đội phát triển sản phẩm" /><Field label="Mô tả" value={description} onChange={event => setDescription(event.target.value)} maxLength={2000} placeholder="Nhóm của bạn làm việc về điều gì?" /><div className="form-actions"><Action tone="secondary" onClick={() => setCreate(false)} disabled={busy}>Hủy</Action><Action type="submit" busy={busy} disabled={!name.trim()}>Tạo không gian</Action></div></form></Dialog>}</>;
+}

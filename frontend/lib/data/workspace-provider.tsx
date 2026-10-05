@@ -6,6 +6,7 @@ import { Channel, FileItem, FolderItem, Message, Workspace, WorkspaceMember } fr
 import { MOCK_CHANNELS, MOCK_FILES, MOCK_FOLDERS, MOCK_MEMBERS, MOCK_MESSAGES, MOCK_WORKSPACES } from '../mock-data';
 import { mapFile, mapFolder, mapMember, mapMessage, mapWorkspace, WireFile, WireFolder, WireMember, WireMessage, WireWorkspace } from '../api/models';
 import { errorMessage } from '../api/client';
+import { collectPages, Page } from '../api/pagination';
 
 type Data = { workspace: Workspace | null; channels: Channel[]; members: WorkspaceMember[]; files: FileItem[]; folders: FolderItem[] };
 const empty: Data = { workspace: null, channels: [], members: [], files: [], folders: [] };
@@ -24,6 +25,11 @@ export function addDemoWorkspace(name: string, description: string, userId: stri
 }
 export function listDemoMessages(channel: string) { return demoMessages.get(channel) || []; }
 export function saveDemoMessage(message: Message) { demoMessages.set(message.channelId, [...listDemoMessages(message.channelId), message]); }
+export function addDemoChannel(workspaceId: string, name: string, topic: string) {
+  const channel: Channel = { id: `demo_${crypto.randomUUID()}`, workspaceId, name, topic, isPrivate: false, createdAt: new Date().toISOString() };
+  demoChannels.set(workspaceId, [...(demoChannels.get(workspaceId) || []), channel]);
+  return channel;
+}
 
 export function WorkspaceProvider({ id, children }: { id: string; children: React.ReactNode }) {
   const { mode, request, user } = useSession();
@@ -51,7 +57,8 @@ export function WorkspaceProvider({ id, children }: { id: string; children: Reac
           const base = `/api/workspaces/${encodeURIComponent(id)}`;
           const workspace = await get<WireWorkspace>(base);
           if (controller.signal.aborted) return;
-          const results = await Promise.allSettled([get<Channel[]>(`${base}/channels?limit=100&offset=0`), get<WireMember[]>(`${base}/members?limit=100&offset=0`), get<WireFile[]>(`${base}/files?limit=100&offset=0`), get<WireFolder[]>(`${base}/folders?limit=100&offset=0`)]);
+          const pages = <T,>(path: string) => collectPages<T>(offset => request<Page<T>>(`${path}?limit=100&offset=${offset}`, { signal: controller.signal })).then(data => ({ data }));
+          const results = await Promise.allSettled([pages<Channel>(`${base}/channels`), pages<WireMember>(`${base}/members`), get<WireFile[]>(`${base}/files`), get<WireFolder[]>(`${base}/folders`)]);
           if (controller.signal.aborted) return;
           const channels = results[0].status === 'fulfilled' ? results[0].value.data : [];
           const members = results[1].status === 'fulfilled' ? results[1].value.data.map(mapMember) : [];

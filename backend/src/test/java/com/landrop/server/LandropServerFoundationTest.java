@@ -79,6 +79,7 @@ class LandropServerFoundationTest {
         HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
 
         assertEquals(200, response.statusCode());
+        assertEquals("*", response.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
         JsonNode json = JSON.readTree(response.body());
         assertEquals("ok", json.path("status").asText());
         assertEquals(ProtocolConstants.SERVER_VERSION, json.path("serverVersion").asText());
@@ -92,9 +93,27 @@ class LandropServerFoundationTest {
                 .build();
         HttpResponse<String> statusRes = http.send(statusReq, HttpResponse.BodyHandlers.ofString());
         assertEquals(200, statusRes.statusCode());
+        assertEquals("*", statusRes.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
         JsonNode statusJson = JSON.readTree(statusRes.body());
         assertEquals("RUNNING", statusJson.path("serverStatus").asText());
         assertEquals(0, statusJson.path("connectedClients").asInt());
+    }
+
+    @Test
+    void testBrowserHealthPreflight() throws Exception {
+        for (String route : new String[]{"/health", "/api/health", "/status", "/api/status"}) {
+            HttpRequest request = HttpRequest.newBuilder()
+                    .uri(URI.create("http://127.0.0.1:" + httpPort + route))
+                    .header("Origin", "http://localhost:3000")
+                    .header("Access-Control-Request-Method", "GET")
+                    .method("OPTIONS", HttpRequest.BodyPublishers.noBody())
+                    .build();
+            HttpResponse<String> response = http.send(request, HttpResponse.BodyHandlers.ofString());
+            assertEquals(204, response.statusCode(), route);
+            assertEquals("", response.body(), route);
+            assertEquals("*", response.headers().firstValue("Access-Control-Allow-Origin").orElseThrow());
+            assertEquals("GET, OPTIONS", response.headers().firstValue("Access-Control-Allow-Methods").orElseThrow());
+        }
     }
 
     @Test
