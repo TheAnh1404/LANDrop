@@ -76,10 +76,30 @@ public class UIStateService {
 
     private final StringProperty activeRemotePeerName = new SimpleStringProperty("");
     private final StringProperty activeRemotePeerAddress = new SimpleStringProperty("");
+    private final javafx.beans.property.BooleanProperty activeConnectionEncrypted =
+            new javafx.beans.property.SimpleBooleanProperty(false);
+    private final StringProperty activeSecurityFingerprint =
+            new SimpleStringProperty("");
 
     private final IntegerProperty onlinePeersCount = new SimpleIntegerProperty(0);
     private final IntegerProperty p2pConnectionsCount = new SimpleIntegerProperty(0);
     private final IntegerProperty totalMessagesCount = new SimpleIntegerProperty(0);
+
+    public javafx.beans.property.ReadOnlyBooleanProperty activeConnectionEncryptedProperty() {
+        return activeConnectionEncrypted;
+    }
+
+    public boolean isActiveConnectionEncrypted() {
+        return activeConnectionEncrypted.get();
+    }
+
+    public javafx.beans.property.ReadOnlyStringProperty activeSecurityFingerprintProperty() {
+        return activeSecurityFingerprint;
+    }
+
+    public String getActiveSecurityFingerprint() {
+        return activeSecurityFingerprint.get();
+    }
 
     private final ObservableList<PeerInfo> discoveredPeers = FXCollections.observableArrayList();
     private final Map<String, PeerInfo> allDiscoveredPeers = new ConcurrentHashMap<>();
@@ -504,6 +524,16 @@ public class UIStateService {
                 Platform.runLater(() -> {
                     p2pStatus.set(P2PStatus.DISCONNECTED);
                     p2pConnectionsCount.set(0);
+                    activeConnectionEncrypted.set(false);
+                    activeSecurityFingerprint.set("");
+                });
+            }
+
+            @Override
+            public void onEncryptionEstablished(String fingerprint) {
+                Platform.runLater(() -> {
+                    activeConnectionEncrypted.set(true);
+                    activeSecurityFingerprint.set(fingerprint != null ? fingerprint : "");
                 });
             }
         });
@@ -513,6 +543,8 @@ public class UIStateService {
             this.activeRemotePeerName.set(remotePeerName);
             this.activeRemotePeerAddress.set(remoteAddress);
             this.p2pConnectionsCount.set(1);
+            this.activeConnectionEncrypted.set(connection.isEncrypted());
+            this.activeSecurityFingerprint.set(connection.getSecurityFingerprint());
 
             // Load existing chat history for this peer
             List<UIMessage> history = chatHistoriesByPeer.getOrDefault(remotePeerName, Collections.emptyList());
@@ -862,6 +894,27 @@ public class UIStateService {
             @Override
             public void onTransferCompleted(FileTransfer transfer) {
                 deleteTemporaryArchive(transfer.getTransferId());
+
+                // Safely extract received folder archives
+                if (transfer.getDirection() == FileTransferDirection.INCOMING
+                        && transfer.getFileName() != null
+                        && transfer.getFileName().toLowerCase().endsWith(".zip")
+                        && transfer.getDestinationPath() != null) {
+                    try {
+                        Path zipPath = transfer.getDestinationPath();
+                        if (java.nio.file.Files.isRegularFile(zipPath)) {
+                            String fileName = transfer.getFileName();
+                            String folderName = fileName.substring(0, fileName.length() - 4);
+                            Path parentDir = zipPath.getParent() != null ? zipPath.getParent() : (configuredDownloadDirectory != null ? configuredDownloadDirectory : FileTransferUtils.getDefaultDownloadDirectory());
+                            Path targetExtractDir = parentDir.resolve(folderName);
+                            FolderArchiveService.extractArchive(zipPath, targetExtractDir, true);
+                            com.landrop.util.AppLogger.info("UIStateService", "Safely auto-extracted folder to: " + targetExtractDir);
+                        }
+                    } catch (Exception e) {
+                        com.landrop.util.AppLogger.error("UIStateService", "Failed to auto-extract folder archive: " + e.getMessage(), e);
+                    }
+                }
+
                 Platform.runLater(() -> {
                     if (transferNotificationListener != null) transferNotificationListener.accept(transfer, true);
                     for (Consumer<FileTransfer> listener : transferCompletionListeners) listener.accept(transfer);

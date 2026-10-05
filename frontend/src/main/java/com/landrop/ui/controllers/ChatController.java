@@ -121,10 +121,22 @@ public final class ChatController {
         state.addTransferCompletionListener(transfer -> renderDirectMessages());
         state.activeRemotePeerNameProperty().addListener((obs, old, name) -> Platform.runLater(() -> {
             if (name != null && !name.isBlank()) {
-                directPeerTitle.setText("Tin nhắn trực tiếp: " + name);
+                updateDirectPeerTitle(name, state.isActiveConnectionEncrypted(), state.getActiveSecurityFingerprint());
                 state.getDiscoveredPeers().stream().filter(p -> name.equals(p.getDisplayName())).findFirst()
                         .ifPresent(p -> directPeerList.getSelectionModel().select(p));
                 renderDirectMessages();
+            }
+        }));
+        state.activeConnectionEncryptedProperty().addListener((obs, old, enc) -> Platform.runLater(() -> {
+            String name = state.activeRemotePeerNameProperty().get();
+            if (name != null && !name.isBlank()) {
+                updateDirectPeerTitle(name, enc, state.getActiveSecurityFingerprint());
+            }
+        }));
+        state.activeSecurityFingerprintProperty().addListener((obs, old, fp) -> Platform.runLater(() -> {
+            String name = state.activeRemotePeerNameProperty().get();
+            if (name != null && !name.isBlank()) {
+                updateDirectPeerTitle(name, state.isActiveConnectionEncrypted(), fp);
             }
         }));
         if (offline) {
@@ -136,6 +148,15 @@ public final class ChatController {
             mainTabPane.getSelectionModel().select(directTab);
         }
         renderDirectMessages();
+    }
+
+    private void updateDirectPeerTitle(String name, boolean encrypted, String fingerprint) {
+        if (directPeerTitle == null) return;
+        if (encrypted && fingerprint != null && !fingerprint.isBlank() && !"------".equals(fingerprint)) {
+            directPeerTitle.setText("Tin nhắn trực tiếp: " + name + "  🔒 [E2E: " + fingerprint + "]");
+        } else {
+            directPeerTitle.setText("Tin nhắn trực tiếp: " + name);
+        }
     }
 
     public void showDirectChat() {
