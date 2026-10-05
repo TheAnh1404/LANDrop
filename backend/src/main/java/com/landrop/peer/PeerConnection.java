@@ -5,7 +5,10 @@ import com.landrop.protocol.Packet;
 import com.landrop.protocol.PacketDecoder;
 import com.landrop.protocol.PacketEncoder;
 import com.landrop.protocol.PacketHandler;
+import com.landrop.protocol.ProtocolException;
 import com.landrop.protocol.RequestIdGenerator;
+import com.landrop.security.P2pCryptoSession;
+import com.landrop.util.AppLogger;
 
 import java.io.BufferedInputStream;
 import java.io.BufferedOutputStream;
@@ -16,6 +19,7 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.net.SocketException;
+import java.security.GeneralSecurityException;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -51,6 +55,12 @@ public class PeerConnection implements AutoCloseable {
     private final Object writeLock = new Object();
     private final CountDownLatch readyLatch = new CountDownLatch(1);
     private final AtomicBoolean helloSent = new AtomicBoolean(false);
+
+    // Cryptographic E2E Encryption Subsystem
+    private final P2pCryptoSession cryptoSession = new P2pCryptoSession();
+    private final AtomicBoolean keyExchangeSent = new AtomicBoolean(false);
+    private final CountDownLatch secureLatch = new CountDownLatch(1);
+    private volatile boolean enforceEncryption = com.landrop.config.AppConfig.isE2eEncryptionEnforced();
 
     private Socket socket;
     private DataInputStream in;
@@ -213,8 +223,23 @@ public class PeerConnection implements AutoCloseable {
         notifyPacketReceived(packet);
 
         try {
+            // Transparently decrypt encrypted payloads
+            if (packet.getType() == MessageType.ENCRYPTED_PAYLOAD) {
+                try {
+                    byte[] decryptedBytes = cryptoSession.decrypt(packet.getPayload());
+                    Packet innerPacket = packetDecoder.decodeFromBytes(decryptedBytes);
+                    dispatch(innerPacket);
+                    return;
+                } catch (GeneralSecurityException e) {
+                    notifyError(new ProtocolException("Failed to decrypt incoming ENCRYPTED_PAYLOAD: " + e.getMessage(), e));
+                    return;
+                }
+            }
+
             switch (packet.getType()) {
                 case HELLO -> handleIncomingHello(packet);
+                case KEY_EXCHANGE -> handleIncomingKeyExchange(packet);
+                case KEY_EXCHANGE_ACK -> handleIncomingKeyExchangeAck(packet);
                 case PING -> handleIncomingPing(packet);
                 case PONG -> handleIncomingPong(packet);
                 default -> {
@@ -263,6 +288,54 @@ public class PeerConnection implements AutoCloseable {
         transitionState(ConnectionState.READY);
         readyLatch.countDown();
         com.landrop.util.AppLogger.debug("P2P", "Handshake completed: remotePeerName=" + receivedPeerName + " purpose=" + detectedPurpose);
+
+        // Initiate cryptographic key exchange immediately upon READY
+        initiateKeyExchange();
+    }
+
+    /**
+     * Initiates cryptographic key exchange with the remote peer using ephemeral ECDH.
+     */
+    public void initiateKeyExchange() {
+        if (keyExchangeSent.compareAndSet(false, true)) {
+            try {
+                long reqId = requestIdGenerator.nextId();
+                Packet keyPacket = Packet.of(MessageType.KEY_EXCHANGE, reqId, cryptoSession.getLocalPublicKeyBytes());
+                sendRaw(keyPacket);
+            } catch (IOException e) {
+                notifyError(e);
+            }
+        }
+    }
+
+    private void handleIncomingKeyExchange(Packet packet) {
+        try {
+            byte[] remotePublicKeyBytes = packet.getPayload();
+            cryptoSession.completeKeyAgreement(remotePublicKeyBytes);
+
+            // Respond with KEY_EXCHANGE_ACK containing our public key
+            Packet ack = Packet.of(MessageType.KEY_EXCHANGE_ACK, packet.getRequestId(), cryptoSession.getLocalPublicKeyBytes());
+            sendRaw(ack);
+
+            secureLatch.countDown();
+            notifyEncryptionEstablished(cryptoSession.getSecurityFingerprint());
+            AppLogger.info("P2P", "E2E encryption established with " + remotePeerName + "! Fingerprint: " + cryptoSession.getSecurityFingerprint());
+        } catch (Exception e) {
+            notifyError(e);
+        }
+    }
+
+    private void handleIncomingKeyExchangeAck(Packet packet) {
+        try {
+            byte[] remotePublicKeyBytes = packet.getPayload();
+            cryptoSession.completeKeyAgreement(remotePublicKeyBytes);
+
+            secureLatch.countDown();
+            notifyEncryptionEstablished(cryptoSession.getSecurityFingerprint());
+            AppLogger.info("P2P", "E2E encryption confirmed via ACK with " + remotePeerName + "! Fingerprint: " + cryptoSession.getSecurityFingerprint());
+        } catch (Exception e) {
+            notifyError(e);
+        }
     }
 
     /**
@@ -291,6 +364,7 @@ public class PeerConnection implements AutoCloseable {
 
     /**
      * Sends a packet over the TCP connection in a thread-safe, serialized manner.
+     * Automatically encrypts non-handshake packets using AES-256-GCM when key agreement is established.
      *
      * @param packet the packet to encode and transmit
      * @throws IOException if connection is closed or an I/O error occurs
@@ -301,6 +375,38 @@ public class PeerConnection implements AutoCloseable {
             throw new IOException("Cannot send packet: Connection is closed (state: " + state.get() + ")");
         }
 
+        // Control and crypto handshake packets are transmitted as raw framing
+        if (packet.getType() == MessageType.HELLO ||
+            packet.getType() == MessageType.KEY_EXCHANGE ||
+            packet.getType() == MessageType.KEY_EXCHANGE_ACK) {
+            sendRaw(packet);
+            return;
+        }
+
+        // If encryption session is established, automatically wrap inside ENCRYPTED_PAYLOAD
+        if (cryptoSession.isEstablished()) {
+            try {
+                byte[] innerBytes = packetEncoder.encodeToBytes(packet);
+                byte[] ciphertext = cryptoSession.encrypt(innerBytes);
+                Packet encPacket = Packet.of(MessageType.ENCRYPTED_PAYLOAD, packet.getRequestId(), ciphertext);
+                sendRaw(encPacket);
+                return;
+            } catch (GeneralSecurityException e) {
+                throw new IOException("Failed to encrypt packet of type " + packet.getType(), e);
+            }
+        }
+
+        if (enforceEncryption) {
+            throw new IOException("Cannot send plaintext packet: E2E encryption is strictly enforced.");
+        }
+
+        sendRaw(packet);
+    }
+
+    /**
+     * Sends a raw unencrypted packet directly over the socket stream.
+     */
+    public void sendRaw(Packet packet) throws IOException {
         synchronized (writeLock) {
             packetEncoder.encode(packet, out);
             out.flush();
@@ -492,10 +598,60 @@ public class PeerConnection implements AutoCloseable {
         }
     }
 
+    private void notifyEncryptionEstablished(String fingerprint) {
+        for (ConnectionListener listener : listeners) {
+            try {
+                listener.onEncryptionEstablished(fingerprint);
+            } catch (Exception ignored) {
+            }
+        }
+    }
+
+    /**
+     * Checks if this peer connection has successfully established an authenticated E2E encrypted session.
+     */
+    public boolean isEncrypted() {
+        return cryptoSession.isEstablished();
+    }
+
+    /**
+     * Gets the 6-digit verification security fingerprint for user cross-verification.
+     */
+    public String getSecurityFingerprint() {
+        return cryptoSession.getSecurityFingerprint();
+    }
+
+    /**
+     * Checks whether plaintext transmissions are strictly forbidden on this connection.
+     */
+    public boolean isEncryptionEnforced() {
+        return enforceEncryption;
+    }
+
+    /**
+     * Sets whether plaintext transmissions are strictly forbidden on this connection.
+     */
+    public void setEncryptionEnforced(boolean enforce) {
+        this.enforceEncryption = enforce;
+    }
+
+    /**
+     * Awaits until the cryptographic E2E key exchange completes and the connection is secure.
+     *
+     * @param timeout duration to wait
+     * @param unit time unit
+     * @return true if secured within timeout, false otherwise
+     * @throws InterruptedException if interrupted while waiting
+     */
+    public boolean awaitSecure(long timeout, TimeUnit unit) throws InterruptedException {
+        return secureLatch.await(timeout, unit);
+    }
+
     @Override
     public void close() {
         this.running = false;
         readyLatch.countDown();
+        secureLatch.countDown();
 
         // Fail any pending ping futures
         for (PingTracker tracker : pendingPings.values()) {

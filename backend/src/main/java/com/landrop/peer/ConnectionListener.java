@@ -40,4 +40,11 @@ public interface ConnectionListener {
      * @param error the exception encountered
      */
     default void onError(Exception error) {}
+
+    /**
+     * Invoked when peer-to-peer end-to-end encryption has been successfully negotiated.
+     *
+     * @param fingerprint the 6-digit verification security fingerprint
+     */
+    default void onEncryptionEstablished(String fingerprint) {}
 }

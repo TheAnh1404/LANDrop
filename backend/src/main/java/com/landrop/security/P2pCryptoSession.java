@@ -62,6 +62,9 @@ public final class P2pCryptoSession {
      * @throws GeneralSecurityException if key decoding or agreement fails
      */
     public synchronized void completeKeyAgreement(byte[] remotePublicKeyBytes) throws GeneralSecurityException {
+        if (this.sharedAesKey != null) {
+            return;
+        }
         KeyFactory kf = KeyFactory.getInstance(EC_ALGORITHM);
         PublicKey remotePublicKey = kf.generatePublic(new X509EncodedKeySpec(remotePublicKeyBytes));
 

@@ -117,6 +117,16 @@ public final class AppConfig {
     }
 
     // ==========================================
+    // SECURITY CONFIGURATION
+    // ==========================================
+
+    public static final boolean DEFAULT_ENFORCE_E2E = false;
+
+    public static boolean isE2eEncryptionEnforced() {
+        return getBoolean("landrop.security.enforce.e2e", "ENFORCE_E2E_ENCRYPTION", DEFAULT_ENFORCE_E2E);
+    }
+
+    // ==========================================
     // INTERNAL UTILITY PARSERS
     // ==========================================
 
