@@ -43,4 +43,49 @@ class FolderArchiveServiceTest {
 
         assertThrows(IllegalArgumentException.class, () -> FolderArchiveService.createArchive(file));
     }
+
+    @Test
+    void testExtractArchiveSafe(@TempDir Path tempDir) throws IOException {
+        Path sourceFolder = tempDir.resolve("source");
+        Files.createDirectories(sourceFolder.resolve("nested"));
+        Files.writeString(sourceFolder.resolve("hello.txt"), "LANDrop v2.0 Safe Transfer");
+        Files.writeString(sourceFolder.resolve("nested/doc.json"), "{\"status\": \"secure\"}");
+
+        Path archive = FolderArchiveService.createArchive(sourceFolder);
+        assertNotNull(archive);
+
+        Path destDir = tempDir.resolve("extracted");
+        Path extractedRoot = FolderArchiveService.extractArchive(archive, destDir);
+        assertEquals(destDir.toAbsolutePath().normalize(), extractedRoot);
+
+        assertTrue(Files.exists(destDir.resolve("hello.txt")));
+        assertEquals("LANDrop v2.0 Safe Transfer", Files.readString(destDir.resolve("hello.txt")));
+
+        assertTrue(Files.exists(destDir.resolve("nested/doc.json")));
+        assertEquals("{\"status\": \"secure\"}", Files.readString(destDir.resolve("nested/doc.json")));
+
+        FolderArchiveService.deleteArchive(archive);
+    }
+
+    @Test
+    void testExtractArchiveZipSlipRejected(@TempDir Path tempDir) throws IOException {
+        // Create a malicious ZIP file containing an entry with path traversal: ../evil.txt
+        Path maliciousZip = tempDir.resolve("malicious.zip");
+        try (java.util.zip.ZipOutputStream zos = new java.util.zip.ZipOutputStream(Files.newOutputStream(maliciousZip))) {
+            java.util.zip.ZipEntry maliciousEntry = new java.util.zip.ZipEntry("../evil.txt");
+            zos.putNextEntry(maliciousEntry);
+            zos.write("Malicious payload escaping sandbox".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            zos.closeEntry();
+        }
+
+        Path targetDir = tempDir.resolve("sandbox");
+        Files.createDirectories(targetDir);
+
+        SecurityException ex = assertThrows(SecurityException.class, () ->
+                FolderArchiveService.extractArchive(maliciousZip, targetDir));
+        assertTrue(ex.getMessage().contains("Zip Slip"), "Exception message should indicate Zip Slip attack");
+
+        // Verify that evil.txt was NEVER created outside targetDir
+        assertFalse(Files.exists(tempDir.resolve("evil.txt")), "File must not be written outside target directory");
+    }
 }

@@ -42,4 +42,66 @@ public final class FolderArchiveService {
             Files.deleteIfExists(archive);
         }
     }
+
+    /**
+     * Extracts a ZIP archive safely into the target directory with strict Zip Slip protection.
+     *
+     * @param archive the ZIP archive path to extract
+     * @param targetDir the destination directory
+     * @param overwrite whether to overwrite existing destination files
+     * @return the destination directory path
+     * @throws IOException if an I/O error occurs
+     * @throws SecurityException if an entry attempts path traversal outside targetDir (Zip Slip)
+     */
+    public static Path extractArchive(Path archive, Path targetDir, boolean overwrite) throws IOException {
+        if (archive == null || !Files.isRegularFile(archive)) {
+            throw new IllegalArgumentException("Archive file does not exist or is not a file: " + archive);
+        }
+        if (targetDir == null) {
+            throw new IllegalArgumentException("Target directory cannot be null");
+        }
+
+        Path normalizedTargetDir = targetDir.toAbsolutePath().normalize();
+        Files.createDirectories(normalizedTargetDir);
+
+        try (java.util.zip.ZipInputStream zis = new java.util.zip.ZipInputStream(Files.newInputStream(archive))) {
+            ZipEntry entry;
+            while ((entry = zis.getNextEntry()) != null) {
+                Path destinationFile = normalizedTargetDir.resolve(entry.getName()).normalize();
+
+                // Zip Slip Path Traversal Protection
+                if (!destinationFile.startsWith(normalizedTargetDir)) {
+                    throw new SecurityException("Bad zip entry (Zip Slip attack detected): " + entry.getName());
+                }
+
+                if (entry.isDirectory()) {
+                    Files.createDirectories(destinationFile);
+                } else {
+                    Path parent = destinationFile.getParent();
+                    if (parent != null) {
+                        Files.createDirectories(parent);
+                    }
+                    if (overwrite) {
+                        Files.copy(zis, destinationFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    } else if (!Files.exists(destinationFile)) {
+                        Files.copy(zis, destinationFile);
+                    }
+                }
+                zis.closeEntry();
+            }
+        }
+        return normalizedTargetDir;
+    }
+
+    /**
+     * Extracts a ZIP archive safely into the target directory, overwriting existing files by default.
+     *
+     * @param archive the ZIP archive path to extract
+     * @param targetDir the destination directory
+     * @return the destination directory path
+     * @throws IOException if an I/O error occurs
+     */
+    public static Path extractArchive(Path archive, Path targetDir) throws IOException {
+        return extractArchive(archive, targetDir, true);
+    }
 }

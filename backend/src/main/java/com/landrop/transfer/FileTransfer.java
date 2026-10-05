@@ -111,6 +111,10 @@ public class FileTransfer {
         return localPath;
     }
 
+    public Path getDestinationPath() {
+        return localPath;
+    }
+
     public void setLocalPath(Path localPath) {
         this.localPath = localPath;
     }
