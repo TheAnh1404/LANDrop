@@ -26,3 +26,10 @@ pnpm-debug.log*
 
 # Node development-tool output
 .npm/
+
+# Generated reports, caches and compiler state
+*.log
+*.tsbuildinfo
+coverage/
+playwright-report/
+test-results/

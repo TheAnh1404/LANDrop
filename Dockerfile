@@ -2,7 +2,6 @@ FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /build
 COPY pom.xml ./
 COPY backend/pom.xml backend/pom.xml
-COPY frontend/pom.xml frontend/pom.xml
 COPY backend/src backend/src
 RUN mvn -B -pl backend -am -DskipTests package \
     && mvn -B -pl backend dependency:copy-dependencies -DincludeScope=runtime -DoutputDirectory=/build/backend/target/dependency

@@ -7,3 +7,8 @@
 **/.vscode
 docs
 prisma
+frontend
+scripts
+**/node_modules
+**/.next
+**/*.log

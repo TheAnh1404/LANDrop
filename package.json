@@ -13,7 +13,6 @@
     "web": "npm --prefix frontend run dev",
     "client": "npm --prefix frontend run dev",
     "client:ui": "npm --prefix frontend run dev",
-    "client:test": "node --test scripts/start-client.test.mjs",
     "test": "node --test scripts/*.test.mjs"
   },
   "engines": {
