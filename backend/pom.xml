@@ -15,7 +15,7 @@
     <packaging>jar</packaging>
 
     <name>LANDrop - Backend</name>
-    <description>Local network peer-to-peer file sharing and messaging - Phase 2: Custom TCP Protocol</description>
+    <description>LAN peer-to-peer transfer engine, authenticated workspace APIs, realtime services and server administration</description>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
