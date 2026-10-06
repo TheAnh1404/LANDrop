@@ -1,9 +1,10 @@
 'use client';
 
-import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { CURRENT_USER } from '../mock-data';
 import { ServerConnectionInfo, User } from '../types';
 import { ApiError, AuthResponse, fetchJson, normalizeServerUrl, TokenPair, tokenRole, errorMessage } from '../api/client';
+import { createAuthenticatedRequester } from '../api/authorized';
 
 type Mode = 'live' | 'demo';
 interface Session {
@@ -34,12 +35,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const tokens = useRef<TokenPair | null>(null);
   const origin = useRef(defaultServer.serverUrl);
   const generation = useRef(0);
-  const refreshing = useRef<Promise<string> | null>(null);
 
   const clear = useCallback(() => {
     generation.current++;
     tokens.current = null;
-    refreshing.current = null;
     setUser(null);
     sessionStorage.removeItem('landrop.refresh');
     sessionStorage.removeItem('landrop.mode');
@@ -55,6 +54,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
+    const version = generation.current;
     async function restore() {
       try {
         const saved = localStorage.getItem('landrop.server');
@@ -63,9 +63,9 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         const refreshToken = sessionStorage.getItem('landrop.refresh');
         if (refreshToken) {
           const auth = await fetchJson<AuthResponse>(origin.current, '/api/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken }), signal: controller.signal });
-          if (active) { apply(auth); setServerInfo(s => ({ ...s, status: 'connected' })); }
+          if (active && version === generation.current) { apply(auth); setServerInfo(s => ({ ...s, status: 'connected' })); }
         }
-      } catch { if (active) clear(); }
+      } catch { if (active && version === generation.current) clear(); }
       finally { if (active) setReady(true); }
     }
     // Defer so StrictMode's discarded effect never rotates a refresh token.
@@ -73,28 +73,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return () => { active = false; clearTimeout(timer); controller.abort(); };
   }, [apply, clear]);
 
-  const request = useCallback(async <T,>(route: string, init: RequestInit = {}): Promise<T> => {
-    const version = generation.current;
-    const currentOrigin = origin.current;
-    const send = (token?: string) => fetchJson<T>(currentOrigin, route, { ...init, headers: { ...init.headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) } });
-    const initialToken = tokens.current?.accessToken;
-    try { return await send(initialToken); }
-    catch (failure) {
-      if (!(failure instanceof ApiError) || failure.status !== 401 || !tokens.current || version !== generation.current) throw failure;
-      if (initialToken !== tokens.current.accessToken) return send(tokens.current.accessToken);
-      if (!refreshing.current) {
-        const refreshToken = tokens.current.refreshToken;
-        refreshing.current = fetchJson<AuthResponse>(currentOrigin, '/api/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken }) }).then(auth => {
-          if (version !== generation.current) throw new ApiError('Phiên đăng nhập đã thay đổi.', 401);
-          apply(auth);
-          return auth.accessToken;
-        }).catch(error => { if (version === generation.current) clear(); throw error; }).finally(() => { if (version === generation.current) refreshing.current = null; });
-      }
-      return send(await refreshing.current);
-    }
-  }, [apply, clear]);
+  const request = useMemo(() => createAuthenticatedRequester({
+    read: () => ({ origin: origin.current, tokens: tokens.current, version: generation.current }),
+    refreshed: apply,
+    expired: clear,
+  }), [apply, clear]);
 
   const connectServer = async (input: string) => {
+    const version = generation.current;
     setError('');
     setServerInfo(s => ({ ...s, status: 'connecting' }));
     try {
@@ -102,6 +88,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       if (typeof location !== 'undefined' && nextOrigin === location.origin) throw new ApiError('Đây là cổng frontend. Hãy nhập cổng backend, mặc định localhost:3100 khi chạy cùng máy.');
       const start = performance.now();
       const health = await fetchJson<{ status: string; serverVersion?: string; protocolVersion?: number }>(nextOrigin, '/health');
+      if (version !== generation.current) return false;
       if (health.status !== 'ok') throw new ApiError('Server chưa sẵn sàng.');
       clear();
       origin.current = nextOrigin;
@@ -109,19 +96,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setMode('live');
       setServerInfo({ ...defaultServer, serverUrl: nextOrigin, status: 'connected', latencyMs: Math.round(performance.now() - start), version: health.serverVersion || '', protocol: String(health.protocolVersion || 1) });
       return true;
-    } catch (failure) { setError(errorMessage(failure)); setServerInfo(s => ({ ...s, status: 'error' })); return false; }
+    } catch (failure) { if (version === generation.current) { setError(errorMessage(failure)); setServerInfo(s => ({ ...s, status: 'error' })); } return false; }
   };
 
   const authenticate = async (route: string, body: object) => {
     setError('');
-    const version = generation.current;
+    const version = ++generation.current;
     try {
       const auth = await fetchJson<AuthResponse>(origin.current, route, { method: 'POST', body: JSON.stringify(body) });
       if (version !== generation.current) return false;
       apply(auth);
       setServerInfo(s => ({ ...s, status: 'connected' }));
       return true;
-    } catch (failure) { setError(errorMessage(failure)); return false; }
+    } catch (failure) { if (version === generation.current) setError(errorMessage(failure)); return false; }
   };
   const logout = async () => {
     const pair = tokens.current;
