@@ -1,5 +1,7 @@
 # Báo cáo chuẩn hóa repository và chức năng các file lớn
 
+> Báo cáo này ghi lại thời điểm dọn repository trước khi tổ chức lại UI. Các kích thước/trang frontend bên dưới là số liệu lịch sử. Cấu trúc hiện tại và các service thay thế nằm trong [báo cáo frontend/backend](reports/FRONTEND_BACKEND_INTEGRATION.md); các thư mục `components/layout`, `components/ui`, `lib/auth`, `lib/realtime`, `lib/webrtc` cũ đã được bỏ sau khi kiểm tra không còn import.
+
 Ngày rà soát: **05/10/2026**. Phạm vi: cấu trúc working tree tại `C:\TheAnhproject\LANDrop`. Dung lượng dưới đây tính theo KiB/MiB (1024 bytes), làm tròn một chữ số cho file nguồn. Số dòng chỉ dùng để nhận biết quy mô; không phải tiêu chí xóa file.
 
 ## 1. Kết quả dọn dẹp

@@ -2,6 +2,10 @@
 
 Bắt đầu từ [README gốc](../README.md) và [báo cáo cấu trúc/file lớn](REPOSITORY_REPORT.md). Tài liệu chia theo chức năng; số phase được bỏ khỏi tên file để dễ tìm, nội dung đặc tả backend được giữ.
 
+## Tích hợp frontend hiện tại
+
+[Báo cáo frontend/backend](reports/FRONTEND_BACKEND_INTEGRATION.md) mô tả cấu trúc UI mới, API đã nối, giới hạn transport và chức năng các file quan trọng.
+
 ## API backend
 
 | Tài liệu | Khi cần dùng |

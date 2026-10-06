@@ -2,7 +2,7 @@
 
 LANDrop gồm backend Java 21 cho LAN P2P, xác thực, workspace, chat và quản trị; frontend hiện tại là Next.js 14 + React + TypeScript. Maven chỉ quản lý `backend/`.
 
-**Trạng thái frontend:** nhiều trang sử dụng `frontend/lib/mock-data.ts`; đăng nhập và tiến trình truyền file còn có mô phỏng. Chạy được giao diện không có nghĩa là đã tích hợp đầy đủ với backend. Xem [báo cáo cấu trúc và các file lớn](docs/REPOSITORY_REPORT.md).
+**Trạng thái frontend:** giao diện đã thống nhất, nối REST API xác thực, workspace, chat, file metadata và quản trị. Chế độ demo được chọn riêng; dữ liệu mẫu không thay thế lỗi server. Truyền nội dung file giữa trình duyệt cần bổ sung transport. Xem [báo cáo tích hợp frontend/backend](docs/reports/FRONTEND_BACKEND_INTEGRATION.md) và [báo cáo cấu trúc/file lớn](docs/REPOSITORY_REPORT.md).
 
 ## Chạy giao diện web
 
@@ -37,7 +37,7 @@ $env:WS_PORT = '3101'
 npm run server:backend
 ```
 
-`npm run server` mở thêm admin HTML của backend; `npm run server:admin` mở trang của server đã chạy. Admin Next.js tại `/admin` là giao diện riêng, hiện còn dùng dữ liệu giả.
+`npm run server` mở thêm admin HTML của backend; `npm run server:admin` mở trang của server đã chạy. Admin Next.js tại `/admin` là giao diện riêng, gọi API bằng tài khoản SYSTEM_ADMIN; admin HTML của Java vẫn được giữ.
 
 Tạo `.env` từ [.env.example](.env.example), cấu hình PostgreSQL và JWT secrets để dùng tài khoản, workspace và chat bền vững. Áp dụng SQL migrations trước:
 
@@ -51,6 +51,7 @@ Xem [hướng dẫn database](docs/architecture/DATABASE.md). `.env` là cấu h
 
 ```powershell
 npm test
+npm --prefix frontend test
 node frontend/node_modules/typescript/bin/tsc --project frontend/tsconfig.json --noEmit --incremental false
 mvn test "-Dlandrop.database.enabled=false" "-Dtest=*,!PersistentChatTest,!FileManagementTest" "-Dsurefire.failIfNoSpecifiedTests=false"
 ```
@@ -63,7 +64,7 @@ Regression trên không dùng database. Các suite PostgreSQL cần database dà
 backend/                    Java backend, tests, admin HTML, SQL migrations
 frontend/app/               Các route Next.js: auth, workspace, admin
 frontend/components/        Component giao diện và layout
-frontend/lib/               Types, mock data, auth, realtime, transfer, WebRTC
+frontend/lib/               API adapters, session, workspace data, demo transfer
 scripts/                    Launcher backend và test Node
 scripts/demo/               Công cụ CLI auth, discovery và realtime
 docs/api/                   Hợp đồng backend REST/WebSocket

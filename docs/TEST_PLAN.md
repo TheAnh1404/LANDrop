@@ -8,6 +8,7 @@ Chạy từ thư mục gốc:
 
 ```powershell
 npm test
+npm --prefix frontend test
 node frontend/node_modules/typescript/bin/tsc --project frontend/tsconfig.json --noEmit --incremental false
 npm run build
 mvn test "-Dlandrop.database.enabled=false" "-Dtest=*,!PersistentChatTest,!FileManagementTest" "-Dsurefire.failIfNoSpecifiedTests=false"
@@ -16,11 +17,14 @@ mvn test "-Dlandrop.database.enabled=false" "-Dtest=*,!PersistentChatTest,!FileM
 | Kiểm tra | Phạm vi và giới hạn |
 | --- | --- |
 | Node tests | Launcher server, cấu hình, lifecycle và readiness |
+| Frontend API tests | HTTP/error/cancellation, DTO, refresh đồng thời và đổi phiên, pagination, folder cycles và payload di chuyển metadata |
 | TypeScript | Import, kiểu dữ liệu, cú pháp; chưa xác minh API thật |
 | Next.js build | Biên dịch route và đóng gói; chưa chứng minh dữ liệu thật |
 | Maven regression không DB | LAN, packet/crypto, transfer, auth in-memory, server/control và suite không cần PostgreSQL |
 
 Regression không DB loại `PersistentChatTest` và `FileManagementTest`; một số suite PostgreSQL/live tự bỏ qua khi thiếu cấu hình. Báo cáo test/skips theo Surefire của lần chạy thực tế.
+
+Trong môi trường chặn tạo process con, chạy launcher tests bằng `node scripts/start-server.test.mjs` hoặc (Node hỗ trợ tùy chọn này) `node --test --test-isolation=none scripts/start-server.test.mjs`. Cấu hình build bằng worker threads nằm trong [frontend README](../frontend/README.md). Việc đổi chế độ worker không thay thế kiểm tra UI trong browser hay E2E PostgreSQL.
 
 ## PostgreSQL
 
@@ -39,9 +43,9 @@ mvn -pl backend test "-Dlandrop.test.postgres=true" "-Dtest=WorkspacePostgresTes
 | Khởi động | Không trùng cổng; DB mới đã migrate; DB lỗi; HTTP/WS port conflict; shutdown |
 | Auth/device | Register/login thật, refresh, đổi tài khoản, logout/revoke, nhiều thiết bị |
 | Workspace/chat | Quyền thành viên, kênh riêng, paging, retry không trùng tin, reconnect |
-| File metadata | Publish/download, nguồn online/offline, quyền người nhận, file/thư mục bị xóa |
+| File metadata | Register, rename/move, đích thuộc workspace khác, chống cycle, xóa thư mục rỗng, parent bị xóa bên ngoài, quyền uploader/creator/admin |
 | Transfer LAN | File lớn, SHA-256, pause/resume, mất kết nối, failover, restart, ZIP |
 | Browser/WebRTC | Hai trình duyệt truyền nội dung thật, signaling, ICE/DataChannel, backpressure, hủy |
-| Admin | Phân quyền, quản lý client/session, cấu hình và log từ API thật |
+| Admin | Phân quyền, tìm kiếm server và paging, CRUD user/workspace, membership, tự hạ quyền/xóa tài khoản, owner, revoke/disconnect, cấu hình và log |
 
 Mock auth/data và thanh tiến trình giả chưa đáp ứng tiêu chí tích hợp. Kết quả đợt dọn cấu trúc nằm trong [repository report](REPOSITORY_REPORT.md).
