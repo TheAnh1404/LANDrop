@@ -10,15 +10,17 @@ const folder = path.dirname(fileURLToPath(import.meta.url));
 const output = path.resolve(folder, '../../tmp/frontend-api-tests');
 fs.mkdirSync(output, { recursive: true });
 const require = createRequire(import.meta.url);
-for (const file of ['client', 'models', 'pagination']) {
+for (const file of ['client', 'models', 'pagination', 'authorized', 'folders']) {
   const source = fs.readFileSync(path.resolve(folder, `../lib/api/${file}.ts`), 'utf8');
-  fs.writeFileSync(path.join(output, `${file}.cjs`), ts.transpileModule(source, {
+  fs.writeFileSync(path.join(output, `${file}.js`), ts.transpileModule(source, {
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
   }).outputText);
 }
-const { ApiError, normalizeServerUrl, fetchJson, tokenRole } = require(path.join(output, 'client.cjs'));
-const { mapMessage, mapMember, mapFile } = require(path.join(output, 'models.cjs'));
-const { collectPages } = require(path.join(output, 'pagination.cjs'));
+const { ApiError, normalizeServerUrl, fetchJson, tokenRole } = require(path.join(output, 'client.js'));
+const { mapMessage, mapMember, mapFile } = require(path.join(output, 'models.js'));
+const { collectPages } = require(path.join(output, 'pagination.js'));
+const { createAuthenticatedRequester } = require(path.join(output, 'authorized.js'));
+const { folderPath, folderDestinations, visibleParent, metadataUpdate } = require(path.join(output, 'folders.js'));
 
 test('server origin accepts host, HTTPS and an API suffix', () => {
   assert.equal(normalizeServerUrl(' localhost:3100 '), 'http://localhost:3100');
@@ -45,8 +47,8 @@ async function mockFetch(fetch, run) {
 test('JSON requests retain bearer authorization and disable cache', async () => {
   await mockFetch(async (url, options) => {
     assert.equal(url, 'http://localhost:3100/api/workspaces');
-    assert.equal(options.headers.Authorization, 'Bearer test');
-    assert.equal(options.headers['Content-Type'], 'application/json');
+    assert.equal(options.headers.get('Authorization'), 'Bearer test');
+    assert.equal(options.headers.get('Content-Type'), 'application/json');
     assert.equal(options.cache, 'no-store');
     assert.equal(options.body, '{"name":"team"}');
     return new Response('{"data":{"id":"workspace"}}');
@@ -118,4 +120,159 @@ test('pagination collects every page using actual item offsets', async () => {
 });
 test('pagination rejects an endless empty response', async () => {
   await assert.rejects(collectPages(async () => ({ data: [], pagination: { hasMore: true } })), /trang trống/);
+});
+
+function deferred() {
+  let resolve, reject;
+  const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+const rotated = { accessToken: 'fresh', refreshToken: 'rotated', user: { id: 'user' } };
+function authorized(fetcher) {
+  const state = { origin: 'http://server', version: 1, tokens: { accessToken: 'old', refreshToken: 'refresh' } };
+  let expires = 0;
+  const request = createAuthenticatedRequester({ read: () => ({ ...state }), fetcher,
+    refreshed: auth => { state.tokens = auth; },
+    expired: () => { expires++; state.version++; state.tokens = null; },
+  });
+  return { state, request, expires: () => expires };
+}
+test('concurrent 401 responses rotate the refresh token once', async () => {
+  const refresh = deferred(), started = deferred();
+  let refreshCount = 0;
+  const client = authorized(async (_origin, route, init) => {
+    if (route === '/api/auth/refresh') { refreshCount++; started.resolve(); return refresh.promise; }
+    if (init.headers.get('Authorization') === 'Bearer old') throw new ApiError('Expired', 401);
+    return { route };
+  });
+  const pending = ['/one', '/two', '/three'].map(route => client.request(route));
+  await started.promise;
+  refresh.resolve(rotated);
+  assert.deepEqual(await Promise.all(pending), [{ route: '/one' }, { route: '/two' }, { route: '/three' }]);
+  assert.equal(refreshCount, 1);
+  assert.equal(client.state.tokens.refreshToken, 'rotated');
+});
+test('a late old-token 401 reuses the token another request refreshed', async () => {
+  const delayed = deferred();
+  let refreshCount = 0;
+  const client = authorized(async (_origin, route, init) => {
+    if (route === '/api/auth/refresh') { refreshCount++; return rotated; }
+    if (init.headers.get('Authorization') === 'Bearer old') {
+      if (route === '/late') return delayed.promise;
+      throw new ApiError('Expired', 401);
+    }
+    return route;
+  });
+  const late = client.request('/late');
+  assert.equal(await client.request('/first'), '/first');
+  delayed.reject(new ApiError('Expired', 401));
+  assert.equal(await late, '/late');
+  assert.equal(refreshCount, 1);
+});
+test('successful responses from a logged-out session cannot reach a new screen', async () => {
+  const response = deferred();
+  const client = authorized(() => response.promise);
+  const pending = client.request('/private');
+  client.state.version++; client.state.tokens = null;
+  response.resolve({ privateData: true });
+  await assert.rejects(pending, error => error.code === 'SESSION_CHANGED');
+});
+test('switching servers during refresh cannot restore the old account', async () => {
+  const refresh = deferred(), started = deferred();
+  const client = authorized(async (_origin, route) => {
+    if (route === '/api/auth/refresh') { started.resolve(); return refresh.promise; }
+    throw new ApiError('Expired', 401);
+  });
+  const pending = client.request('/private');
+  await started.promise;
+  client.state.version++; client.state.origin = 'http://another'; client.state.tokens = null;
+  refresh.resolve(rotated);
+  await assert.rejects(pending, error => error.code === 'SESSION_CHANGED');
+  assert.equal(client.state.tokens, null);
+  assert.equal(client.expires(), 0);
+});
+test('cancelling one waiter does not cancel the refresh used by other requests', async () => {
+  const refresh = deferred(), started = deferred();
+  const client = authorized(async (_origin, route, init) => {
+    if (route === '/api/auth/refresh') { started.resolve(); return refresh.promise; }
+    if (init.headers.get('Authorization') === 'Bearer old') throw new ApiError('Expired', 401);
+    return route;
+  });
+  const controller = new AbortController();
+  const cancelled = client.request('/one', { signal: controller.signal });
+  const active = client.request('/two');
+  await started.promise;
+  controller.abort(); refresh.resolve(rotated);
+  await assert.rejects(cancelled, error => error.code === 'ABORTED');
+  assert.equal(await active, '/two');
+  assert.equal(client.expires(), 0);
+});
+test('temporary refresh outages retain the session for retry', async () => {
+  let refreshCount = 0;
+  const client = authorized(async (_origin, route, init) => {
+    if (route === '/api/auth/refresh') {
+      if (++refreshCount === 1) throw new ApiError('Offline');
+      return rotated;
+    }
+    if (init.headers.get('Authorization') === 'Bearer old') throw new ApiError('Expired', 401);
+    return 'ok';
+  });
+  await assert.rejects(client.request('/data'), error => error.code === 'NETWORK_ERROR');
+  assert.equal(client.state.tokens.refreshToken, 'refresh');
+  assert.equal(client.expires(), 0);
+  assert.equal(await client.request('/data'), 'ok');
+});
+test('invalid refresh tokens close the session', async () => {
+  const client = authorized(async () => { throw new ApiError('Invalid token', 401); });
+  await assert.rejects(client.request('/data'), error => error.status === 401);
+  assert.equal(client.state.tokens, null);
+  assert.equal(client.expires(), 1);
+});
+test('a retry rejected with 401 also closes the session without looping', async () => {
+  let requests = 0;
+  const client = authorized(async (_origin, route) => {
+    if (route === '/api/auth/refresh') return rotated;
+    requests++; throw new ApiError('Revoked', 401);
+  });
+  await assert.rejects(client.request('/data'), error => error.status === 401);
+  assert.equal(requests, 2);
+  assert.equal(client.expires(), 1);
+});
+test('403 permission errors never rotate authentication tokens', async () => {
+  let requests = 0;
+  const client = authorized(async () => { requests++; throw new ApiError('Forbidden', 403); });
+  await assert.rejects(client.request('/admin'), error => error.status === 403);
+  assert.equal(requests, 1);
+  assert.equal(client.expires(), 0);
+});
+
+const tree = [
+  { id: 'root', name: 'Root', parentId: null },
+  { id: 'child', name: 'Child', parentId: 'root' },
+  { id: 'grandchild', name: 'Grandchild', parentId: 'child' },
+  { id: 'another', name: 'Another', parentId: null },
+];
+test('folder destinations exclude the moved folder and all descendants', () => {
+  assert.deepEqual(folderDestinations(tree, 'child').map(folder => folder.id), ['root', 'another']);
+  assert.deepEqual(folderDestinations(tree, 'root').map(folder => folder.id), ['another']);
+  assert.equal(folderDestinations(tree).length, 4);
+});
+test('folder breadcrumbs terminate even if the server supplies a cycle', () => {
+  const cyclic = [{ id: 'one', name: 'One', parentId: 'two' }, { id: 'two', name: 'Two', parentId: 'one' }];
+  assert.equal(folderPath(cyclic, 'one').length, 2);
+  assert.deepEqual(folderDestinations(cyclic, 'unrelated'), []);
+});
+test('contents whose parent is missing stay visible at the root', () => {
+  assert.equal(visibleParent(tree, 'deleted-parent'), null);
+  assert.equal(visibleParent(tree, 'child'), 'child');
+  assert.equal(visibleParent(tree, null), null);
+});
+test('nested folders have a root-first path', () => {
+  assert.deepEqual(folderPath(tree, 'grandchild').map(folder => folder.name), ['Root', 'Child', 'Grandchild']);
+});
+test('moving metadata to the root sends explicit null using the Java contract keys', () => {
+  assert.deepEqual(metadataUpdate('file', ' report.pdf ', ''), { name: 'report.pdf', folderId: null });
+  assert.deepEqual(metadataUpdate('folder', ' Docs ', 'root'), { name: 'Docs', parentId: 'root' });
+  assert.throws(() => metadataUpdate('file', ' ', ''), /255/);
+  assert.throws(() => metadataUpdate('folder', 'a'.repeat(256), ''), /255/);
 });
