@@ -25,7 +25,9 @@ export async function fetchJson<T>(origin: string, route: string, init: RequestI
   init.signal?.addEventListener('abort', abort, { once: true });
   if (init.signal?.aborted) timeout.abort();
   try {
-    const response = await fetch(`${origin}${route}`, { ...init, signal: timeout.signal, cache: 'no-store', headers: { ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers } });
+    const headers = new Headers(init.headers);
+    if (init.body && !headers.has('Content-Type')) headers.set('Content-Type', 'application/json');
+    const response = await fetch(`${origin}${route}`, { ...init, signal: timeout.signal, cache: 'no-store', headers });
     const body = response.status === 204 ? null : await response.json().catch(() => null);
     if (!response.ok) throw new ApiError(body?.error?.message || body?.message || `Server trả về lỗi ${response.status}.`, response.status, body?.error?.code || body?.code);
     if (body === null && response.status !== 204) throw new ApiError('Server không trả về JSON hợp lệ.', response.status, 'INVALID_RESPONSE');
