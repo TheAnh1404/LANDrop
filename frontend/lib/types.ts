@@ -123,6 +123,7 @@ export interface FolderItem {
   id: string;
   workspaceId: string;
   parentId?: string | null;
+  createdById?: string;
   name: string;
   filesCount: number;
   createdAt: string;
