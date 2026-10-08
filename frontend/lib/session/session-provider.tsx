@@ -15,6 +15,10 @@ interface Session {
   error: string;
   isAuthenticated: boolean;
   isAdmin: boolean;
+  authVersion: number;
+  getAccessToken: () => string | null;
+  serverUrl: string;
+  refreshSession: () => Promise<string | null>;
   connectServer: (url: string) => Promise<boolean>;
   login: (identifier: string, password: string, admin?: boolean) => Promise<boolean>;
   register: (name: string, username: string, email: string, password: string) => Promise<boolean>;
@@ -32,6 +36,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [serverInfo, setServerInfo] = useState(defaultServer);
   const [error, setError] = useState('');
+  const [authVersion, setAuthVersion] = useState(0);
   const tokens = useRef<TokenPair | null>(null);
   const origin = useRef(defaultServer.serverUrl);
   const generation = useRef(0);
@@ -40,6 +45,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     generation.current++;
     tokens.current = null;
     setUser(null);
+    setAuthVersion(v => v + 1);
     sessionStorage.removeItem('landrop.refresh');
     sessionStorage.removeItem('landrop.mode');
   }, []);
@@ -47,8 +53,22 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const apply = useCallback((auth: AuthResponse) => {
     tokens.current = auth;
     sessionStorage.setItem('landrop.refresh', auth.refreshToken);
-    setUser(mapUser(auth));
+    setUser(prev => {
+      const mapped = mapUser(auth);
+      if (
+        prev &&
+        prev.id === mapped.id &&
+        prev.name === mapped.name &&
+        prev.email === mapped.email &&
+        prev.role === mapped.role &&
+        prev.avatarUrl === mapped.avatarUrl
+      ) {
+        return prev;
+      }
+      return mapped;
+    });
     setMode('live');
+    setAuthVersion(v => v + 1);
   }, []);
 
   useEffect(() => {
@@ -110,6 +130,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       return true;
     } catch (failure) { if (version === generation.current) setError(errorMessage(failure)); return false; }
   };
+
+  const refreshSession = useCallback(async (): Promise<string | null> => {
+    if (mode === 'demo') return null;
+    try {
+      return await request.refreshToken();
+    } catch {
+      return null;
+    }
+  }, [mode, request]);
+
+  const getAccessToken = useCallback(() => tokens.current?.accessToken || null, []);
+
   const logout = async () => {
     const pair = tokens.current;
     const oldOrigin = origin.current;
@@ -117,7 +149,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setMode('live');
     if (pair) { try { await fetchJson(oldOrigin, '/api/auth/logout', { method: 'POST', body: JSON.stringify({ refreshToken: pair.refreshToken }), headers: { Authorization: `Bearer ${pair.accessToken}` } }); } catch { setError('Đã đóng phiên trên trình duyệt. Server chưa xác nhận thu hồi phiên.'); } }
   };
-  return <Context.Provider value={{ mode, ready, user, serverInfo, error, isAuthenticated: !!user, isAdmin: user?.role === 'SYSTEM_ADMIN', request, connectServer,
+  return <Context.Provider value={{ mode, ready, user, serverInfo, error, isAuthenticated: !!user, isAdmin: user?.role === 'SYSTEM_ADMIN', authVersion, request, connectServer,
+    getAccessToken,
+    serverUrl: origin.current,
+    refreshSession,
     login: (emailOrUsername, password, admin = false) => authenticate(admin ? '/api/admin/auth/login' : '/api/auth/login', { emailOrUsername, password }),
     register: (displayName, username, email, password) => authenticate('/api/auth/register', { displayName, username, email, password }),
     logout, enterDemo: () => { clear(); setMode('demo'); setUser(CURRENT_USER); sessionStorage.setItem('landrop.mode', 'demo'); setError(''); }

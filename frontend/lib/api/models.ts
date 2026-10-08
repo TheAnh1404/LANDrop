@@ -2,7 +2,7 @@ import type { Workspace, WorkspaceMember, Channel, Message, FileItem, FolderItem
 
 export interface WireWorkspace { id: string; name: string; description?: string; ownerId: string; role: Workspace['role']; createdAt: string }
 export interface WireMember { id: string; workspaceId: string; userId: string; role: WorkspaceMember['role']; joinedAt: string; user: { id: string; username: string; displayName?: string; avatarUrl?: string } }
-export interface WireMessage { id: string; channelId: string; senderId: string; sender: { username: string; displayName?: string; avatarUrl?: string }; content: string; createdAt: string; updatedAt?: string; editedAt?: string; deletedAt?: string; replyToId?: string }
+export interface WireMessage { id: string; channelId: string; senderId: string; sender: { username: string; displayName?: string; avatarUrl?: string }; content: string; createdAt: string; updatedAt?: string; editedAt?: string; deletedAt?: string; replyToId?: string; clientMessageId?: string }
 export interface WireFile { id: string; workspaceId: string; folderId?: string; name: string; size: number; uploaderId: string; mimeType: string; hash?: string; createdAt: string; updatedAt: string; storageType: string }
 export interface WireFolder { id: string; workspaceId: string; parentId?: string; createdById?: string; name: string; createdAt: string; updatedAt: string }
 export const mapWorkspace = (item: WireWorkspace): Workspace => ({ ...item, membersCount: 0, channelsCount: 0, filesCount: 0 });

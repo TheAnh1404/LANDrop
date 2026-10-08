@@ -88,6 +88,9 @@ export interface Message {
   content: string;
   createdAt: string;
   updatedAt?: string;
+  editedAt?: string;
+  deletedAt?: string;
+  clientMessageId?: string;
   isEdited?: boolean;
   isDeleted?: boolean;
   replyToId?: string;

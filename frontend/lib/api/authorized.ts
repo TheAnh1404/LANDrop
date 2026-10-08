@@ -6,13 +6,18 @@ export interface AuthSnapshot {
   version: number;
 }
 
+export interface AuthenticatedRequester {
+  <T>(route: string, init?: RequestInit): Promise<T>;
+  refreshToken: () => Promise<string>;
+}
+
 /** One refresh for concurrent 401s, with results scoped to the original session. */
 export function createAuthenticatedRequester({ read, refreshed, expired, fetcher = fetchJson }: {
   read: () => AuthSnapshot;
   refreshed: (auth: AuthResponse) => void;
   expired: () => void;
   fetcher?: typeof fetchJson;
-}) {
+}): AuthenticatedRequester {
   let flight: { version: number; origin: string; promise: Promise<string> } | null = null;
   const isUnauthorized = (error: unknown) => error instanceof ApiError && error.status === 401;
   const changed = (initial: AuthSnapshot) => {
@@ -24,7 +29,35 @@ export function createAuthenticatedRequester({ read, refreshed, expired, fetcher
     if (changed(initial)) throw new ApiError('Phiên đăng nhập đã thay đổi.', 401, 'SESSION_CHANGED');
   };
 
-  return async <T>(route: string, init: RequestInit = {}): Promise<T> => {
+  const executeRefresh = async (): Promise<string> => {
+    const initial = read();
+    if (!initial.tokens?.refreshToken) {
+      throw new ApiError('Không có refresh token.', 401, 'UNAUTHORIZED');
+    }
+    if (!flight || flight.version !== initial.version || flight.origin !== initial.origin) {
+      const refreshToken = initial.tokens.refreshToken;
+      const pending = {
+        version: initial.version,
+        origin: initial.origin,
+        promise: Promise.resolve(''),
+      };
+      pending.promise = fetcher<AuthResponse>(initial.origin, '/api/auth/refresh', {
+        method: 'POST', body: JSON.stringify({ refreshToken }),
+      }).then(auth => {
+        assertCurrent(initial);
+        refreshed(auth);
+        return auth.accessToken;
+      }).catch(error => {
+        // A transient network error should not discard a still-valid refresh token.
+        if (!changed(initial) && error instanceof ApiError && [401, 403].includes(error.status)) expired();
+        throw error;
+      }).finally(() => { if (flight === pending) flight = null; });
+      flight = pending;
+    }
+    return flight.promise;
+  };
+
+  const requester = (async <T>(route: string, init: RequestInit = {}): Promise<T> => {
     const initial = read();
     assertCurrent(initial, init.signal);
     const send = async (token?: string) => {
@@ -43,27 +76,7 @@ export function createAuthenticatedRequester({ read, refreshed, expired, fetcher
 
     let token = read().tokens!.accessToken;
     if (initial.tokens?.accessToken === token) {
-      if (!flight || flight.version !== initial.version || flight.origin !== initial.origin) {
-        const refreshToken = read().tokens!.refreshToken;
-        const pending = {
-          version: initial.version,
-          origin: initial.origin,
-          promise: Promise.resolve(''),
-        };
-        pending.promise = fetcher<AuthResponse>(initial.origin, '/api/auth/refresh', {
-          method: 'POST', body: JSON.stringify({ refreshToken }),
-        }).then(auth => {
-          assertCurrent(initial);
-          refreshed(auth);
-          return auth.accessToken;
-        }).catch(error => {
-          // A transient network error should not discard a still-valid refresh token.
-          if (!changed(initial) && error instanceof ApiError && [401, 403].includes(error.status)) expired();
-          throw error;
-        }).finally(() => { if (flight === pending) flight = null; });
-        flight = pending;
-      }
-      token = await flight.promise;
+      token = await executeRefresh();
     }
     assertCurrent(initial, init.signal);
     try { return await send(token); }
@@ -71,5 +84,8 @@ export function createAuthenticatedRequester({ read, refreshed, expired, fetcher
       if (!changed(initial) && isUnauthorized(error)) expired();
       throw error;
     }
-  };
+  }) as AuthenticatedRequester;
+
+  requester.refreshToken = executeRefresh;
+  return requester;
 }
