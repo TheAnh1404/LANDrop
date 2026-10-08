@@ -3,10 +3,14 @@ import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import http from 'node:http';
 import net from 'node:net';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve, dirname, basename } from 'node:path';
 
 import {
   parseDotEnv,
   loadServerConfig,
+  backendEnvironment,
   validateServerConfig,
   resolveLanIpv4Addresses,
   checkPortInUse,
@@ -95,6 +99,27 @@ test('validateServerConfig enforces port boundaries and prevents collisions', ()
   });
   assert.equal(collision.valid, false);
   assert.match(collision.errors[0], /Port conflict/);
+});
+
+test('Java receives file Origin settings and exactly the ports resolved by launcher preflight', () => {
+  const root = mkdtempSync(join(tmpdir(), 'landrop-launch-'));
+  try {
+    writeFileSync(join(root, '.env'), 'AUTH_PORT=3100\nREALTIME_PORT=3101\nWS_ALLOWED_ORIGINS=http://192.168.22.206:3000\n');
+    writeFileSync(join(root, '.env.local'), 'WS_AUTH_TIMEOUT_MS=12000\nWS_PORT=4101\n');
+    const config = loadServerConfig(root, { WS_PORT: '5101', ENVIRONMENT: 'test' });
+    const child = backendEnvironment(config);
+    assert.equal(child.WS_ALLOWED_ORIGINS, 'http://192.168.22.206:3000');
+    assert.equal(child.WS_AUTH_TIMEOUT_MS, '12000');
+    assert.equal(child.PORT, String(config.httpPort));
+    assert.equal(child.PORT, '3100');
+    assert.equal(child.REALTIME_PORT, String(config.wsPort));
+    assert.equal(child.WS_PORT, '5101');
+    assert.equal(child.NODE_ENV, 'test');
+  } finally {
+    assert.equal(dirname(resolve(root)), resolve(tmpdir()));
+    assert.match(basename(root), /^landrop-launch-/);
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('resolveLanIpv4Addresses excludes loopback, link-local, and IPv6', () => {

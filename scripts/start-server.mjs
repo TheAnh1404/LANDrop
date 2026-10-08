@@ -13,6 +13,7 @@ export const repositoryRoot = resolve(scriptDirectory, '..');
 export const SERVER_ENVIRONMENT_KEYS = new Set([
   'PORT', 'AUTH_PORT', 'HTTP_PORT',
   'WS_PORT', 'REALTIME_PORT',
+  'WS_ALLOWED_ORIGINS', 'WS_AUTH_TIMEOUT_MS',
   'HOST', 'BIND_HOST',
   'PROTOCOL_VERSION',
   'NODE_ENV', 'ENVIRONMENT',
@@ -90,6 +91,21 @@ export function loadServerConfig(root = repositoryRoot, inherited = process.env)
     jarPath,
     backendCommand,
     raw: env
+  };
+}
+
+/** Pass resolved file configuration to Java, with the same ports used by preflight. */
+export function backendEnvironment(config) {
+  return {
+    ...config.raw,
+    PORT: String(config.httpPort),
+    HTTP_PORT: String(config.httpPort),
+    AUTH_PORT: String(config.httpPort),
+    WS_PORT: String(config.wsPort),
+    REALTIME_PORT: String(config.wsPort),
+    HOST: config.host,
+    BIND_HOST: config.host,
+    NODE_ENV: config.environment,
   };
 }
 
@@ -538,12 +554,13 @@ export async function runServer({
   });
 
   try {
+    const childEnvironment = backendEnvironment(config);
     // 8. Compile backend if needed (fast verification)
     const prepareInvocation = resolveBackendInvocation(process.platform, config, 'prepare');
     console.log('Verifying backend compilation...');
     const compileResult = spawnSync(prepareInvocation.command, prepareInvocation.args, {
       cwd: repositoryRoot,
-      env: process.env,
+      env: childEnvironment,
       stdio: ['ignore', 'inherit', 'inherit']
     });
 
@@ -558,10 +575,10 @@ export async function runServer({
     const backendInvocation = resolveBackendInvocation(process.platform, config, 'run');
     manager.launch('backend', backendInvocation, {
       cwd: repositoryRoot,
-      env: process.env,
+      env: childEnvironment,
       stdio: ['ignore', 'inherit', 'inherit'],
       detached: true,
-      windowsHide: false
+      windowsHide: true
     });
 
     // 10. Launch external Admin UI process if configured
@@ -572,10 +589,10 @@ export async function runServer({
         : { command: '/bin/sh', args: ['-c', config.adminDevCommand] };
       manager.launch('admin', adminInvocation, {
         cwd: repositoryRoot,
-        env: process.env,
+        env: childEnvironment,
         stdio: ['ignore', 'inherit', 'inherit'],
         detached: true,
-        windowsHide: false
+        windowsHide: true
       });
     }
 
