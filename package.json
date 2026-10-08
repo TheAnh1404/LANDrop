@@ -13,7 +13,8 @@
     "web": "npm --prefix frontend run dev",
     "client": "npm --prefix frontend run dev",
     "client:ui": "npm --prefix frontend run dev",
-    "test": "node --test scripts/*.test.mjs"
+    "test": "node --test scripts/*.test.mjs",
+    "test:realtime:lan": "node scripts/realtime-lan-smoke.mjs"
   },
   "engines": {
     "node": ">=20"
