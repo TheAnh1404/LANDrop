@@ -36,6 +36,13 @@ single-flight refresh/reconnect; SESSION_EXPIRED/SESSION_REVOKED are terminal.
 Do not overwrite AUTH_REQUIRED with SESSION_REVOKED solely because of 4002.
 Use `/api/channels/:id/messages` (there is no `/api/v1` alias in this gateway).
 
+Integration follow-up on 2026-10-09: the existing AGY Client implemented the
+agreed browser flow, listeners and Chat reconciliation. Codex executed frontend
+tests/build and 14 real two-client scenarios against the full bootstrap and
+isolated PostgreSQL; details and physical-machine checklist are in
+[REALTIME_01_LAN_INTEGRATION](../guides/REALTIME_01_LAN_INTEGRATION.md).
+No wire names or payload shapes changed during integration review.
+
 ## URL and configuration
 
 Use the integrated launcher (`npm run server:backend`), not `start-auth.*`.

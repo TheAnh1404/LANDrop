@@ -270,9 +270,12 @@ runs of this suite use the direct endpoint for stable schema isolation.
 ## Remaining Client integration work and limits
 
 No backend wire-contract decision remains pending. Client acknowledged the
-4002/preceding-error rule, but its frontend implementation is outside this
-backend validation. REALTIME-01B must verify real UI/browser interactions,
-single-flight refresh/reconnect, event/history reconciliation and tab identity.
+4002/preceding-error rule. Its implementation and Client integration were
+subsequently verified with 29 API/33 realtime unit tests and 14 real client/REST/
+WS/PostgreSQL scenarios, including offline edit/delete reconciliation and refresh.
+See [the integration record](../guides/REALTIME_01_LAN_INTEGRATION.md).
+REALTIME-01B must still verify real UI/browser interactions and two physical
+machines; the user deferred that step. Browser DOM automation was unavailable.
 Configure LAN origins and proxy forwarding as described in the shared contract.
 Current workspace-role access to private-flag channels is the existing REST
 policy; a separate private ACL is not implemented. Fanout is process local,
