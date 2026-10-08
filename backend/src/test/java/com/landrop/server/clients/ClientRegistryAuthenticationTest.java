@@ -63,6 +63,44 @@ class ClientRegistryAuthenticationTest {
                 Instant.now(), 1, "1.0", "Windows", "11", "amd64", socket);
     }
 
+    @Test
+    void revokeSessionClosesAllTabsAndLateCloseKeepsOtherSessionsIndexed() {
+        ClientRegistry registry = new ClientRegistry();
+        UUID user = UUID.randomUUID();
+        SocketProbe tab1 = new SocketProbe();
+        SocketProbe tab2 = new SocketProbe();
+        SocketProbe independent = new SocketProbe();
+        registry.register(connection("tab1", "installation1", tab1.socket()));
+        registry.register(connection("tab2", "installation2", tab2.socket()));
+        registry.register(connection("independent", "installation3", independent.socket()));
+        registry.bindIdentity("tab1", user, "alice", null, "shared");
+        registry.bindIdentity("tab2", user, "alice", null, "shared");
+        registry.bindIdentity("independent", user, "alice", null, "other");
+        assertEquals(2, registry.findAllBySessionId("shared").size());
+        assertTrue(registry.disconnectSession("shared", "SESSION_REVOKED", "Revoked"));
+        assertFalse(tab1.open.get());
+        assertFalse(tab2.open.get());
+        assertTrue(independent.open.get());
+        registry.remove("tab1");
+        registry.remove("tab2");
+        assertEquals(1, registry.size());
+        assertTrue(registry.findBySessionId("other").isPresent());
+    }
+
+    @Test
+    void anotherAuthenticatedUserCannotEvictClaimedInstance() {
+        ClientRegistry registry = new ClientRegistry();
+        SocketProbe original = new SocketProbe();
+        registry.register(connection("original", "installation", original.socket()));
+        registry.bindIdentity("original", UUID.randomUUID(), "alice", null, "session-a");
+        registry.register(connection("attacker", "installation", new SocketProbe().socket()));
+        assertThrows(com.landrop.auth.exception.UnauthorizedException.class,
+                () -> registry.bindIdentity("attacker", UUID.randomUUID(), "bob", null, "session-b"));
+        assertTrue(original.open.get());
+        assertEquals("original", registry.findByInstanceId("installation").orElseThrow().connectionId());
+        assertFalse(registry.get("attacker").orElseThrow().isAuthenticated());
+    }
+
     private static final class SocketProbe {
         final AtomicBoolean open = new AtomicBoolean(true);
         final List<String> messages = new ArrayList<>();

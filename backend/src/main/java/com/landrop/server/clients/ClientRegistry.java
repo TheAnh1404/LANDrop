@@ -24,13 +24,13 @@ public class ClientRegistry {
     private final Map<String, String> instanceToConnectionId = new ConcurrentHashMap<>();
     private final Map<String, String> deviceToConnectionId = new ConcurrentHashMap<>();
     private final Map<UUID, Set<String>> userToConnectionIds = new ConcurrentHashMap<>();
-    private final Map<String, String> sessionToConnectionId = new ConcurrentHashMap<>();
+    private final Map<String, Set<String>> sessionToConnectionIds = new ConcurrentHashMap<>();
 
     /**
      * Registers a new client connection. Reconnect-friendly: if an existing connection
      * has the same clientInstanceId, the old socket is cleanly superseded.
      */
-    public void register(ClientConnection connection) {
+    public synchronized void register(ClientConnection connection) {
         Objects.requireNonNull(connection, "connection cannot be null");
 
         connectionsById.put(connection.connectionId(), connection);
@@ -68,10 +68,15 @@ public class ClientRegistry {
     }
 
     public Optional<ClientConnection> findBySessionId(String sessionId) {
-        if (sessionId == null) return Optional.empty();
-        String connId = sessionToConnectionId.get(sessionId);
-        if (connId == null) return Optional.empty();
-        return get(connId);
+        return findAllBySessionId(sessionId).stream().findFirst();
+    }
+
+    public List<ClientConnection> findAllBySessionId(String sessionId) {
+        if (sessionId == null) return List.of();
+        Set<String> ids = sessionToConnectionIds.get(sessionId);
+        if (ids == null) return List.of();
+        return ids.stream().map(connectionsById::get).filter(Objects::nonNull)
+                .filter(ClientConnection::isOpen).toList();
     }
 
     public List<ClientConnection> findByUserId(UUID userId) {
@@ -119,9 +124,22 @@ public class ClientRegistry {
     /**
      * Binds a client connection to User, Device, and Session identity (FOUNDATION-04A.8).
      */
-    public void bindIdentity(String connectionId, UUID userId, String username, String deviceId, String sessionId) {
+    public synchronized void bindIdentity(String connectionId, UUID userId, String username, String deviceId, String sessionId) {
         ClientConnection conn = connectionsById.get(connectionId);
-        if (conn == null) return;
+        if (conn == null || !conn.isOpen()) {
+            throw new com.landrop.auth.exception.UnauthorizedException("Connection is no longer active");
+        }
+        if (conn.isAuthenticated()) {
+            throw new com.landrop.auth.exception.UnauthorizedException("Connection is already authenticated");
+        }
+        ClientConnection previous = findByInstanceId(conn.clientInstanceId()).orElse(null);
+        if (previous != null && previous.isAuthenticated()
+                && (!Objects.equals(previous.userId(), userId)
+                    || !Objects.equals(previous.deviceId(), deviceId))) {
+            throw new com.landrop.auth.exception.UnauthorizedException(
+                    "Client installation belongs to another authenticated identity",
+                    com.landrop.auth.model.AuthErrorCode.DEVICE_CONFLICT);
+        }
 
         // Clean any previous binding for this connection
         cleanupIdentityIndices(conn);
@@ -137,7 +155,7 @@ public class ClientRegistry {
             deviceToConnectionId.put(deviceId, connectionId);
         }
         if (sessionId != null && !sessionId.isBlank()) {
-            sessionToConnectionId.put(sessionId, connectionId);
+            sessionToConnectionIds.computeIfAbsent(sessionId, k -> ConcurrentHashMap.newKeySet()).add(connectionId);
         }
         if (userId != null) {
             userToConnectionIds.computeIfAbsent(userId, k -> ConcurrentHashMap.newKeySet()).add(connectionId);
@@ -160,7 +178,7 @@ public class ClientRegistry {
     /**
      * Unbinds identity from connection.
      */
-    public void unbindIdentity(String connectionId) {
+    public synchronized void unbindIdentity(String connectionId) {
         ClientConnection conn = connectionsById.get(connectionId);
         if (conn != null) {
             cleanupIdentityIndices(conn);
@@ -168,7 +186,7 @@ public class ClientRegistry {
         }
     }
 
-    public int disconnectUser(UUID userId, String reasonCode, String reasonMessage) {
+    public synchronized int disconnectUser(UUID userId, String reasonCode, String reasonMessage) {
         if (userId == null) return 0;
         List<ClientConnection> connections = findByUserId(userId);
         int disconnectedCount = 0;
@@ -182,21 +200,21 @@ public class ClientRegistry {
         return disconnectedCount;
     }
 
-    public boolean disconnectSession(String sessionId, String reasonCode, String reasonMessage) {
+    public synchronized boolean disconnectSession(String sessionId, String reasonCode, String reasonMessage) {
         if (sessionId == null || sessionId.isBlank()) return false;
-        Optional<ClientConnection> connOpt = findBySessionId(sessionId);
-        if (connOpt.isPresent()) {
-            ClientConnection conn = connOpt.get();
-            closeForRevocation(conn, 4002, reasonCode, reasonMessage);
+        List<ClientConnection> sessionConnections = findAllBySessionId(sessionId);
+        for (ClientConnection conn : sessionConnections) {
+            int closeCode = "ACCOUNT_DISABLED".equals(reasonCode) ? 4003 : 4002;
+            closeForRevocation(conn, closeCode, reasonCode, reasonMessage);
             remove(conn.connectionId());
-            return true;
         }
-        return false;
+        return !sessionConnections.isEmpty();
     }
 
     private void closeForRevocation(ClientConnection conn, int closeCode, String reasonCode, String reasonMessage) {
         String message = reasonMessage != null ? reasonMessage : "Authentication session ended";
         String code = reasonCode != null ? reasonCode : "SESSION_REVOKED";
+        ServerEventLogger.log(ServerEvent.SESSION_REVOKED, conn.connectionId(), "code=" + code);
         try {
             conn.sendText(JSON.writeValueAsString(EventEnvelope.error(null, code, message)));
         } catch (Exception ignored) {
@@ -205,7 +223,7 @@ public class ClientRegistry {
         conn.close(closeCode, code + ": " + message);
     }
 
-    public Optional<ClientConnection> remove(String connectionId) {
+    public synchronized Optional<ClientConnection> remove(String connectionId) {
         if (connectionId == null) return Optional.empty();
         ClientConnection removed = connectionsById.remove(connectionId);
         if (removed != null) {
@@ -224,7 +242,11 @@ public class ClientRegistry {
         }
         String sessId = conn.sessionId();
         if (sessId != null) {
-            sessionToConnectionId.remove(sessId, conn.connectionId());
+            Set<String> ids = sessionToConnectionIds.get(sessId);
+            if (ids != null) {
+                ids.remove(conn.connectionId());
+                if (ids.isEmpty()) sessionToConnectionIds.remove(sessId, ids);
+            }
         }
         UUID uId = conn.userId();
         if (uId != null) {
@@ -276,11 +298,11 @@ public class ClientRegistry {
         return timedOut;
     }
 
-    public void clear() {
+    public synchronized void clear() {
         connectionsById.clear();
         instanceToConnectionId.clear();
         deviceToConnectionId.clear();
         userToConnectionIds.clear();
-        sessionToConnectionId.clear();
+        sessionToConnectionIds.clear();
     }
 }

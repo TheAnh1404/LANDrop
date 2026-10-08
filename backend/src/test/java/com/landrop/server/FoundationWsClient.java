@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.WebSocket;
+import java.util.Map;
 import java.util.concurrent.*;
 
 /**
@@ -24,13 +25,16 @@ public class FoundationWsClient implements WebSocket.Listener, AutoCloseable {
     }
 
     public static FoundationWsClient connect(int port, String bearerToken) throws Exception {
+        return connect(URI.create("ws://127.0.0.1:" + port),
+                bearerToken == null || bearerToken.isBlank() ? Map.of() : Map.of("Authorization", "Bearer " + bearerToken));
+    }
+
+    public static FoundationWsClient connect(URI uri, Map<String, String> headers) throws Exception {
         FoundationWsClient client = new FoundationWsClient();
         HttpClient http = HttpClient.newHttpClient();
         WebSocket.Builder builder = http.newWebSocketBuilder();
-        if (bearerToken != null && !bearerToken.isBlank()) {
-            builder.header("Authorization", "Bearer " + bearerToken);
-        }
-        client.webSocket = builder.buildAsync(URI.create("ws://127.0.0.1:" + port), client)
+        headers.forEach(builder::header);
+        client.webSocket = builder.buildAsync(uri, client)
                 .get(5, TimeUnit.SECONDS);
         return client;
     }

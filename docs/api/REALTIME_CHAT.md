@@ -1,5 +1,9 @@
 # Authenticated multi-device realtime contract
 
+> This document describes the legacy native demo launcher. Browser chat on the
+> integrated foundation gateway uses the single shared
+> [REALTIME-01 contract](REALTIME_01_CONTRACT.md), agreed with the Client agent.
+
 Backend implementation lives in `backend/.../realtime`. No Workspace CRUD or membership management API is introduced. Existing LAN TCP chat remains a separate transport demonstration, not authenticated product chat.
 
 ## Connect

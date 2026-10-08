@@ -410,7 +410,7 @@ public class ChannelChatService {
                         canonical = loadCanonicalMessage(conn, newId);
                     } else {
                         // Conflict / duplicate clientMessageId: load existing message
-                        String existingSql = "SELECT id, channel_id, content FROM messages WHERE user_id = ? AND client_message_id = ?";
+                        String existingSql = "SELECT id, channel_id, content, parent_message_id FROM messages WHERE user_id = ? AND client_message_id = ?";
                         try (PreparedStatement ps = conn.prepareStatement(existingSql)) {
                             ps.setObject(1, userId);
                             ps.setObject(2, clientMessageId);
@@ -421,7 +421,8 @@ public class ChannelChatService {
                                 UUID existingId = (UUID) rs.getObject("id");
                                 UUID existingChannel = (UUID) rs.getObject("channel_id");
                                 String existingContent = rs.getString("content");
-                                if (!existingChannel.equals(channelId) || !existingContent.equals(content)) {
+                                if (!existingChannel.equals(channelId) || !existingContent.equals(content)
+                                        || !Objects.equals(rs.getObject("parent_message_id"), replyToId)) {
                                     throw new ChatException(409, "REQUEST_CONFLICT", "Use a new clientMessageId for a different message.");
                                 }
                                 canonical = loadCanonicalMessage(conn, existingId);
@@ -455,7 +456,7 @@ public class ChannelChatService {
 
                 // Broadcast canonical message to channel room only if newly inserted
                 if (inserted) {
-                    broadcaster.broadcast(channelId, java.util.Map.of(
+                    dispatchCommitted(channelId, java.util.Map.of(
                         "type", "message.created",
                         "channelId", channelId,
                         "message", canonical
@@ -526,7 +527,7 @@ public class ChannelChatService {
                 conn.commit();
 
                 // Broadcast canonical update to channel room
-                broadcaster.broadcast(channelId, java.util.Map.of(
+                dispatchCommitted(channelId, java.util.Map.of(
                     "type", "message.updated",
                     "channelId", channelId,
                     "messageId", messageId,
@@ -584,7 +585,7 @@ public class ChannelChatService {
                 conn.commit();
 
                 // Broadcast canonical deletion event to channel room
-                broadcaster.broadcast(channelId, java.util.Map.of(
+                dispatchCommitted(channelId, java.util.Map.of(
                     "type", "message.deleted",
                     "channelId", channelId,
                     "messageId", messageId,
@@ -603,6 +604,16 @@ public class ChannelChatService {
     // =========================================================================
     // Canonical Message Loader & Row Mappers
     // =========================================================================
+
+    private void dispatchCommitted(UUID channelId, Object event) {
+        try {
+            broadcaster.broadcast(channelId, event);
+        } catch (RuntimeException unavailable) {
+            // Persistence succeeded. Clients recover missed delivery using REST history.
+            com.landrop.util.AppLogger.warn("ChannelChatService",
+                    "Realtime dispatch failed after commit for channel " + channelId);
+        }
+    }
 
     public ChatMessageDto loadCanonicalMessage(Connection conn, UUID messageId) throws SQLException {
         String sql = """

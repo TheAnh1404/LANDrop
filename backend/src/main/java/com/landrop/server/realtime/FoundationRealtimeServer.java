@@ -18,6 +18,8 @@ import org.java_websocket.WebSocket;
 import org.java_websocket.drafts.Draft;
 import org.java_websocket.drafts.Draft_6455;
 import org.java_websocket.handshake.ClientHandshake;
+import org.java_websocket.handshake.ServerHandshakeBuilder;
+import org.java_websocket.exceptions.InvalidDataException;
 import org.java_websocket.server.WebSocketServer;
 
 import java.net.InetSocketAddress;
@@ -46,6 +48,7 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
     private final long heartbeatIntervalMs;
     private final long heartbeatTimeoutMs;
     private final CompletableFuture<Void> ready = new CompletableFuture<>();
+    private volatile boolean stopping;
 
     private final ScheduledExecutorService heartbeatMonitor = Executors.newSingleThreadScheduledExecutor(r -> {
         Thread t = new Thread(r, "foundation-heartbeat-monitor");
@@ -58,6 +61,9 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
     private com.landrop.database.repository.DeviceRepository deviceRepository;
     private com.landrop.auth.repository.RefreshTokenRepository refreshTokenRepository;
     private final Map<WebSocket, String> authorizationHeaders = new ConcurrentHashMap<>();
+    private final Map<WebSocket, Instant> pendingAuthentication = new ConcurrentHashMap<>();
+    private final Set<String> allowedOrigins;
+    private final long authenticationTimeoutMs;
     private final Map<UUID, Set<String>> channelSubscribers = new ConcurrentHashMap<>();
     private volatile ChannelChatService channelChatService;
 
@@ -66,11 +72,21 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
                                     TransferCoordinator transferCoordinator,
                                     long heartbeatIntervalMs,
                                     long heartbeatTimeoutMs) {
+        this(address, clientRegistry, transferCoordinator, heartbeatIntervalMs, heartbeatTimeoutMs,
+                configuredOrigins(), com.landrop.config.AppConfig.getLong(
+                        "landrop.ws.auth.timeout.ms", "WS_AUTH_TIMEOUT_MS", 10_000L));
+    }
+
+    public FoundationRealtimeServer(InetSocketAddress address, ClientRegistry clientRegistry,
+                                    TransferCoordinator transferCoordinator, long heartbeatIntervalMs,
+                                    long heartbeatTimeoutMs, Set<String> allowedOrigins, long authenticationTimeoutMs) {
         super(address, 4, List.of(new Draft_6455(List.of(), 64 * 1024)));
         this.clientRegistry = Objects.requireNonNull(clientRegistry, "clientRegistry cannot be null");
         this.transferCoordinator = Objects.requireNonNull(transferCoordinator, "transferCoordinator cannot be null");
         this.heartbeatIntervalMs = heartbeatIntervalMs > 0 ? heartbeatIntervalMs : ProtocolConstants.DEFAULT_HEARTBEAT_INTERVAL_MS;
         this.heartbeatTimeoutMs = heartbeatTimeoutMs > 0 ? heartbeatTimeoutMs : ProtocolConstants.DEFAULT_HEARTBEAT_TIMEOUT_MS;
+        this.allowedOrigins = Set.copyOf(allowedOrigins);
+        this.authenticationTimeoutMs = authenticationTimeoutMs > 0 ? authenticationTimeoutMs : 10_000L;
         setReuseAddr(true);
         setConnectionLostTimeout(0); // We implement our own explicit application-level heartbeat protocol
     }
@@ -83,6 +99,27 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
         this.userRepository = userRepository;
         this.deviceRepository = deviceRepository;
         this.refreshTokenRepository = refreshTokenRepository;
+    }
+
+    private static Set<String> configuredOrigins() {
+        String origins = com.landrop.config.AppConfig.getString("landrop.ws.allowed.origins", "WS_ALLOWED_ORIGINS",
+                "http://localhost:3000,http://127.0.0.1:3000");
+        Set<String> result = new HashSet<>();
+        for (String origin : origins.split(",")) {
+            if (!origin.isBlank()) result.add(origin.trim());
+        }
+        return result;
+    }
+
+    @Override
+    public ServerHandshakeBuilder onWebsocketHandshakeReceivedAsServer(
+            WebSocket socket, Draft draft, ClientHandshake request) throws InvalidDataException {
+        if (request.getResourceDescriptor().contains("?")
+                || (request.hasFieldValue("Origin") && !allowedOrigins.contains(request.getFieldValue("Origin")))) {
+            ServerEventLogger.log(ServerEvent.WS_AUTH_FAILED, "Realtime upgrade rejected by Origin/query policy.");
+            throw new InvalidDataException(1008, "Realtime upgrade rejected");
+        }
+        return super.onWebsocketHandshakeReceivedAsServer(socket, draft, request);
     }
 
     /** Connects persistent workspace chat broadcasts to the authenticated client gateway. */
@@ -109,15 +146,34 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
     @Override
     public void onStart() {
         // Schedule periodic heartbeat sweep
-        long sweepInterval = Math.max(1000L, heartbeatTimeoutMs / 3);
+        long sweepInterval = Math.max(100L, Math.min(1000L, Math.min(heartbeatTimeoutMs, authenticationTimeoutMs) / 3));
         heartbeatMonitor.scheduleAtFixedRate(() -> {
             try {
+                if (stopping) return;
+                Instant now = Instant.now();
+                pendingAuthentication.forEach((socket, openedAt) -> {
+                    if (now.toEpochMilli() - openedAt.toEpochMilli() > authenticationTimeoutMs
+                            && pendingAuthentication.remove(socket, openedAt)) {
+                        sendEnvelope(socket, EventEnvelope.error(null, AuthErrorCode.AUTH_REQUIRED,
+                                "Realtime authentication deadline exceeded."));
+                        ClientConnection connection = socket.getAttachment();
+                        if (connection != null) cleanupConnection(connection.connectionId());
+                        socket.close(1008, "Authentication timeout");
+                    }
+                });
+                if (authRequired()) {
+                    for (ClientConnection connection : clientRegistry.activeConnections()) {
+                        if (stopping) break;
+                        if (connection.isAuthenticated() && !validateRuntimeSession(connection)) {
+                            cleanupConnection(connection.connectionId());
+                        }
+                    }
+                }
                 clientRegistry.sweepTimeouts(heartbeatTimeoutMs, staleConn -> {
                     ServerEventLogger.log(ServerEvent.HEARTBEAT_TIMEOUT, staleConn.connectionId(),
                             "Inactive for > " + heartbeatTimeoutMs + "ms; terminating connection.");
                     staleConn.close(4000, "Heartbeat timeout");
-                    clientRegistry.remove(staleConn.connectionId());
-                    notifyDisconnectedPeerTransfers(staleConn.connectionId());
+                    cleanupConnection(staleConn.connectionId());
                 });
             } catch (Exception e) {
                 AppLogger.warn(TAG, "Error during heartbeat sweep: " + e.getMessage());
@@ -129,12 +185,14 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
 
     @Override
     public void onOpen(WebSocket socket, ClientHandshake handshake) {
+        pendingAuthentication.put(socket, Instant.now());
         String authorization = handshake != null ? handshake.getFieldValue("Authorization") : null;
         if (authorization != null && !authorization.isBlank()) {
             authorizationHeaders.put(socket, authorization.trim());
         }
         String remote = socket.getRemoteSocketAddress() != null ? socket.getRemoteSocketAddress().toString() : "unknown";
         ServerEventLogger.log(ServerEvent.CLIENT_CONNECTED, null, "Remote: " + remote);
+        ServerEventLogger.log(ServerEvent.WS_CONNECTED, null, "Remote: " + remote);
     }
 
     @Override
@@ -169,11 +227,26 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
             }
 
             // 2. Authenticated Runtime Phase: update heartbeat
+            if (!connection.isOpen() || clientRegistry.get(connection.connectionId()).orElse(null) != connection) return;
             connection.updateHeartbeat();
+
+            if (authRequired() && !ProtocolConstants.EVENT_AUTH.equals(type)) {
+                if (!connection.isAuthenticated() && !ProtocolConstants.EVENT_HEARTBEAT.equals(type)) {
+                    if ("channel.join".equals(type)) ServerEventLogger.log(
+                            ServerEvent.CHANNEL_SUBSCRIBE_DENIED, connection.connectionId(), "Authentication required.");
+                    sendEnvelope(socket, EventEnvelope.error(requestId, AuthErrorCode.AUTH_REQUIRED,
+                            "Authenticate before using realtime services."));
+                    return;
+                }
+                if (connection.isAuthenticated() && !validateRuntimeSession(connection)) {
+                    if ("channel.join".equals(type)) ServerEventLogger.log(
+                            ServerEvent.CHANNEL_SUBSCRIBE_DENIED, connection.connectionId(), "Session validation failed.");
+                    return;
+                }
+            }
 
             switch (type) {
                 case ProtocolConstants.EVENT_HEARTBEAT -> {
-                    if (authRequired() && !validateRuntimeSession(connection)) return;
                     ServerEventLogger.log(ServerEvent.HEARTBEAT, connection.connectionId(), "Heartbeat received");
                     triggerDeviceLastSeenSync(connection);
                     sendEnvelope(socket, EventEnvelope.heartbeatAck(requestId));
@@ -237,13 +310,20 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
             return;
         }
         try {
-            if (!connection.isAuthenticated() || !chat.canAccess(connection.userId(), channelId)) {
+            if (!connection.isAuthenticated() || !authRequired() || !validateRuntimeSession(connection)
+                    || !chat.canAccess(connection.userId(), channelId)) {
+                ServerEventLogger.log(ServerEvent.CHANNEL_SUBSCRIBE_DENIED, connection.connectionId(),
+                        "channelId=" + channelId);
                 sendEnvelope(connection.socket(), EventEnvelope.error(requestId, "FORBIDDEN",
                         "Channel access is unavailable."));
                 return;
             }
-            channelSubscribers.computeIfAbsent(channelId, ignored -> ConcurrentHashMap.newKeySet())
-                    .add(connection.connectionId());
+            channelSubscribers.compute(channelId, (ignored, subscribers) -> {
+                Set<String> room = subscribers != null ? subscribers : ConcurrentHashMap.newKeySet();
+                room.add(connection.connectionId());
+                return room;
+            });
+            ServerEventLogger.log(ServerEvent.CHANNEL_SUBSCRIBED, connection.connectionId(), "channelId=" + channelId);
             sendEnvelope(connection.socket(), EventEnvelope.event("channel.joined", requestId,
                     Map.of("channelId", channelId.toString())));
         } catch (Exception error) {
@@ -344,6 +424,7 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
         if (subscribers == null || subscribers.isEmpty()) return;
 
         String eventType = eventType(event);
+        int delivered = 0;
         for (String connectionId : Set.copyOf(subscribers)) {
             ClientConnection connection = clientRegistry.get(connectionId).orElse(null);
             if (connection == null || !connection.isOpen() || !connection.isAuthenticated()) {
@@ -351,16 +432,19 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
                 continue;
             }
             try {
-                if (!chat.canAccess(connection.userId(), channelId)) {
+                if (!authRequired() || !validateRuntimeSession(connection)
+                        || !chat.canAccess(connection.userId(), channelId)) {
                     removeChannelSubscription(connectionId, channelId);
                     continue;
                 }
-                sendEnvelope(connection.socket(), EventEnvelope.event(eventType, null, event));
+                if (sendEnvelope(connection.socket(), EventEnvelope.event(eventType, null, event))) delivered++;
             } catch (Exception ignored) {
                 // Treat an unavailable authorization check as no permission.
                 removeChannelSubscription(connectionId, channelId);
             }
         }
+        ServerEventLogger.log(ServerEvent.MESSAGE_BROADCAST, "channelId=" + channelId
+                + ", event=" + eventType + ", recipients=" + delivered);
     }
 
     private static String eventType(Object event) {
@@ -372,11 +456,10 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
     }
 
     private void removeChannelSubscription(String connectionId, UUID channelId) {
-        Set<String> subscribers = channelSubscribers.get(channelId);
-        if (subscribers != null) {
+        channelSubscribers.computeIfPresent(channelId, (ignored, subscribers) -> {
             subscribers.remove(connectionId);
-            if (subscribers.isEmpty()) channelSubscribers.remove(channelId, subscribers);
-        }
+            return subscribers.isEmpty() ? null : subscribers;
+        });
     }
 
     private void removeAllChannelSubscriptions(String connectionId) {
@@ -419,19 +502,22 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
             socket
         );
 
-        socket.setAttachment(connection);
-        clientRegistry.register(connection);
+        synchronized (socket) {
+            if (!socket.isOpen() || !pendingAuthentication.containsKey(socket)) return;
+            socket.setAttachment(connection);
+            clientRegistry.register(connection);
+        }
 
         ServerEventLogger.log(ServerEvent.HANDSHAKE_OK, connectionId,
-                "Device: " + deviceName + " (v" + clientVersion + ", " + platform + ")");
+                "protocolVersion=" + protocolVer);
         ServerEventLogger.log(ServerEvent.CLIENT_HANDSHAKE_OK, connectionId,
-                "Device: " + deviceName + " (v" + clientVersion + ", " + platform + ")");
+                "protocolVersion=" + protocolVer);
 
         String authorization = authorizationHeaders.get(socket);
         String token = bearerToken(authorization);
         String deviceId = root.hasNonNull("deviceId") ? root.path("deviceId").asText() : null;
 
-        if (authRequired() && (token != null || (deviceId != null && !deviceId.isBlank()))) {
+        if (authRequired() && authorization != null) {
             if (token == null) {
                 logAuthBindFailure(connection, AuthErrorCode.AUTH_REQUIRED);
                 rejectHandshake(connection, requestId, AuthErrorCode.AUTH_REQUIRED, "Authentication is required.");
@@ -446,6 +532,7 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
             return;
         }
 
+        if (!authRequired()) pendingAuthentication.remove(socket);
         sendEnvelope(socket, EventEnvelope.welcome(connectionId, ProtocolConstants.SERVER_VERSION,
             ProtocolConstants.PROTOCOL_VERSION, heartbeatIntervalMs));
     }
@@ -600,15 +687,17 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
 
     @Override
     public void onClose(WebSocket socket, int code, String reason, boolean remote) {
-        authorizationHeaders.remove(socket);
-        ClientConnection connection = socket.getAttachment();
-        if (connection != null) {
-            String connId = connection.connectionId();
-            removeAllChannelSubscriptions(connId);
-            clientRegistry.remove(connId);
-            notifyDisconnectedPeerTransfers(connId);
-            ServerEventLogger.log(ServerEvent.CLIENT_DISCONNECTED, connId,
-                    "Code: " + code + ", Reason: " + (reason != null ? reason : "none") + ", Remote: " + remote);
+        synchronized (socket) {
+            authorizationHeaders.remove(socket);
+            pendingAuthentication.remove(socket);
+            ClientConnection connection = socket.getAttachment();
+            if (connection != null) {
+                String connId = connection.connectionId();
+                cleanupConnection(connId);
+                ServerEventLogger.log(ServerEvent.CLIENT_DISCONNECTED, connId,
+                        "Code: " + code + ", Remote: " + remote);
+                ServerEventLogger.log(ServerEvent.WS_DISCONNECTED, connId, "Code: " + code + ", Remote: " + remote);
+            }
         }
     }
 
@@ -623,13 +712,31 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
 
     @Override
     public void stop(int timeout) throws InterruptedException {
-        for (ClientConnection connection : clientRegistry.activeConnections()) {
-            sendEnvelope(connection.socket(), EventEnvelope.error(null, ProtocolConstants.ERR_SERVER_SHUTDOWN,
+        stopping = true;
+        for (WebSocket socket : getConnections()) {
+            sendEnvelope(socket, EventEnvelope.error(null, ProtocolConstants.ERR_SERVER_SHUTDOWN,
                     "Server is shutting down."));
-            connection.close(ProtocolConstants.CLOSE_SERVER_SHUTDOWN, ProtocolConstants.ERR_SERVER_SHUTDOWN);
+            ClientConnection connection = socket.getAttachment();
+            if (connection != null) connection.close(ProtocolConstants.CLOSE_SERVER_SHUTDOWN, ProtocolConstants.ERR_SERVER_SHUTDOWN);
+            else socket.close(ProtocolConstants.CLOSE_SERVER_SHUTDOWN, ProtocolConstants.ERR_SERVER_SHUTDOWN);
         }
         heartbeatMonitor.shutdownNow();
+        heartbeatMonitor.awaitTermination(Math.max(1000L, timeout), TimeUnit.MILLISECONDS);
         super.stop(timeout);
+        pendingAuthentication.clear();
+        authorizationHeaders.clear();
+        channelSubscribers.clear();
+        clientRegistry.clear();
+    }
+
+    private void cleanupConnection(String connectionId) {
+        removeAllChannelSubscriptions(connectionId);
+        clientRegistry.remove(connectionId);
+        notifyDisconnectedPeerTransfers(connectionId);
+    }
+
+    public int subscriptionCount() {
+        return channelSubscribers.values().stream().mapToInt(Set::size).sum();
     }
 
     private void notifyDisconnectedPeerTransfers(String disconnectedConnId) {
@@ -649,9 +756,9 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
     }
 
     private void handleAuth(ClientConnection connection, JsonNode root, String requestId) {
-        if (authRequired()) {
+        if (connection.isAuthenticated()) {
             sendEnvelope(connection.socket(), EventEnvelope.error(requestId, AuthErrorCode.UNAUTHORIZED,
-                "Authenticate with the WebSocket Authorization header during hello."));
+                "Connection is already authenticated; reconnect to change credentials."));
             return;
         }
         JsonNode payload = root.path("payload");
@@ -667,6 +774,7 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
         }
 
         if (token == null || token.isBlank()) {
+            logAuthBindFailure(connection, AuthErrorCode.UNAUTHORIZED);
             sendEnvelope(connection.socket(), EventEnvelope.error(requestId, AuthErrorCode.UNAUTHORIZED, "Missing authentication token in payload."));
             return;
         }
@@ -688,6 +796,7 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
 
             Optional<User> userOpt = userRepository.findById(userId);
             if (userOpt.isEmpty()) {
+                logAuthBindFailure(connection, AuthErrorCode.UNAUTHORIZED);
                 sendEnvelope(connection.socket(), EventEnvelope.error(requestId, AuthErrorCode.UNAUTHORIZED, "User not found."));
                 return false;
             }
@@ -707,9 +816,20 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
                 throw new ForbiddenException("System administrators must use the Server Control Center", AuthErrorCode.ADMIN_LOGIN_REQUIRED);
             }
 
-            // Resolve and prove the device belongs to the authenticated user and installation.
+            // Browser event auth derives its optional device from the signed session.
             String resolvedDeviceId = providedDeviceId;
-            if (resolvedDeviceId == null || resolvedDeviceId.isBlank()) {
+            com.landrop.auth.model.RefreshToken verifiedSession = null;
+            if (authRequired()) {
+                verifiedSession = SessionVerifier.requireActive(refreshTokenRepository, claims);
+                if (!authenticatedWelcome) {
+                    if (providedDeviceId != null && !providedDeviceId.isBlank()
+                            && !providedDeviceId.equals(verifiedSession.deviceId())) {
+                        throw new UnauthorizedException("Device does not match this session", AuthErrorCode.DEVICE_CONFLICT);
+                    }
+                    resolvedDeviceId = verifiedSession.deviceId();
+                }
+            }
+            if (!authRequired() && (resolvedDeviceId == null || resolvedDeviceId.isBlank())) {
                 if (deviceRepository != null && connection.clientInstanceId() != null) {
                     var devOpt = deviceRepository.findByClientInstanceId(connection.clientInstanceId());
                     if (devOpt.isPresent()) {
@@ -722,13 +842,16 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
             }
 
             if (authRequired()) {
-                if (resolvedDeviceId == null || resolvedDeviceId.isBlank()) {
+                if (authenticatedWelcome && (resolvedDeviceId == null || resolvedDeviceId.isBlank())) {
                     throw new UnauthorizedException("An enrolled device is required", AuthErrorCode.DEVICE_NOT_FOUND);
                 }
-                Device device = deviceRepository.findById(resolvedDeviceId)
-                    .orElseThrow(() -> new UnauthorizedException("Device not found", AuthErrorCode.DEVICE_NOT_FOUND));
-                if (!userId.equals(device.userId()) || !connection.clientInstanceId().equals(device.clientInstanceId())) {
-                    throw new UnauthorizedException("Device does not match this user and client installation", AuthErrorCode.DEVICE_CONFLICT);
+                if (resolvedDeviceId != null && !resolvedDeviceId.isBlank()) {
+                    Device device = deviceRepository.findById(resolvedDeviceId)
+                            .orElseThrow(() -> new UnauthorizedException("Device not found", AuthErrorCode.DEVICE_NOT_FOUND));
+                    if (!userId.equals(device.userId()) || (authenticatedWelcome
+                            && !connection.clientInstanceId().equals(device.clientInstanceId()))) {
+                        throw new UnauthorizedException("Device does not match this user and client installation", AuthErrorCode.DEVICE_CONFLICT);
+                    }
                 }
             }
 
@@ -737,8 +860,8 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
                 if (resolvedSessionId == null || resolvedSessionId.isBlank()) {
                     throw new UnauthorizedException("Session binding is missing", AuthErrorCode.SESSION_EXPIRED);
                 }
-                var session = SessionVerifier.requireActive(refreshTokenRepository, claims);
-                if (!resolvedDeviceId.equals(session.deviceId())) {
+                var session = verifiedSession;
+                if (!Objects.equals(resolvedDeviceId, session.deviceId())) {
                     throw new UnauthorizedException("Session is not bound to this enrolled device", AuthErrorCode.DEVICE_CONFLICT);
                 }
                 refreshTokenRepository.updateLastSeen(session.id(), Instant.now());
@@ -748,7 +871,11 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
             }
 
             // Bind in clientRegistry
+            connection.setAccessTokenExpiresAt(claims.expiresAt());
             clientRegistry.bindIdentity(connection.connectionId(), userId, user.username(), resolvedDeviceId, resolvedSessionId);
+            pendingAuthentication.remove(connection.socket());
+            authorizationHeaders.remove(connection.socket());
+            ServerEventLogger.log(ServerEvent.WS_AUTHENTICATED, connection.connectionId(), "userId=" + userId);
             OperationalLogService.getInstance().info("AUTH_BIND_SUCCESS", userId.toString(),
                     connection.connectionId(), "Authenticated realtime connection bound to session and device.");
 
@@ -848,12 +975,23 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
     }
 
     private boolean validateRuntimeSession(ClientConnection connection) {
-        if (!connection.isAuthenticated()) {
-            return true;
+        if (stopping || !connection.isOpen() || !connection.isAuthenticated()) {
+            return false;
         }
         try {
+            Instant expiresAt = connection.accessTokenExpiresAt();
+            if (expiresAt == null || !Instant.now().isBefore(expiresAt)) {
+                sendEnvelope(connection.socket(), EventEnvelope.error(null, AuthErrorCode.UNAUTHORIZED,
+                        "Access token expired; refresh and reconnect."));
+                connection.close(4002, AuthErrorCode.UNAUTHORIZED);
+                cleanupConnection(connection.connectionId());
+                return false;
+            }
             UUID sessionId = UUID.fromString(connection.sessionId());
-            SessionVerifier.requireActive(refreshTokenRepository, sessionId, connection.userId());
+            var session = SessionVerifier.requireActive(refreshTokenRepository, sessionId, connection.userId());
+            if (!Objects.equals(session.deviceId(), connection.deviceId())) {
+                throw new UnauthorizedException("Session device binding changed", AuthErrorCode.DEVICE_CONFLICT);
+            }
             User user = userRepository.findById(connection.userId())
                     .orElseThrow(() -> new UnauthorizedException("User no longer exists"));
             if (user.isDisabled()) {
@@ -873,17 +1011,20 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
     }
 
     private void logAuthBindFailure(ClientConnection connection, String code) {
+        ServerEventLogger.log(ServerEvent.WS_AUTH_FAILED, connection.connectionId(), "code=" + code);
         OperationalLogService.getInstance().warn("AUTH_BIND_FAILED", "SYSTEM",
                 connection.connectionId(), "Realtime authentication rejected: " + code);
     }
 
-    private void sendEnvelope(WebSocket socket, EventEnvelope envelope) {
+    private boolean sendEnvelope(WebSocket socket, EventEnvelope envelope) {
         if (socket != null && socket.isOpen()) {
             try {
                 socket.send(objectMapper.writeValueAsString(envelope));
+                return true;
             } catch (Exception e) {
-                AppLogger.warn(TAG, "Failed to serialize and send event envelope: " + e.getMessage());
+                AppLogger.warn(TAG, "Failed to serialize or send realtime envelope.");
             }
         }
+        return false;
     }
 }

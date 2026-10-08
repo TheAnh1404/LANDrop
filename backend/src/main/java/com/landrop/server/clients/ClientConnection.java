@@ -34,6 +34,7 @@ public final class ClientConnection {
     private final AtomicReference<String> deviceId = new AtomicReference<>(null);
     private final AtomicReference<String> sessionId = new AtomicReference<>(null);
     private final AtomicReference<Instant> authenticatedAt = new AtomicReference<>(null);
+    private final AtomicReference<Instant> accessTokenExpiresAt = new AtomicReference<>(null);
     private final AtomicReference<Instant> lastDeviceSeenSyncAt = new AtomicReference<>(Instant.EPOCH);
     private final AtomicReference<Instant> lastSessionSeenSyncAt = new AtomicReference<>(Instant.EPOCH);
 
@@ -165,12 +166,20 @@ public final class ClientConnection {
         return authenticatedAt.get();
     }
 
+    public Instant accessTokenExpiresAt() {
+        return accessTokenExpiresAt.get();
+    }
+
+    public void setAccessTokenExpiresAt(Instant expiresAt) {
+        accessTokenExpiresAt.set(expiresAt);
+    }
+
     public void bindIdentity(UUID userId, String username, String deviceId, String sessionId) {
-        this.userId.set(userId);
         this.username.set(username);
         this.deviceId.set(deviceId);
         this.sessionId.set(sessionId);
         this.authenticatedAt.set(Instant.now());
+        this.userId.set(userId);
     }
 
     public void unbindIdentity() {
@@ -179,6 +188,7 @@ public final class ClientConnection {
         this.deviceId.set(null);
         this.sessionId.set(null);
         this.authenticatedAt.set(null);
+        this.accessTokenExpiresAt.set(null);
     }
 
     public boolean shouldUpdateDeviceLastSeen(long throttleMs) {
