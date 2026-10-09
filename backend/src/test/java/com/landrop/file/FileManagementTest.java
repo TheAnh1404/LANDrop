@@ -55,7 +55,7 @@ class FileManagementTest {
     private FileManagementService fileService;
     private TransferCoordinationService transferService;
     private RealtimeServer realtimeServer;
-    private AuthHttpServer httpServer;
+    private com.sun.net.httpserver.HttpServer httpServer;
     private HttpClient http;
     private final List<WsProbe> probes = new ArrayList<>();
 
@@ -107,17 +107,23 @@ class FileManagementTest {
         realtimeServer.setTransferService(transferService);
 
         // HTTP Server
-        httpServer = new AuthHttpServer(0, null, new AuthMiddleware(JWT),
-            new WorkspaceService() {
-                @Override public WorkspaceView create(UUID userId, String name, String description) {
-                    var w = new Workspace(workspaceId, name, "slug", description, userId, Instant.now(), Instant.now());
-                    return new WorkspaceView(w, WorkspaceRole.OWNER);
-                }
-            },
-            null,
-            fileService,
-            transferService
-        );
+        // Mount only the production routes under test; avoid unrelated database-backed defaults.
+        var middleware = new AuthMiddleware(JWT);
+        var mapper = AuthHttpServer.createObjectMapper();
+        httpServer = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var workspaceService = new WorkspaceService(null) {
+            @Override public WorkspaceView create(UUID userId, String name, String description) {
+                var w = new Workspace(workspaceId, name, "slug", description, userId, Instant.now(), Instant.now());
+                return new WorkspaceView(w, WorkspaceRole.OWNER);
+            }
+        };
+        var unusedChat = new com.landrop.chat.service.ChannelChatService(() -> {
+            throw new SQLException("Chat is outside this fixture");
+        }, null);
+        var fileRoutes = new com.landrop.file.server.FileHttpServer(middleware, fileService, transferService, mapper);
+        new com.landrop.workspace.http.WorkspaceHttpServer(middleware, workspaceService, unusedChat,
+                fileRoutes, mapper).register(httpServer);
+        fileRoutes.register(httpServer);
         httpServer.start();
         http = HttpClient.newHttpClient();
     }
@@ -495,7 +501,7 @@ class FileManagementTest {
 
     private HttpResponse<String> httpSend(String method, String path, User user, Object body) throws Exception {
         var builder = HttpRequest.newBuilder()
-            .uri(URI.create("http://127.0.0.1:" + httpServer.getPort() + path))
+            .uri(URI.create("http://127.0.0.1:" + httpServer.getAddress().getPort() + path))
             .header("Authorization", "Bearer " + token(user))
             .header("Content-Type", "application/json");
 

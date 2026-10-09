@@ -52,8 +52,21 @@ public final class AppLogger {
 
     private static volatile Level currentLevel = Level.fromString(AppConfig.getLogLevel());
     private static volatile boolean includeTimestamps = AppConfig.getBoolean("landrop.log.timestamps", "LANDROP_LOG_TIMESTAMPS", false);
+    private static final java.util.List<java.util.function.Consumer<String>> LOG_LISTENERS = new java.util.concurrent.CopyOnWriteArrayList<>();
 
     private AppLogger() {}
+
+    public static void addLogListener(java.util.function.Consumer<String> listener) {
+        if (listener != null) {
+            LOG_LISTENERS.add(listener);
+        }
+    }
+
+    public static void removeLogListener(java.util.function.Consumer<String> listener) {
+        if (listener != null) {
+            LOG_LISTENERS.remove(listener);
+        }
+    }
 
     public static Level getLevel() {
         return currentLevel;
@@ -136,7 +149,15 @@ public final class AppLogger {
         }
 
         sb.append(sanitizeMessage(message));
-        out.println(sb);
+        String logLine = sb.toString();
+        out.println(logLine);
+        if (!LOG_LISTENERS.isEmpty()) {
+            for (java.util.function.Consumer<String> listener : LOG_LISTENERS) {
+                try {
+                    listener.accept(logLine);
+                } catch (Throwable ignored) {}
+            }
+        }
     }
 
     /**

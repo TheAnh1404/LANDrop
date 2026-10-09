@@ -63,6 +63,25 @@
             <version>2.0.13</version>
         </dependency>
 
+        <!-- FlatLaf Modern Swing Look and Feel for Server Desktop App -->
+        <dependency>
+            <groupId>com.formdev</groupId>
+            <artifactId>flatlaf</artifactId>
+            <version>3.5.4</version>
+        </dependency>
+
+        <!-- ZXing Core and JavaSE for QR Code generation in Desktop App -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>core</artifactId>
+            <version>3.5.3</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>javase</artifactId>
+            <version>3.5.3</version>
+        </dependency>
+
         <!-- JUnit 5 for Unit and Integration Testing -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>
@@ -107,7 +126,7 @@
                 <configuration>
                     <archive>
                         <manifest>
-                            <mainClass>com.landrop.network.Main</mainClass>
+                            <mainClass>com.landrop.server.desktop.ServerDesktopApp</mainClass>
                         </manifest>
                     </archive>
                 </configuration>

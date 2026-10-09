@@ -57,7 +57,7 @@ class PersistentChatTest {
 
     private InMemoryRealtimeStore store;
     private RealtimeServer realtimeServer;
-    private AuthHttpServer httpServer;
+    private com.sun.net.httpserver.HttpServer httpServer;
     private HttpClient http;
     private final List<WsProbe> probes = new ArrayList<>();
 
@@ -142,15 +142,20 @@ class PersistentChatTest {
             }
         };
 
-        httpServer = new AuthHttpServer(0, null, new AuthMiddleware(JWT),
-            new WorkspaceService() {
-                @Override public WorkspaceView create(UUID userId, String name, String description) {
-                    var w = new Workspace(workspaceId, name, "slug", description, userId, Instant.now(), Instant.now());
-                    return new WorkspaceView(w, WorkspaceRole.OWNER);
-                }
-            },
-            chatService
-        );
+        // Mount only the production routes under test; avoid unrelated database-backed defaults.
+        var middleware = new AuthMiddleware(JWT);
+        var mapper = AuthHttpServer.createObjectMapper();
+        httpServer = com.sun.net.httpserver.HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        var workspaceService = new WorkspaceService(null) {
+            @Override public WorkspaceView create(UUID userId, String name, String description) {
+                var w = new Workspace(workspaceId, name, "slug", description, userId, Instant.now(), Instant.now());
+                return new WorkspaceView(w, WorkspaceRole.OWNER);
+            }
+        };
+        var unusedFileRoutes = new com.landrop.file.server.FileHttpServer(middleware, null, null, mapper);
+        new com.landrop.workspace.http.WorkspaceHttpServer(middleware, workspaceService, chatService,
+                unusedFileRoutes, mapper).register(httpServer);
+        new com.landrop.chat.server.ChatHttpServer(middleware, chatService, mapper).register(httpServer);
         httpServer.start();
         http = HttpClient.newHttpClient();
     }
@@ -176,7 +181,7 @@ class PersistentChatTest {
     }
 
     private JsonNode httpGet(String path, User user) throws Exception {
-        var req = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + httpServer.getPort() + path))
+        var req = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + httpServer.getAddress().getPort() + path))
             .header("Authorization", "Bearer " + JWT.generateAccessToken(user))
             .GET()
             .build();
@@ -185,7 +190,7 @@ class PersistentChatTest {
     }
 
     private HttpResponse<String> httpSend(String method, String path, User user, Object body) throws Exception {
-        var builder = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + httpServer.getPort() + path))
+        var builder = HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + httpServer.getAddress().getPort() + path))
             .header("Authorization", "Bearer " + JWT.generateAccessToken(user));
         if (body != null) {
             builder.header("Content-Type", "application/json");

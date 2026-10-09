@@ -218,6 +218,7 @@ public class ServerBootstrap {
         );
         realtimeServer.setAuthDependencies(this.jwtService, this.userRepository, this.deviceRepository, this.refreshTokenRepository);
         realtimeServer.setChannelChatService(this.channelChatService);
+        realtimeServer.setSignalingWorkspaceRepository(this.workspaceRepository);
         if (this.channelChatService != null) this.channelChatService.setBroadcaster(realtimeServer);
         realtimeServer.start();
         realtimeServer.awaitReady();

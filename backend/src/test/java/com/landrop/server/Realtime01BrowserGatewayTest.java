@@ -234,6 +234,16 @@ class Realtime01BrowserGatewayTest {
     }
 
     @Test
+    void lanOriginIsAllowedBeforeUpgrade() throws Exception {
+        URI uri = URI.create("ws://127.0.0.1:" + server.getPort());
+        try (var client = FoundationWsClient.connect(uri, Map.of("Origin", "http://192.168.1.230:3000"))) {
+            client.sendJson(Map.of("type", "hello", "protocolVersion", 1));
+            var welcome = receive(client);
+            assertEquals("welcome", welcome.path("type").asText());
+        }
+    }
+
+    @Test
     void disabledUserCannotBindAndExistingSocketIsClosed() throws Exception {
         var existing = bind(alice, aliceSession);
         users.put(alice.id(), alice.withStatus(User.STATUS_DISABLED));

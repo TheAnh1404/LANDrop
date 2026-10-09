@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LANDrop - Cổng Truy Cập & Truyền Tệp Nội Bộ LAN</title>
+  <style>
+    :root {
+      --bg-main: #0a0f1d;
+      --bg-card: #111827;
+      --bg-card-hover: #1e293b;
+      --border: #1f2937;
+      --border-accent: #0284c7;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-primary: #0284c7;
+      --accent-hover: #0369a1;
+      --accent-sky: #38bdf8;
+      --accent-success: #10b981;
+      --accent-purple: #8b5cf6;
+      --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      font-family: var(--font-family);
+      line-height: 1.6;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    .container {
+      max-width: 840px;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 1.75rem;
+    }
+    header {
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand-mark {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, #0284c7, #38bdf8);
+      color: white;
+      font-weight: 800;
+      font-size: 1.5rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 10px;
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.4);
+    }
+    .brand-title {
+      font-size: 2rem;
+      font-weight: 800;
+      letter-spacing: -0.03em;
+    }
+    .brand-period { color: var(--accent-sky); }
+    .tagline {
+      color: var(--text-muted);
+      font-size: 1rem;
+    }
+    .cards-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+      gap: 1.5rem;
+    }
+    .card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 1.75rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 1.25rem;
+      transition: transform 0.2s, border-color 0.2s, box-shadow 0.2s;
+      position: relative;
+      overflow: hidden;
+    }
+    .card:hover {
+      border-color: #334155;
+      transform: translateY(-2px);
+      box-shadow: 0 12px 24px -8px rgba(0, 0, 0, 0.5);
+    }
+    .card-client {
+      border-color: var(--border-accent);
+      background: linear-gradient(180deg, rgba(2, 132, 199, 0.08) 0%, rgba(17, 24, 39, 1) 100%);
+    }
+    .card-header {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.2rem 0.6rem;
+      border-radius: 9999px;
+      width: fit-content;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+    .badge-client {
+      background: rgba(2, 132, 199, 0.2);
+      color: var(--accent-sky);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+    }
+    .badge-admin {
+      background: rgba(139, 92, 246, 0.2);
+      color: #c084fc;
+      border: 1px solid rgba(139, 92, 246, 0.3);
+    }
+    .card-title {
+      font-size: 1.35rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+    .card-desc {
+      color: var(--text-muted);
+      font-size: 0.925rem;
+      line-height: 1.5;
+    }
+    .card-features {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 0.4rem;
+      font-size: 0.85rem;
+      color: #cbd5e1;
+    }
+    .card-features li::before {
+      content: "✓ ";
+      color: var(--accent-success);
+      font-weight: bold;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      padding: 0.75rem 1.25rem;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.15s ease-in-out;
+      border: none;
+    }
+    .btn-primary {
+      background-color: var(--accent-primary);
+      color: white;
+      box-shadow: 0 4px 12px rgba(2, 132, 199, 0.3);
+    }
+    .btn-primary:hover {
+      background-color: var(--accent-hover);
+      box-shadow: 0 6px 16px rgba(2, 132, 199, 0.4);
+    }
+    .btn-secondary {
+      background-color: var(--bg-card-hover);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover {
+      background-color: #334155;
+      border-color: #475569;
+    }
+    .quick-links {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 1rem;
+      font-size: 0.825rem;
+      color: var(--text-muted);
+    }
+    .quick-links a {
+      color: var(--accent-sky);
+      text-decoration: none;
+    }
+    .quick-links a:hover {
+      text-decoration: underline;
+    }
+    footer {
+      text-align: center;
+      font-size: 0.8rem;
+      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      padding-top: 0.5rem;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      font-size: 0.8rem;
+      color: var(--accent-success);
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      background-color: var(--accent-success);
+      border-radius: 50%;
+      box-shadow: 0 0 8px var(--accent-success);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="brand">
+        <span class="brand-mark">L</span>
+        <h1 class="brand-title">LANDrop<span class="brand-period">.</span></h1>
+      </div>
+      <p class="tagline">Không gian kết nối & chia sẻ tệp tin tức thời trong mạng LAN</p>
+    </header>
+
+    <div class="cards-grid">
+      <!-- Card Dành Cho Người Dùng / Client -->
+      <div class="card card-client">
+        <div class="card-header">
+          <span class="badge badge-client">Dành Cho Người Dùng</span>
+          <h2 class="card-title">🚀 Ứng Dụng Client Web</h2>
+          <p class="card-desc">
+            Dành cho máy tính, điện thoại di động trong mạng WiFi/LAN. Đăng nhập hoặc tạo tài khoản thành viên để kết nối và trao đổi dữ liệu.
+          </p>
+        </div>
+        <ul class="card-features">
+          <li>Truyền tệp WebRTC P2P tốc độ cao không giới hạn kích thước</li>
+          <li>Chat phòng làm việc và trao đổi nhóm thời gian thực</li>
+          <li>Không cần tài khoản quản trị viên (Admin)</li>
+        </ul>
+        <button class="btn btn-primary" id="btn-open-client">
+          Mở Giao Diện Người Dùng &rarr;
+        </button>
+        <div class="quick-links">
+          <a href="#" id="link-direct-login">Đăng nhập thành viên</a>
+          <span>&bull;</span>
+          <a href="#" id="link-direct-register">Tạo tài khoản mới</a>
+        </div>
+      </div>
+
+      <!-- Card Dành Cho Quản Trị Viên / Admin -->
+      <div class="card">
+        <div class="card-header">
+          <span class="badge badge-admin">Dành Cho Quản Trị Viên</span>
+          <h2 class="card-title">🛡️ Bảng Điều Khiển Admin</h2>
+          <p class="card-desc">
+            Dành cho người sở hữu máy chủ để giám sát phiên kết nối, quản lý phân quyền và kiểm tra nhật ký vận hành.
+          </p>
+        </div>
+        <ul class="card-features">
+          <li>Theo dõi danh sách thiết bị và phiên làm việc</li>
+          <li>Quản lý danh sách người dùng và nhóm workspace</li>
+          <li>Xem nhật ký hoạt động hệ thống (System Logs)</li>
+        </ul>
+        <a href="/admin" class="btn btn-secondary">
+          Vào Trang Quản Trị (/admin) &rarr;
+        </a>
+        <div class="quick-links">
+          <span>Yêu cầu quyền SYSTEM_ADMIN (admin / admin123)</span>
+        </div>
+      </div>
+    </div>
+
+    <footer>
+      <div>
+        <span class="status-pill">
+          <span class="status-dot"></span>
+          LANDrop Server đang hoạt động trên mạng LAN
+        </span>
+      </div>
+      <div id="lan-info">Đang xác định địa chỉ máy chủ...</div>
+    </footer>
+  </div>
+
+  <script>
+    (function() {
+      var hostname = window.location.hostname;
+      var currentPort = window.location.port;
+      var protocol = window.location.protocol;
+      var origin = window.location.origin;
+
+      // Ước lượng cổng client web frontend (mặc định cổng 3000 nếu backend là 3100, hoặc cùng origin)
+      var clientPort = (currentPort === '3100' || currentPort === '3001') ? '3000' : '3000';
+      var clientBaseUrl = protocol + '//' + hostname + ':' + clientPort;
+      var connectUrl = clientBaseUrl + '/connect?server=' + encodeURIComponent(origin);
+      var loginUrl = clientBaseUrl + '/auth/login';
+      var registerUrl = clientBaseUrl + '/auth/register';
+
+      document.getElementById('btn-open-client').onclick = function() {
+        window.location.href = connectUrl;
+      };
+
+      document.getElementById('link-direct-login').onclick = function(e) {
+        e.preventDefault();
+        window.location.href = loginUrl;
+      };
+
+      document.getElementById('link-direct-register').onclick = function(e) {
+        e.preventDefault();
+        window.location.href = registerUrl;
+      };
+
+      document.getElementById('lan-info').textContent =
+        'Địa chỉ Backend: ' + origin + ' | Cổng Client Web: ' + clientBaseUrl;
+    })();
+  </script>
+</body>
+</html>

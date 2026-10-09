@@ -20,24 +20,22 @@ npm run build
 npm --prefix frontend run start
 ```
 
-## Chạy backend
+## Chạy LANDrop Server (Desktop App)
 
 Yêu cầu JDK 21 và Maven 3.9+. Có thể thay `mvn` bằng `.\mvnw.cmd` trên Windows hoặc `./mvnw` trên Linux/macOS.
 
 ```powershell
 mvn -pl backend -am package -DskipTests
-npm run server:backend
+npm run server
 ```
 
-Backend mặc định dùng HTTP `3000`, WebSocket `3001`, admin HTML tại `/admin`. Khi chạy cùng frontend trên một máy, đổi backend sang HTTP `3100`, WebSocket `3101`:
-
-```powershell
-$env:PORT = '3100'
-$env:WS_PORT = '3101'
-npm run server:backend
-```
-
-`npm run server` mở thêm admin HTML của backend; `npm run server:admin` mở trang của server đã chạy. Admin Next.js tại `/admin` là giao diện riêng, gọi API bằng tài khoản SYSTEM_ADMIN; admin HTML của Java vẫn được giữ.
+Lệnh `npm run server` sẽ khởi chạy **LANDrop Server Desktop App** (ứng dụng máy tính có cửa sổ GUI hiện đại):
+- **Cấp URL & Mã QR cho Client:** Hiển thị nổi bật địa chỉ URL trong mạng LAN (ví dụ: `http://192.168.1.15:3000`) cùng mã **QR Code** để các thiết bị khác (điện thoại, máy tính khác) quét hoặc mở trình duyệt truy cập ngay lập tức.
+- **Bảng điều khiển máy chủ:** Bật/Tắt server, xem danh sách client kết nối thời gian thực, tiến trình truyền file P2P, realtime log console, và hỗ trợ thu nhỏ xuống khay hệ thống (System Tray).
+- **Chế độ Headless/CLI:** Dành cho máy chủ Docker / CI / không màn hình:
+  ```powershell
+  npm run server:headless
+  ```
 
 Tạo `.env` từ [.env.example](.env.example), cấu hình PostgreSQL và JWT secrets để dùng tài khoản, workspace và chat bền vững. Áp dụng SQL migrations trước:
 

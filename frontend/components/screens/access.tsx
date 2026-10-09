@@ -16,7 +16,26 @@ export function ConnectScreen() {
   const [url, setUrl] = useState(serverInfo.serverUrl);
   const [busy, setBusy] = useState(false);
   const router = useRouter();
-  useEffect(() => { if (ready) setUrl(serverInfo.serverUrl); }, [ready, serverInfo.serverUrl]);
+  useEffect(() => {
+    if (!ready) return;
+    const params = new URLSearchParams(window.location.search);
+    const serverParam = params.get('server');
+    if (serverParam) {
+      setUrl(serverParam);
+      setBusy(true);
+      connectServer(serverParam)
+        .then(ok => { if (ok) router.push('/auth/login'); })
+        .finally(() => setBusy(false));
+      return;
+    }
+    if (typeof window !== 'undefined' && window.location.hostname !== 'localhost' && window.location.hostname !== '127.0.0.1') {
+      const currentPort = window.location.port;
+      const targetBackendPort = currentPort === '3000' ? '3100' : (currentPort || '3100');
+      setUrl(`${window.location.protocol}//${window.location.hostname}:${targetBackendPort}`);
+    } else {
+      setUrl(serverInfo.serverUrl);
+    }
+  }, [ready, serverInfo.serverUrl, connectServer, router]);
   return <AccessFrame><div className="auth-form"><p className="eyebrow">BẮT ĐẦU LÀM VIỆC</p><h2>Kết nối với nhóm của bạn</h2><p>Nhập địa chỉ backend LANDrop. Khi kết nối thành công, bạn có thể đăng nhập vào không gian làm việc.</p>{error && <Notice danger>{error}</Notice>}<form className="form-stack" onSubmit={async event => { event.preventDefault(); setBusy(true); try { if (await connectServer(url)) router.push('/auth/login'); } finally { setBusy(false); } }}><Field label="Địa chỉ server" placeholder="http://localhost:3100" value={url} onChange={event => setUrl(event.target.value)} required autoComplete="url" hint="Chạy frontend và backend trên cùng máy: frontend 3000, backend 3100." /><Action type="submit" busy={busy} disabled={!ready}>Kết nối server <ArrowRight size={15} /></Action></form><div className="auth-divider">hoặc xem giao diện trước</div><Action tone="secondary" className="w-full" disabled={!ready} onClick={() => { enterDemo(); router.push('/workspaces'); }}>Khám phá bản demo</Action><p className="auth-form-footer">Demo sử dụng dữ liệu mẫu và không kết nối database.</p></div></AccessFrame>;
 }
 
@@ -43,6 +62,14 @@ export function RegisterScreen() {
 export function LandingScreen() {
   const { ready, user } = useSession();
   const router = useRouter();
-  useEffect(() => { if (ready) router.replace(user ? '/workspaces' : '/connect'); }, [ready, user, router]);
+  useEffect(() => {
+    if (!ready) return;
+    if (user) {
+      router.replace('/workspaces');
+    } else {
+      const search = typeof window !== 'undefined' ? window.location.search : '';
+      router.replace(`/connect${search}`);
+    }
+  }, [ready, user, router]);
   return <div className="boot-state"><span className="brand-mark">L</span><p>Đang mở LANDrop…</p></div>;
 }

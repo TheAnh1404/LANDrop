@@ -15,6 +15,7 @@ Bắt đầu từ [README gốc](../README.md) và [báo cáo cấu trúc/file l
 | [WORKSPACES](api/WORKSPACES.md) | Workspace, thành viên và phân quyền |
 | [REALTIME_CHAT](api/REALTIME_CHAT.md) | WebSocket auth/chat harness, lịch sử và retry |
 | [REALTIME_01_CONTRACT](api/REALTIME_01_CONTRACT.md) | Contract duy nhất cho gateway tích hợp và browser realtime chat |
+| [REALTIME_02_SIGNALING_CONTRACT](api/REALTIME_02_SIGNALING_CONTRACT.md) | Contract WebRTC signaling, transfer session, authorization v? cleanup |
 | [TEAM_CHAT](api/TEAM_CHAT.md) | Kênh, tin nhắn, reply/edit/delete và sự kiện |
 | [FILES_AND_TRANSFERS](api/FILES_AND_TRANSFERS.md) | File/thư mục, metadata và transfer coordination |
 | [ADMIN_CONTROL](api/ADMIN_CONTROL.md) | Quản trị, client/session, cấu hình và log |
@@ -29,6 +30,7 @@ Các đặc tả được viết qua nhiều giai đoạn. Khi tích hợp clien
 | [LAN_PROTOCOL](architecture/LAN_PROTOCOL.md) | Framing nhị phân, message, chunk/resume TCP LAN |
 | [DATABASE](architecture/DATABASE.md) | JDBC, schema và SQL migration |
 | [RUN_GUIDE](guides/RUN_GUIDE.md) | Hướng dẫn chạy Frontend, Backend, Server & Client (Browser & CLI) |
+| [SERVER_DESKTOP](guides/SERVER_DESKTOP.md) | Bảng điều khiển desktop, URL/QR client, thiết bị, signaling và nhật ký |
 | [REALTIME_01_LAN_INTEGRATION](guides/REALTIME_01_LAN_INTEGRATION.md) | Đồng bộ Server/AGY, test hai client và checklist hai máy LAN |
 | [CLI_DEMO](guides/CLI_DEMO.md) | Demo discovery/peer backend CLI |
 | [MULTI_DEVICE](guides/MULTI_DEVICE.md) | Harness chat xác thực nhiều thiết bị |

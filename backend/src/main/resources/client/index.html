@@ -1,0 +1,871 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LANDrop - Giao Diện Người Dùng & Truyền Tệp P2P</title>
+  <style>
+    :root {
+      --bg-main: #0a0f1d;
+      --bg-card: #111827;
+      --bg-card-hover: #1e293b;
+      --border: #1f2937;
+      --border-focus: #0284c7;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --accent-primary: #0284c7;
+      --accent-hover: #0369a1;
+      --accent-sky: #38bdf8;
+      --accent-success: #10b981;
+      --accent-danger: #ef4444;
+      --accent-warning: #f59e0b;
+      --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      font-family: var(--font-family);
+      line-height: 1.5;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    header {
+      background-color: var(--bg-card);
+      border-bottom: 1px solid var(--border);
+      padding: 0.85rem 1.75rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+    }
+    .logo-container {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      text-decoration: none;
+      color: inherit;
+    }
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      background: linear-gradient(135deg, #0284c7, #38bdf8);
+      color: white;
+      font-weight: 800;
+      font-size: 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 8px;
+    }
+    .brand-title {
+      font-size: 1.25rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+    }
+    .brand-period { color: var(--accent-sky); }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .status-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      padding: 0.25rem 0.65rem;
+      border-radius: 9999px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent-success);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+    }
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-success);
+    }
+    .main-container {
+      flex: 1;
+      max-width: 1080px;
+      width: 100%;
+      margin: 0 auto;
+      padding: 2rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 1.75rem;
+    }
+    .card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1.5rem;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45rem;
+      padding: 0.65rem 1.25rem;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease-in-out;
+      border: none;
+      text-decoration: none;
+    }
+    .btn-primary {
+      background-color: var(--accent-primary);
+      color: white;
+    }
+    .btn-primary:hover {
+      background-color: var(--accent-hover);
+    }
+    .btn-secondary {
+      background-color: var(--bg-card-hover);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover {
+      background-color: #334155;
+    }
+    .btn-danger {
+      background-color: rgba(239, 68, 68, 0.2);
+      color: var(--accent-danger);
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+    .btn-danger:hover {
+      background-color: var(--accent-danger);
+      color: white;
+    }
+    .btn-sm {
+      padding: 0.35rem 0.75rem;
+      font-size: 0.8rem;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      margin-bottom: 1rem;
+    }
+    .form-group label {
+      font-size: 0.825rem;
+      font-weight: 600;
+      color: var(--text-muted);
+    }
+    .form-input {
+      background: #0f172a;
+      border: 1px solid var(--border);
+      color: var(--text-main);
+      padding: 0.65rem 0.85rem;
+      border-radius: 8px;
+      font-size: 0.925rem;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-input:focus {
+      border-color: var(--border-focus);
+      box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.25);
+    }
+    .alert {
+      padding: 0.75rem 1rem;
+      border-radius: 8px;
+      margin-bottom: 1.25rem;
+      font-size: 0.875rem;
+      display: none;
+    }
+    .alert-error {
+      background: rgba(239, 68, 68, 0.15);
+      color: #fca5a5;
+      border: 1px solid rgba(239, 68, 68, 0.4);
+    }
+    .alert-success {
+      background: rgba(16, 185, 129, 0.15);
+      color: #86efac;
+      border: 1px solid rgba(16, 185, 129, 0.4);
+    }
+    .tabs-nav {
+      display: flex;
+      gap: 0.5rem;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 1.5rem;
+      padding-bottom: 0.25rem;
+    }
+    .tab-btn {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      font-size: 0.95rem;
+      font-weight: 600;
+      padding: 0.5rem 1rem;
+      cursor: pointer;
+      border-radius: 6px;
+      transition: all 0.15s;
+    }
+    .tab-btn.active {
+      color: var(--text-main);
+      background-color: var(--bg-card-hover);
+    }
+    .tab-pane {
+      display: none;
+    }
+    .tab-pane.active {
+      display: block;
+    }
+    .auth-box {
+      max-width: 440px;
+      width: 100%;
+      margin: 2rem auto;
+    }
+    .app-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 1.5rem;
+    }
+    .conn-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      background: rgba(2, 132, 199, 0.15);
+      color: var(--accent-sky);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      padding: 0.3rem 0.65rem;
+      border-radius: 6px;
+      font-family: monospace;
+      font-size: 0.85rem;
+    }
+    .list-item {
+      padding: 0.75rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .list-item:last-child { border-bottom: none; }
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 1.25rem;
+      text-align: center;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    footer a { color: var(--accent-sky); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <a href="/" class="logo-container">
+      <div class="brand-mark">L</div>
+      <div class="brand-title">LANDrop<span class="brand-period">.</span></div>
+    </a>
+    <div class="header-actions">
+      <div class="status-pill" id="header-status">
+        <span class="status-dot"></span>
+        <span id="header-status-text">Đã kết nối Server</span>
+      </div>
+      <div id="user-pill" style="display: none; align-items: center; gap: 0.75rem;">
+        <span id="user-display-name" style="font-weight: 600; font-size: 0.9rem;"></span>
+        <button class="btn btn-secondary btn-sm" onclick="handleLogout()">Đăng xuất</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="main-container">
+
+    <!-- PHẦN 1: MÀN HÌNH ĐĂNG NHẬP / ĐĂNG KÝ (Hiện khi chưa có token) -->
+    <div id="auth-section" class="card auth-box">
+      <div class="tabs-nav">
+        <button class="tab-btn active" id="tab-login-btn" onclick="switchAuthTab('login')">Đăng Nhập</button>
+        <button class="tab-btn" id="tab-register-btn" onclick="switchAuthTab('register')">Tạo Tài Khoản Mới</button>
+      </div>
+
+      <div id="auth-alert" class="alert"></div>
+
+      <!-- Tab Đăng Nhập -->
+      <form id="form-login" class="tab-pane active" onsubmit="submitLogin(event)">
+        <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;">
+          Đăng nhập vào không gian làm việc LANDrop trong mạng LAN.
+        </p>
+        <div class="form-group">
+          <label>Email hoặc Tên đăng nhập</label>
+          <input type="text" id="login-identifier" class="form-input" placeholder="ví dụ: theanh hoặc user@lan.local" required autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label>Mật khẩu</label>
+          <input type="password" id="login-password" class="form-input" placeholder="••••••••" required autocomplete="current-password">
+        </div>
+        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;" id="btn-login-submit">
+          Đăng Nhập Vào Hệ Thống &rarr;
+        </button>
+      </form>
+
+      <!-- Tab Tạo Tài Khoản -->
+      <form id="form-register" class="tab-pane" onsubmit="submitRegister(event)">
+        <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;">
+          Tạo tài khoản thành viên để cộng tác và truyền tệp trong mạng nội bộ.
+        </p>
+        <div class="form-group">
+          <label>Tên hiển thị</label>
+          <input type="text" id="reg-name" class="form-input" placeholder="ví dụ: Nguyễn Thế Anh" required autocomplete="name">
+        </div>
+        <div class="form-group">
+          <label>Tên đăng nhập</label>
+          <input type="text" id="reg-username" class="form-input" placeholder="3-30 ký tự, không dấu (ví dụ: theanh)" pattern="[A-Za-z0-9_-]{3,30}" required autocomplete="username">
+        </div>
+        <div class="form-group">
+          <label>Email</label>
+          <input type="email" id="reg-email" class="form-input" placeholder="theanh@lan.local" required autocomplete="email">
+        </div>
+        <div class="form-group">
+          <label>Mật khẩu (ít nhất 8 ký tự)</label>
+          <input type="password" id="reg-password" class="form-input" placeholder="••••••••" minlength="8" required autocomplete="new-password">
+        </div>
+        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;" id="btn-reg-submit">
+          Tạo Tài Khoản & Đăng Nhập &rarr;
+        </button>
+      </form>
+    </div>
+
+    <!-- PHẦN 2: MÀN HÌNH CHÍNH CỦA NGƯỜI DÙNG (Hiện khi đã đăng nhập) -->
+    <div id="app-section" style="display: none; flex-direction: column; gap: 1.5rem;">
+
+      <!-- Welcome Banner -->
+      <div class="card" style="background: linear-gradient(135deg, rgba(2, 132, 199, 0.15), rgba(17, 24, 39, 0.9)); border-color: rgba(56, 189, 248, 0.3);">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
+          <div>
+            <h2 style="font-size: 1.4rem; font-weight: 700;">Xin chào, <span id="welcome-name" style="color: var(--accent-sky);"></span> 👋</h2>
+            <p style="color: var(--text-muted); font-size: 0.9rem;">
+              Thiết bị của bạn đã kết nối an toàn vào mạng LANDrop. Sẵn sàng chat và truyền tệp P2P.
+            </p>
+          </div>
+          <div>
+            <span class="conn-badge">
+              ID Thiết Bị: <span id="my-conn-id">Đang kết nối...</span>
+            </span>
+          </div>
+        </div>
+      </div>
+
+      <div class="app-grid">
+        <!-- Thẻ 1: Truyền Tệp P2P WebRTC -->
+        <div class="card">
+          <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
+            📁 Truyền Tệp Ngang Hàng P2P (WebRTC)
+          </h3>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
+            Kết nối trực tiếp giữa hai trình duyệt qua WebRTC DataChannel trong cùng mạng WiFi / LAN.
+          </p>
+
+          <div class="form-group">
+            <label>ID Thiết Bị Đích (Connection ID bạn bè):</label>
+            <input type="text" id="target-conn-id" class="form-input" placeholder="Dán Connection ID của máy bên kia...">
+          </div>
+
+          <div style="display: flex; gap: 0.5rem;">
+            <button class="btn btn-primary" onclick="initiateP2PTest()" id="btn-p2p-test">
+              ⚡ Kiểm Tra Kết Nối P2P (Ping/Pong)
+            </button>
+          </div>
+
+          <div id="p2p-status-box" style="margin-top: 1rem; padding: 0.75rem; background: #0f172a; border-radius: 8px; font-size: 0.85rem; border: 1px solid var(--border);">
+            Trạng thái P2P: <strong id="p2p-state-label" style="color: var(--accent-sky);">Sẵn sàng</strong>
+          </div>
+        </div>
+
+        <!-- Thẻ 2: Không Gian Làm Việc (Workspaces) -->
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <h3 style="font-size: 1.15rem; font-weight: 700;">🏢 Không Gian Làm Việc</h3>
+            <button class="btn btn-secondary btn-sm" onclick="loadWorkspaces()">🔄 Làm mới</button>
+          </div>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
+            Danh sách nhóm làm việc bạn tham gia trên máy chủ này.
+          </p>
+
+          <div id="workspaces-list" style="max-height: 200px; overflow-y: auto; background: #0f172a; border-radius: 8px; border: 1px solid var(--border); padding: 0.5rem;">
+            <div style="text-align: center; padding: 1rem; color: var(--text-muted); font-size: 0.85rem;">Đang tải danh sách...</div>
+          </div>
+
+          <!-- Tạo workspace nhanh -->
+          <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
+            <input type="text" id="new-ws-name" class="form-input" placeholder="Tên nhóm mới..." style="flex: 1;">
+            <button class="btn btn-primary btn-sm" onclick="createWorkspace()">+ Tạo nhóm</button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+
+  <footer>
+    <p>
+      LANDrop LAN Hub &bull; 
+      <a href="/admin">Dành cho Quản trị viên máy chủ (/admin)</a>
+    </p>
+  </footer>
+
+  <script>
+    let authToken = localStorage.getItem('landrop_access_token') || '';
+    let currentUser = null;
+    let ws = null;
+    let myConnectionId = '';
+    let rtcPeer = null;
+    let rtcDataChannel = null;
+
+    // Khởi tạo trang
+    window.addEventListener('DOMContentLoaded', () => {
+      if (authToken) {
+        verifySession();
+      } else {
+        showAuth();
+      }
+    });
+
+    function showAlert(msg, isSuccess = false) {
+      const box = document.getElementById('auth-alert');
+      box.textContent = msg;
+      box.className = 'alert ' + (isSuccess ? 'alert-success' : 'alert-error');
+      box.style.display = 'block';
+    }
+
+    function hideAlert() {
+      document.getElementById('auth-alert').style.display = 'none';
+    }
+
+    function switchAuthTab(tab) {
+      hideAlert();
+      document.getElementById('tab-login-btn').classList.toggle('active', tab === 'login');
+      document.getElementById('tab-register-btn').classList.toggle('active', tab === 'register');
+      document.getElementById('form-login').classList.toggle('active', tab === 'login');
+      document.getElementById('form-register').classList.toggle('active', tab === 'register');
+    }
+
+    function showAuth() {
+      document.getElementById('auth-section').style.display = 'block';
+      document.getElementById('app-section').style.display = 'none';
+      document.getElementById('user-pill').style.display = 'none';
+      if (ws) { ws.close(); ws = null; }
+    }
+
+    function showApp() {
+      document.getElementById('auth-section').style.display = 'none';
+      document.getElementById('app-section').style.display = 'flex';
+      document.getElementById('user-pill').style.display = 'flex';
+      document.getElementById('user-display-name').textContent = currentUser.displayName || currentUser.username;
+      document.getElementById('welcome-name').textContent = currentUser.displayName || currentUser.username;
+      loadWorkspaces();
+      connectRealtime();
+    }
+
+    async function verifySession() {
+      try {
+        const res = await fetch('/api/auth/me', {
+          headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        if (res.ok) {
+          currentUser = await res.json();
+          showApp();
+        } else {
+          localStorage.removeItem('landrop_access_token');
+          authToken = '';
+          showAuth();
+        }
+      } catch (e) {
+        showAuth();
+      }
+    }
+
+    async function submitLogin(e) {
+      e.preventDefault();
+      hideAlert();
+      const identifier = document.getElementById('login-identifier').value.trim();
+      const password = document.getElementById('login-password').value;
+      const btn = document.getElementById('btn-login-submit');
+
+      btn.disabled = true;
+      btn.textContent = 'Đang đăng nhập...';
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ identifier, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || 'Đăng nhập không thành công');
+
+        authToken = data.accessToken;
+        currentUser = data.user;
+        localStorage.setItem('landrop_access_token', authToken);
+        showApp();
+      } catch (err) {
+        showAlert(err.message, false);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Đăng Nhập Vào Hệ Thống \u2192';
+      }
+    }
+
+    async function submitRegister(e) {
+      e.preventDefault();
+      hideAlert();
+      const name = document.getElementById('reg-name').value.trim();
+      const username = document.getElementById('reg-username').value.trim();
+      const email = document.getElementById('reg-email').value.trim();
+      const password = document.getElementById('reg-password').value;
+      const btn = document.getElementById('btn-reg-submit');
+
+      btn.disabled = true;
+      btn.textContent = 'Đang tạo tài khoản...';
+      try {
+        const res = await fetch('/api/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, username, email, password })
+        });
+        const data = await res.json();
+        if (!res.ok) throw new Error(data.message || 'Đăng ký không thành công');
+
+        authToken = data.accessToken;
+        currentUser = data.user;
+        localStorage.setItem('landrop_access_token', authToken);
+        showApp();
+      } catch (err) {
+        showAlert(err.message, false);
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Tạo Tài Khoản & Đăng Nhập \u2192';
+      }
+    }
+
+    function handleLogout() {
+      localStorage.removeItem('landrop_access_token');
+      authToken = '';
+      currentUser = null;
+      showAuth();
+    }
+
+    let wsHeartbeatTimer = null;
+
+    function getDeviceName() {
+      const ua = navigator.userAgent;
+      if (/iPhone/.test(ua)) return 'Apple iPhone';
+      if (/iPad/.test(ua)) return 'Apple iPad';
+      if (/Android/.test(ua)) {
+        const match = ua.match(/Android[^;]+; ([^;)]+)/);
+        if (match && match[1]) {
+          const model = match[1].replace(/Build\/.*/, '').trim();
+          if (model) return model;
+        }
+        return 'Android Device';
+      }
+      if (/Macintosh/.test(ua)) return 'macOS Browser';
+      if (/Windows/.test(ua)) return 'Windows PC Browser';
+      if (/Linux/.test(ua)) return 'Linux Browser';
+      return 'Web Browser';
+    }
+
+    function getClientInstanceId() {
+      let id = localStorage.getItem('landrop_client_instance_id');
+      if (!id) {
+        id = 'browser-' + Math.random().toString(36).substring(2, 10);
+        localStorage.setItem('landrop_client_instance_id', id);
+      }
+      return id;
+    }
+
+    async function resolveWsPort() {
+      const urlParams = new URLSearchParams(window.location.search);
+      const paramPort = urlParams.get('wsPort');
+      if (paramPort && !isNaN(parseInt(paramPort))) {
+        return parseInt(paramPort);
+      }
+      try {
+        const res = await fetch('/status');
+        if (res.ok) {
+          const st = await res.json();
+          if (st.wsPort) return st.wsPort;
+        }
+      } catch (e) {}
+      const curPort = parseInt(window.location.port);
+      if (!isNaN(curPort) && curPort > 0) {
+        if (curPort === 3000) return 3001;
+        if (curPort === 3100) return 3101;
+        return curPort + 1;
+      }
+      return 3001;
+    }
+
+    // Kết nối WebSocket Realtime
+    async function connectRealtime() {
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        return;
+      }
+      if (wsHeartbeatTimer) {
+        clearInterval(wsHeartbeatTimer);
+        wsHeartbeatTimer = null;
+      }
+
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsPort = await resolveWsPort();
+      const wsUrl = protocol + '//' + window.location.hostname + ':' + wsPort;
+
+      try {
+        document.getElementById('header-status-text').textContent = 'Đang kết nối Realtime...';
+        ws = new WebSocket(wsUrl);
+
+        ws.onopen = () => {
+          // Handshake
+          ws.send(JSON.stringify({
+            type: 'hello',
+            protocolVersion: 1,
+            clientInstanceId: getClientInstanceId(),
+            deviceName: getDeviceName(),
+            platform: /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent) ? 'mobile' : 'browser'
+          }));
+
+          // Heartbeat định kỳ mỗi 10s giữ kết nối
+          wsHeartbeatTimer = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+              ws.send(JSON.stringify({ type: 'heartbeat' }));
+            }
+          }, 10000);
+        };
+
+        ws.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.type === 'welcome') {
+              myConnectionId = data.connectionId;
+              document.getElementById('my-conn-id').textContent = myConnectionId;
+
+              // Xác thực phiên WebSocket
+              if (authToken) {
+                ws.send(JSON.stringify({
+                  type: 'auth',
+                  payload: { accessToken: authToken }
+                }));
+              }
+            } else if (data.type === 'auth.ack' || data.type === 'auth.success') {
+              document.getElementById('header-status-text').textContent = '🟢 Đã kết nối Realtime';
+            } else if (data.type === 'heartbeat.ack') {
+              // Heartbeat ok
+            } else if (data.type === 'webrtc.offer') {
+              handleIncomingOffer(data);
+            } else if (data.type === 'webrtc.answer') {
+              handleIncomingAnswer(data);
+            } else if (data.type === 'webrtc.candidate') {
+              handleIncomingCandidate(data);
+            }
+          } catch (e) {}
+        };
+
+        ws.onclose = () => {
+          if (wsHeartbeatTimer) {
+            clearInterval(wsHeartbeatTimer);
+            wsHeartbeatTimer = null;
+          }
+          document.getElementById('header-status-text').textContent = '⚪ Mất kết nối (Đang thử lại...)';
+          if (authToken) {
+            setTimeout(connectRealtime, 3000);
+          }
+        };
+
+        ws.onerror = () => {
+          document.getElementById('header-status-text').textContent = '⚠️ Lỗi WebSocket';
+        };
+      } catch (e) {
+        document.getElementById('header-status-text').textContent = 'Không thể mở WebSocket';
+      }
+    }
+
+    // Tải Workspaces
+    async function loadWorkspaces() {
+      const container = document.getElementById('workspaces-list');
+      try {
+        const res = await fetch('/api/workspaces', {
+          headers: { 'Authorization': 'Bearer ' + authToken }
+        });
+        if (res.ok) {
+          const list = await res.json();
+          const items = Array.isArray(list) ? list : (list.data || []);
+          if (items.length === 0) {
+            container.innerHTML = '<div style="text-align:center; padding:1rem; color:var(--text-muted); font-size:0.85rem;">Chưa có nhóm nào. Hãy tạo nhóm đầu tiên!</div>';
+          } else {
+            container.innerHTML = items.map(w => `
+              <div class="list-item">
+                <div>
+                  <strong>${escapeHtml(w.name)}</strong>
+                  <div style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(w.description || 'Không có mô tả')}</div>
+                </div>
+                <span class="btn btn-secondary btn-sm" style="cursor:default;">Đã tham gia</span>
+              </div>
+            `).join('');
+          }
+        }
+      } catch (e) {
+        container.innerHTML = '<div style="text-align:center; color:var(--accent-danger); font-size:0.85rem;">Không thể tải danh sách workspace</div>';
+      }
+    }
+
+    async function createWorkspace() {
+      const input = document.getElementById('new-ws-name');
+      const name = input.value.trim();
+      if (!name) return;
+
+      try {
+        const res = await fetch('/api/workspaces', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + authToken
+          },
+          body: JSON.stringify({ name, description: 'Workspace tạo từ Web Client' })
+        });
+        if (res.ok) {
+          input.value = '';
+          loadWorkspaces();
+        }
+      } catch (e) {}
+    }
+
+    // WebRTC DataChannel Ping/Pong Test
+    async function initiateP2PTest() {
+      const targetId = document.getElementById('target-conn-id').value.trim();
+      if (!targetId) {
+        alert('Vui lòng dán Connection ID của máy đích!');
+        return;
+      }
+
+      const stateLabel = document.getElementById('p2p-state-label');
+      stateLabel.textContent = 'Đang khởi tạo WebRTC DataChannel...';
+
+      rtcPeer = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+
+      rtcDataChannel = rtcPeer.createDataChannel('landrop-p2p', { ordered: true });
+      setupDataChannel(rtcDataChannel);
+
+      rtcPeer.onicecandidate = (event) => {
+        if (event.candidate && ws) {
+          ws.send(JSON.stringify({
+            type: 'webrtc.candidate',
+            payload: {
+              targetConnectionId: targetId,
+              candidate: event.candidate.toJSON()
+            }
+          }));
+        }
+      };
+
+      const offer = await rtcPeer.createOffer();
+      await rtcPeer.setLocalDescription(offer);
+
+      if (ws) {
+        ws.send(JSON.stringify({
+          type: 'webrtc.offer',
+          payload: {
+            targetConnectionId: targetId,
+            sdp: offer.sdp
+          }
+        }));
+      }
+    }
+
+    async function handleIncomingOffer(data) {
+      const stateLabel = document.getElementById('p2p-state-label');
+      stateLabel.textContent = 'Nhận Offer từ ' + data.senderConnectionId + ', đang trả Answer...';
+
+      rtcPeer = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+
+      rtcPeer.ondatachannel = (event) => {
+        setupDataChannel(event.channel);
+      };
+
+      rtcPeer.onicecandidate = (event) => {
+        if (event.candidate && ws) {
+          ws.send(JSON.stringify({
+            type: 'webrtc.candidate',
+            payload: {
+              targetConnectionId: data.senderConnectionId,
+              candidate: event.candidate.toJSON()
+            }
+          }));
+        }
+      };
+
+      await rtcPeer.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.payload.sdp }));
+      const answer = await rtcPeer.createAnswer();
+      await rtcPeer.setLocalDescription(answer);
+
+      if (ws) {
+        ws.send(JSON.stringify({
+          type: 'webrtc.answer',
+          payload: {
+            targetConnectionId: data.senderConnectionId,
+            sdp: answer.sdp
+          }
+        }));
+      }
+    }
+
+    async function handleIncomingAnswer(data) {
+      if (rtcPeer) {
+        await rtcPeer.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.payload.sdp }));
+      }
+    }
+
+    async function handleIncomingCandidate(data) {
+      if (rtcPeer && data.payload.candidate) {
+        try {
+          await rtcPeer.addIceCandidate(new RTCIceCandidate(data.payload.candidate));
+        } catch (e) {}
+      }
+    }
+
+    function setupDataChannel(channel) {
+      const stateLabel = document.getElementById('p2p-state-label');
+
+      channel.onopen = () => {
+        stateLabel.textContent = '🟢 WebRTC DataChannel ĐÃ MỞ! Đang gửi PING...';
+        channel.send(JSON.stringify({ type: 'PING', timestamp: Date.now() }));
+      };
+
+      channel.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'PING') {
+            channel.send(JSON.stringify({ type: 'PONG', echo: msg.timestamp }));
+            stateLabel.textContent = '🟢 Nhận PING -> Đã gửi PONG! P2P hoạt động 100%';
+          } else if (msg.type === 'PONG') {
+            const rtt = Date.now() - msg.echo;
+            stateLabel.textContent = `🎉 Kết nối P2P thành công! Round-trip: ${rtt}ms`;
+          }
+        } catch (e) {}
+      };
+
+      channel.onclose = () => {
+        stateLabel.textContent = 'DataChannel đã đóng';
+      };
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      return str.replace(/[&<>"']/g, m => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+      }[m]));
+    }
+  </script>
+</body>
+</html>

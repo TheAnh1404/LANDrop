@@ -1,4 +1,4 @@
-﻿# Chạy LANDrop backend và frontend
+# Chạy LANDrop backend và frontend
 
 Yêu cầu JDK 21, Maven 3.9+, Node.js 20+. Chạy các lệnh từ thư mục gốc repository.
 
@@ -15,18 +15,31 @@ Chép `.env.example` thành `.env` và cấu hình PostgreSQL/JWT theo [DATABASE
 mvn -pl backend compile exec:java "-Dexec.mainClass=com.landrop.database.DatabaseCli" "-Dexec.args=migrate"
 ```
 
-## Backend ở terminal thứ nhất
+## 1. Khởi chạy Server (LANDrop Server Desktop App)
 
+### Cách A: Chạy độc lập Server & Bảng Điều Khiển Web (Control Center)
+Mặc định server lắng nghe tại cổng `3000` (HTTP) và `3001` (WebSocket). Lệnh dưới mở LANDrop Server Desktop và tự khởi động backend. Chia sẻ URL/QR trên trang Tổng quan để người dùng vào `/client`; nút Quản trị web mở `/admin`. Trang gốc HTTP là portal chọn điểm truy cập. Xem [hướng dẫn bảng điều khiển desktop](SERVER_DESKTOP.md).
+
+```powershell
+npm run server
+```
+
+- Nếu muốn chạy không có giao diện GUI (Headless / Docker / Background):
+  ```powershell
+  npm run server:headless
+  ```
+
+### Cách B: Chạy cùng Web Workspace Frontend (Next.js) trên cùng máy tính
+Vì giao diện Next.js Frontend mặc định sử dụng cổng `3000`, ta đổi cổng Backend sang `3100` và WebSocket sang `3101` để tránh xung đột cổng:
+
+**Terminal 1 (Backend):**
 ```powershell
 $env:PORT = '3100'
 $env:WS_PORT = '3101'
 npm run server:backend
 ```
 
-Đổi backend HTTP từ mặc định 3000 sang 3100 để chạy cùng Next.js. Health tại `http://localhost:3100/health`; admin HTML Java tại `http://localhost:3100/admin`. Health phản hồi không bảo đảm mọi API phụ thuộc database khả dụng.
-
-## Frontend ở terminal thứ hai
-
+**Terminal 2 (Frontend Next.js):**
 ```powershell
 npm run dev
 ```
@@ -51,7 +64,7 @@ npm --prefix frontend run start
 - Admin: user/workspace/client/session/log; quản lý thông tin và quyền tài khoản, workspace/thành viên, khóa user, thu hồi phiên, ngắt client, cấu hình server.
 - Transfer: tra cứu yêu cầu tồn tại bằng UUID; demo chỉ mô phỏng tiến trình.
 
-**Truyền bytes giữa hai trình duyệt chưa được triển khai.** Backend dùng TCP/discovery; WebSocket control chưa phải signaling WebRTC browser. Xem [CLI_DEMO](CLI_DEMO.md) để chạy truyền LAN bằng CLI.
+Backend hỗ trợ điều phối WebRTC qua gateway chung theo [contract REALTIME-02](../api/REALTIME_02_SIGNALING_CONTRACT.md); server chỉ relay signaling, không xử lý file binary. Việc truyền bytes phụ thuộc triển khai client. Xem [CLI_DEMO](CLI_DEMO.md) để chạy truyền LAN bằng CLI.
 
 Từ máy LAN khác, địa chỉ backend phải là IP máy server, ví dụ `http://192.168.1.10:3100`; localhost luôn chỉ máy đang mở trình duyệt. Kiểm tra bind address/firewall khi không truy cập được.
 

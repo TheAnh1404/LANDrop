@@ -38,6 +38,8 @@ public class FoundationHttpServer {
     private ChatHttpServer chatHttpServer;
     private FileHttpServer fileHttpServer;
     private HttpServer server;
+    private byte[] cachedPortalHtml;
+    private byte[] cachedClientHtml;
 
     public FoundationHttpServer(String host, int port, int wsPort, HealthService healthService, ClientRegistry clientRegistry) {
         this(host, port, wsPort, healthService, clientRegistry, null, null, null);
@@ -135,6 +137,13 @@ public class FoundationHttpServer {
         server = HttpServer.create(new InetSocketAddress(host, port), 0);
         server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
+        server.createContext("/", this::handleRoot);
+        server.createContext("/connect", this::handleClientUi);
+        server.createContext("/client", this::handleClientUi);
+        server.createContext("/auth/login", this::handleClientUi);
+        server.createContext("/auth/register", this::handleClientUi);
+        server.createContext("/api", this::handleApiRoot);
+        server.createContext("/api/", this::handleApiRoot);
         server.createContext("/health", this::handleHealth);
         server.createContext("/api/health", this::handleHealth);
         server.createContext("/status", this::handleStatus);
@@ -217,6 +226,99 @@ public class FoundationHttpServer {
         }
     }
 
+    private void handleRoot(HttpExchange exchange) throws IOException {
+        if (handlePublicCors(exchange)) {
+            return;
+        }
+
+        String path = exchange.getRequestURI().getPath();
+        boolean isClientPath = path == null || path.isEmpty() || "/".equals(path) || "/index.html".equals(path)
+                || "/connect".equals(path) || "/client".equals(path)
+                || (path != null && (path.startsWith("/auth/") || path.startsWith("/w/") || "/workspaces".equals(path)));
+
+        if (isClientPath) {
+            String query = exchange.getRequestURI().getQuery();
+            if (query != null && query.contains("target=admin")) {
+                exchange.getResponseHeaders().set("Location", "/admin");
+                exchange.sendResponseHeaders(302, -1);
+                exchange.close();
+                return;
+            }
+
+            // If JSON requested explicitly by an API client, return API status catalog
+            String accept = exchange.getRequestHeaders().getFirst("Accept");
+            if (accept != null && accept.contains("application/json") && !accept.contains("text/html")) {
+                handleApiRoot(exchange);
+                return;
+            }
+
+            byte[] bytes = getClientHtmlBytes();
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
+            return;
+        }
+
+        if ("/favicon.ico".equals(path)) {
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+            return;
+        }
+
+        // For any browser navigation request expecting HTML, serve the Client SPA
+        String accept = exchange.getRequestHeaders().getFirst("Accept");
+        if (accept != null && accept.contains("text/html")) {
+            byte[] bytes = getClientHtmlBytes();
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
+            return;
+        }
+
+        // Return structured 404 for unmatched non-HTML routes
+        Map<String, Object> notFound = Map.of(
+            "error", "NOT_FOUND",
+            "message", "Endpoint not found: " + path,
+            "status", 404
+        );
+        byte[] bytes = objectMapper.writeValueAsBytes(notFound);
+        exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+        exchange.sendResponseHeaders(404, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
+        }
+    }
+
+    private void handleApiRoot(HttpExchange exchange) throws IOException {
+        if (handlePublicCors(exchange)) {
+            return;
+        }
+
+        Map<String, Object> apiInfo = new java.util.LinkedHashMap<>();
+        apiInfo.put("service", "LANDrop Server API");
+        apiInfo.put("status", "UP");
+        apiInfo.put("version", 1);
+        apiInfo.put("endpoints", Map.of(
+            "health", "/health",
+            "status", "/status",
+            "admin", "/admin",
+            "auth", "/api/auth",
+            "workspaces", "/api/workspaces",
+            "devices", "/api/devices"
+        ));
+
+        byte[] bytes = objectMapper.writeValueAsBytes(apiInfo);
+        exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
+        }
+    }
+
     private boolean handlePublicCors(HttpExchange exchange) throws IOException {
         exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
         exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, OPTIONS");
@@ -226,5 +328,65 @@ public class FoundationHttpServer {
             return true;
         }
         return false;
+    }
+
+    private synchronized byte[] getPortalHtmlBytes() {
+        if (cachedPortalHtml != null) {
+            return cachedPortalHtml;
+        }
+
+        try (java.io.InputStream is = getClass().getResourceAsStream("/portal/index.html")) {
+            if (is != null) {
+                cachedPortalHtml = is.readAllBytes();
+                return cachedPortalHtml;
+            }
+        } catch (IOException ignored) {}
+
+        String fallback = """
+            <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><title>LANDrop Portal</title></head>
+            <body style="font-family:sans-serif; background:#0f172a; color:#f8fafc; padding:2rem; text-align:center;">
+            <h1>LANDrop LAN Portal</h1>
+            <p>Không gian truyền tệp và cộng tác mạng nội bộ LANDrop.</p>
+            <div style="margin:2rem 0;">
+              <a href="/admin" style="background:#0284c7; color:white; padding:10px 20px; border-radius:6px; text-decoration:none; margin:10px; display:inline-block;">Quản Trị Viên (/admin)</a>
+            </div>
+            </body></html>
+            """;
+        cachedPortalHtml = fallback.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return cachedPortalHtml;
+    }
+
+    private void handleClientUi(HttpExchange exchange) throws IOException {
+        if (handlePublicCors(exchange)) {
+            return;
+        }
+
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            exchange.sendResponseHeaders(405, -1);
+            exchange.close();
+            return;
+        }
+
+        byte[] bytes = getClientHtmlBytes();
+        exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
+        }
+    }
+
+    private synchronized byte[] getClientHtmlBytes() {
+        if (cachedClientHtml != null) {
+            return cachedClientHtml;
+        }
+
+        try (java.io.InputStream is = getClass().getResourceAsStream("/client/index.html")) {
+            if (is != null) {
+                cachedClientHtml = is.readAllBytes();
+                return cachedClientHtml;
+            }
+        } catch (IOException ignored) {}
+
+        return getPortalHtmlBytes();
     }
 }

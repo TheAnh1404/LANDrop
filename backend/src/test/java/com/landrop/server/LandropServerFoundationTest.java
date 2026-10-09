@@ -117,6 +117,58 @@ class LandropServerFoundationTest {
     }
 
     @Test
+    void testRootRedirectAndApiCatalog() throws Exception {
+        java.net.http.HttpClient noRedirectClient = java.net.http.HttpClient.newBuilder()
+                .followRedirects(java.net.http.HttpClient.Redirect.NEVER)
+                .build();
+        HttpRequest rootReq = HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + httpPort + "/"))
+                .GET()
+                .build();
+        HttpResponse<String> rootRes = noRedirectClient.send(rootReq, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, rootRes.statusCode());
+        assertTrue(rootRes.body().contains("LANDrop"));
+
+        HttpRequest adminTargetReq = HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + httpPort + "/?target=admin"))
+                .GET()
+                .build();
+        HttpResponse<String> adminTargetRes = noRedirectClient.send(adminTargetReq, HttpResponse.BodyHandlers.ofString());
+        assertEquals(302, adminTargetRes.statusCode());
+        assertEquals("/admin", adminTargetRes.headers().firstValue("Location").orElse(null));
+
+        HttpRequest apiReq = HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + httpPort + "/api"))
+                .GET()
+                .build();
+        HttpResponse<String> apiRes = http.send(apiReq, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, apiRes.statusCode());
+        JsonNode apiJson = JSON.readTree(apiRes.body());
+        assertEquals("UP", apiJson.path("status").asText());
+        assertTrue(apiJson.path("endpoints").has("health"));
+    }
+
+    @Test
+    void testClientConnectRoute() throws Exception {
+        HttpRequest connectReq = HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + httpPort + "/connect?server=http%3A%2F%2F192.168.1.230%3A3000"))
+                .GET()
+                .build();
+        HttpResponse<String> connectRes = http.send(connectReq, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, connectRes.statusCode());
+        assertTrue(connectRes.body().contains("LANDrop"));
+        assertTrue(connectRes.headers().firstValue("Content-Type").orElse("").contains("text/html"));
+
+        HttpRequest clientReq = HttpRequest.newBuilder()
+                .uri(URI.create("http://127.0.0.1:" + httpPort + "/client"))
+                .GET()
+                .build();
+        HttpResponse<String> clientRes = http.send(clientReq, HttpResponse.BodyHandlers.ofString());
+        assertEquals(200, clientRes.statusCode());
+        assertTrue(clientRes.body().contains("LANDrop"));
+    }
+
+    @Test
     void testServerNetworkBindingConfig() {
         // Verify default config allows 0.0.0.0 binding
         ServerConfig defaultConfig = ServerConfig.load();
@@ -406,6 +458,7 @@ class LandropServerFoundationTest {
 
     @Test
     void testTransferRequestAcceptLifecycle() throws Exception {
+        SignalingTestSupport signaling = new SignalingTestSupport(bootstrap);
         try (FoundationWsClient sender = FoundationWsClient.connect(wsPort);
              FoundationWsClient receiver = FoundationWsClient.connect(wsPort)) {
 
@@ -413,17 +466,20 @@ class LandropServerFoundationTest {
             sender.sendJson(Map.of("type", "hello", "protocolVersion", 1, "clientInstanceId", "sender-inst", "deviceName", "Sender Mac"));
             JsonNode wSender = sender.receive(3000);
             String senderConnId = wSender.path("connectionId").asText();
+            signaling.authenticate(sender);
 
             // Handshake Receiver
             receiver.sendJson(Map.of("type", "hello", "protocolVersion", 1, "clientInstanceId", "receiver-inst", "deviceName", "Receiver PC"));
             JsonNode wReceiver = receiver.receive(3000);
             String receiverConnId = wReceiver.path("connectionId").asText();
+            signaling.authenticate(receiver);
 
             // 1. Sender initiates transfer request
             sender.sendJson(Map.of(
                 "type", "transfer.request",
                 "requestId", "req-tx-1",
                 "payload", Map.of(
+                    "workspaceId", signaling.workspace.id().toString(),
                     "receiverConnectionId", receiverConnId,
                     "fileName", "important_report.pdf",
                     "fileSize", 2048576L,
@@ -431,12 +487,12 @@ class LandropServerFoundationTest {
                 )
             ));
 
-            // Sender receives PENDING status ack
+            // Sender receives REQUESTED status ack
             JsonNode senderAck = sender.receive(3000);
             assertNotNull(senderAck);
             assertEquals("transfer.status", senderAck.path("type").asText());
             String transferId = senderAck.path("payload").path("transferId").asText();
-            assertEquals("PENDING", senderAck.path("payload").path("status").asText());
+            assertEquals("REQUESTED", senderAck.path("payload").path("status").asText());
 
             // Receiver receives transfer request
             JsonNode incomingReq = receiver.receive(3000);
@@ -473,15 +529,18 @@ class LandropServerFoundationTest {
 
     @Test
     void testTransferTargetReceiverNotFound() throws Exception {
+        SignalingTestSupport signaling = new SignalingTestSupport(bootstrap);
         try (FoundationWsClient sender = FoundationWsClient.connect(wsPort)) {
             sender.sendJson(Map.of("type", "hello", "protocolVersion", 1, "clientInstanceId", "sender-ghost"));
             sender.receive(3000);
+            signaling.authenticate(sender);
 
             // Request transfer to non-existent connection ID
             sender.sendJson(Map.of(
                 "type", "transfer.request",
                 "requestId", "req-ghost",
                 "payload", Map.of(
+                    "workspaceId", signaling.workspace.id().toString(),
                     "receiverConnectionId", "non-existent-conn-id-9999",
                     "fileName", "ghost.txt",
                     "fileSize", 100
@@ -497,20 +556,24 @@ class LandropServerFoundationTest {
 
     @Test
     void testTransferCancelledWhenPeerDisconnects() throws Exception {
+        SignalingTestSupport signaling = new SignalingTestSupport(bootstrap);
         try (FoundationWsClient sender = FoundationWsClient.connect(wsPort);
              FoundationWsClient receiver = FoundationWsClient.connect(wsPort)) {
 
             sender.sendJson(Map.of("type", "hello", "protocolVersion", 1, "clientInstanceId", "s-dc"));
             sender.receive(3000);
+            signaling.authenticate(sender);
 
             receiver.sendJson(Map.of("type", "hello", "protocolVersion", 1, "clientInstanceId", "r-dc"));
             JsonNode wR = receiver.receive(3000);
             String rConnId = wR.path("connectionId").asText();
+            signaling.authenticate(receiver);
 
             // Sender requests transfer
             sender.sendJson(Map.of(
                 "type", "transfer.request",
                 "payload", Map.of(
+                    "workspaceId", signaling.workspace.id().toString(),
                     "receiverConnectionId", rConnId,
                     "fileName", "will_cancel.dat",
                     "fileSize", 500

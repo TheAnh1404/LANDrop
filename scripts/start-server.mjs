@@ -196,10 +196,10 @@ export function checkPortInUse(port, host = '0.0.0.0') {
 /**
  * Generates Maven or executable invocation for starting LANDrop backend.
  */
-export function mavenServerInvocation(platform, phase = 'run') {
+export function mavenServerInvocation(platform, phase = 'run', mainClass = 'com.landrop.server.LandropServerMain') {
   const argumentsForPhase = phase === 'prepare'
     ? ['-q', '-pl', 'backend', 'compile', '-Dmaven.test.skip=true']
-    : ['-pl', 'backend', 'exec:java', '-Dexec.mainClass=com.landrop.server.LandropServerMain'];
+    : ['-pl', 'backend', 'exec:java', `-Dexec.mainClass=${mainClass}`];
 
   if (platform === 'win32') {
     return {
@@ -223,7 +223,10 @@ export function resolveBackendInvocation(platform, config = {}, phase = 'run') {
   if (config.jarPath && existsSync(config.jarPath)) {
     return { command: 'java', args: ['-jar', config.jarPath] };
   }
-  return mavenServerInvocation(platform, phase);
+  const defaultMain = config.headless
+    ? 'com.landrop.server.LandropServerMain'
+    : (config.mainClass || 'com.landrop.server.desktop.ServerDesktopApp');
+  return mavenServerInvocation(platform, phase, defaultMain);
 }
 
 /**
@@ -445,11 +448,14 @@ export async function runServer({
   adminOnly = false,
   dryRun = false,
   noOpen = false,
+  openBrowserRequested = false,
+  headless = false,
   timeoutMs = 35000,
   keepAlive = true,
   manager = createProcessManager()
 } = {}) {
   const config = loadServerConfig(repositoryRoot);
+  config.headless = headless || Boolean(process.env.LANDROP_HEADLESS);
 
   // 1. Validate configuration
   const validation = validateServerConfig(config);
@@ -630,8 +636,8 @@ export async function runServer({
     });
     console.log('\n' + banner + '\n');
 
-    // 14. Automatically open default browser once ready
-    const shouldOpen = !backendOnly && !noOpen && !process.env.LANDROP_NO_BROWSER && !process.env.CI;
+    // 14. Open browser only if explicitly requested (--open-browser)
+    const shouldOpen = openBrowserRequested && !backendOnly && !noOpen && !process.env.LANDROP_NO_BROWSER && !process.env.CI;
     if (shouldOpen) {
       console.log(`Opening Admin UI in default browser: ${localAdminUrl}`);
       openBrowser(localAdminUrl);
@@ -681,6 +687,8 @@ if (isMain) {
     backendOnly: args.has('--backend-only'),
     adminOnly: args.has('--admin-only'),
     dryRun: args.has('--dry-run'),
-    noOpen: args.has('--no-open')
+    noOpen: args.has('--no-open'),
+    openBrowserRequested: args.has('--open-browser'),
+    headless: args.has('--headless') || args.has('--cli')
   });
 }

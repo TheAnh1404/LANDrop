@@ -342,20 +342,24 @@ class LanIntegrationGateTest {
         bootstrap = new ServerBootstrap(config);
         bootstrap.start();
 
+        SignalingTestSupport signaling = new SignalingTestSupport(bootstrap);
         try (FoundationWsClient sender = FoundationWsClient.connect(wsPort);
              FoundationWsClient receiver = FoundationWsClient.connect(wsPort)) {
 
             sender.sendJson(Map.of("type", "hello", "protocolVersion", 1, "clientInstanceId", "sender-control"));
             sender.receive(3000);
+            signaling.authenticate(sender);
 
             receiver.sendJson(Map.of("type", "hello", "protocolVersion", 1, "clientInstanceId", "receiver-control"));
             JsonNode wR = receiver.receive(3000);
             String receiverConnId = wR.path("connectionId").asText();
+            signaling.authenticate(receiver);
 
             // Scenario A: Receiver REJECTS transfer
             sender.sendJson(Map.of(
                 "type", "transfer.request",
                 "payload", Map.of(
+                    "workspaceId", signaling.workspace.id().toString(),
                     "receiverConnectionId", receiverConnId,
                     "fileName", "declined_file.zip",
                     "fileSize", 4096
@@ -386,6 +390,7 @@ class LanIntegrationGateTest {
             sender.sendJson(Map.of(
                 "type", "transfer.request",
                 "payload", Map.of(
+                    "workspaceId", signaling.workspace.id().toString(),
                     "receiverConnectionId", receiverConnId,
                     "fileName", "cancelled_file.mov",
                     "fileSize", 10240
@@ -427,20 +432,24 @@ class LanIntegrationGateTest {
         bootstrap = new ServerBootstrap(config);
         bootstrap.start();
 
+        SignalingTestSupport signaling = new SignalingTestSupport(bootstrap);
         try (FoundationWsClient sender = FoundationWsClient.connect(wsPort);
              FoundationWsClient receiver = FoundationWsClient.connect(wsPort)) {
 
             sender.sendJson(Map.of("type", "hello", "protocolVersion", 1, "clientInstanceId", "sec-sender"));
             sender.receive(3000);
+            signaling.authenticate(sender);
 
             receiver.sendJson(Map.of("type", "hello", "protocolVersion", 1, "clientInstanceId", "sec-receiver"));
             JsonNode wR = receiver.receive(3000);
             String rConnId = wR.path("connectionId").asText();
+            signaling.authenticate(receiver);
 
             // Case A: Negative file size
             sender.sendJson(Map.of(
                 "type", "transfer.request",
-                "payload", Map.of("receiverConnectionId", rConnId, "fileName", "bad.dat", "fileSize", -50)
+                "payload", Map.of("workspaceId", signaling.workspace.id().toString(),
+                    "receiverConnectionId", rConnId, "fileName", "bad.dat", "fileSize", -50)
             ));
             JsonNode err1 = sender.receive(3000);
             assertEquals("error", err1.path("type").asText());
@@ -449,21 +458,23 @@ class LanIntegrationGateTest {
             // Case B: Path traversal filename
             sender.sendJson(Map.of(
                 "type", "transfer.request",
-                "payload", Map.of("receiverConnectionId", rConnId, "fileName", "../../windows/system32/cmd.exe", "fileSize", 100)
+                "payload", Map.of("workspaceId", signaling.workspace.id().toString(),
+                    "receiverConnectionId", rConnId, "fileName", "../../windows/system32/cmd.exe", "fileSize", 100)
             ));
             JsonNode ack2 = sender.receive(3000);
             // Server sanitizes base name to cmd.exe, preventing directory traversal
             assertEquals("transfer.status", ack2.path("type").asText());
             assertEquals("cmd.exe", ack2.path("payload").path("fileName").asText());
 
-            // Case C: Invalid SHA-256 hash (non-hex or wrong length)
+            // Case C: Legacy hash metadata is ignored by browser signaling; no hashing is performed.
             sender.sendJson(Map.of(
                 "type", "transfer.request",
-                "payload", Map.of("receiverConnectionId", rConnId, "fileName", "test.bin", "fileSize", 100, "sha256", "NOT-A-VALID-HASH")
+                "payload", Map.of("workspaceId", signaling.workspace.id().toString(),
+                    "receiverConnectionId", rConnId, "fileName", "test.bin", "fileSize", 100, "sha256", "NOT-A-VALID-HASH")
             ));
             JsonNode err3 = sender.receive(3000);
-            assertEquals("error", err3.path("type").asText());
-            assertEquals(ProtocolConstants.ERR_INVALID_PAYLOAD, err3.path("error").path("code").asText());
+
+            assertEquals("transfer.status", err3.path("type").asText());
         }
     }
 }

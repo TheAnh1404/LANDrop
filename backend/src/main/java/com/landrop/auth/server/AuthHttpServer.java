@@ -56,6 +56,8 @@ public class AuthHttpServer {
     private final com.landrop.device.server.DeviceHttpHandler deviceHttpHandler;
     private final ObjectMapper objectMapper;
     private HttpServer httpServer;
+    private byte[] cachedPortalHtml;
+    private byte[] cachedClientHtml;
 
     public AuthHttpServer(AuthService authService, AuthMiddleware authMiddleware) {
         this(AuthConfig.getAuthPort(), authService, authMiddleware, new WorkspaceService(), new com.landrop.chat.service.ChannelChatService());
@@ -135,6 +137,14 @@ public class AuthHttpServer {
         httpServer.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 
         // Configure REST endpoints
+        httpServer.createContext("/", this::handleRoot);
+        httpServer.createContext("/connect", this::handleClientUi);
+        httpServer.createContext("/client", this::handleClientUi);
+        httpServer.createContext("/auth/login", this::handleClientUi);
+        httpServer.createContext("/auth/register", this::handleClientUi);
+        httpServer.createContext("/workspaces", this::handleClientUi);
+        httpServer.createContext("/api", this::handleApiRoot);
+        httpServer.createContext("/api/", this::handleApiRoot);
         httpServer.createContext("/api/auth/register", this::handleRegister);
         httpServer.createContext("/api/auth/login", this::handleLogin);
         httpServer.createContext("/api/auth/refresh", this::handleRefresh);
@@ -317,6 +327,76 @@ public class AuthHttpServer {
         ));
     }
 
+    private void handleRoot(HttpExchange exchange) throws IOException {
+        if (handleCorsPreflight(exchange)) return;
+
+        String path = exchange.getRequestURI().getPath();
+        boolean isClientPath = path == null || path.isEmpty() || "/".equals(path) || "/index.html".equals(path)
+                || "/connect".equals(path) || "/client".equals(path)
+                || (path != null && (path.startsWith("/auth/") || path.startsWith("/w/") || "/workspaces".equals(path)));
+
+        if (isClientPath) {
+            String query = exchange.getRequestURI().getQuery();
+            if (query != null && query.contains("target=admin")) {
+                exchange.getResponseHeaders().set("Location", "/admin");
+                exchange.sendResponseHeaders(302, -1);
+                exchange.close();
+                return;
+            }
+
+            String accept = exchange.getRequestHeaders().getFirst("Accept");
+            if (accept != null && accept.contains("application/json") && !accept.contains("text/html")) {
+                handleApiRoot(exchange);
+                return;
+            }
+
+            byte[] bytes = getClientHtmlBytes();
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
+            return;
+        }
+
+        if ("/favicon.ico".equals(path)) {
+            exchange.sendResponseHeaders(204, -1);
+            exchange.close();
+            return;
+        }
+
+        String accept = exchange.getRequestHeaders().getFirst("Accept");
+        if (accept != null && accept.contains("text/html")) {
+            byte[] bytes = getClientHtmlBytes();
+            exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
+            exchange.sendResponseHeaders(200, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) {
+                os.write(bytes);
+            }
+            return;
+        }
+
+        ErrorResponse err = new ErrorResponse("Not Found", "Endpoint not found: " + path, 404);
+        sendJsonResponse(exchange, 404, err);
+    }
+
+    private void handleApiRoot(HttpExchange exchange) throws IOException {
+        if (handleCorsPreflight(exchange)) return;
+
+        Map<String, Object> apiInfo = new java.util.LinkedHashMap<>();
+        apiInfo.put("service", "LANDrop Server API");
+        apiInfo.put("status", "UP");
+        apiInfo.put("version", 1);
+        apiInfo.put("endpoints", Map.of(
+            "health", "/health",
+            "admin", "/admin",
+            "auth", "/api/auth",
+            "workspaces", "/api/workspaces",
+            "devices", "/api/devices"
+        ));
+        sendJsonResponse(exchange, 200, apiInfo);
+    }
+
     // ==========================================
     // UTILITY METHODS
     // ==========================================
@@ -387,6 +467,65 @@ public class AuthHttpServer {
 
         ErrorResponse err = new ErrorResponse(errorName, message != null ? message : errorName, status);
         sendJsonResponse(exchange, status, err);
+    }
+
+    private synchronized byte[] getPortalHtmlBytes() {
+        if (cachedPortalHtml != null) {
+            return cachedPortalHtml;
+        }
+
+        try (java.io.InputStream is = getClass().getResourceAsStream("/portal/index.html")) {
+            if (is != null) {
+                cachedPortalHtml = is.readAllBytes();
+                return cachedPortalHtml;
+            }
+        } catch (IOException ignored) {}
+
+        String fallback = """
+            <!DOCTYPE html><html lang="vi"><head><meta charset="UTF-8"><title>LANDrop Portal</title></head>
+            <body style="font-family:sans-serif; background:#0f172a; color:#f8fafc; padding:2rem; text-align:center;">
+            <h1>LANDrop LAN Portal</h1>
+            <p>Không gian truyền tệp và cộng tác mạng nội bộ LANDrop.</p>
+            <div style="margin:2rem 0;">
+              <a href="/admin" style="background:#0284c7; color:white; padding:10px 20px; border-radius:6px; text-decoration:none; margin:10px; display:inline-block;">Quản Trị Viên (/admin)</a>
+            </div>
+            </body></html>
+            """;
+        cachedPortalHtml = fallback.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        return cachedPortalHtml;
+    }
+
+    private void handleClientUi(HttpExchange exchange) throws IOException {
+        if (handleCorsPreflight(exchange)) {
+            return;
+        }
+
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            sendMethodNotAllowed(exchange, "GET");
+            return;
+        }
+
+        byte[] bytes = getClientHtmlBytes();
+        exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
+        exchange.sendResponseHeaders(200, bytes.length);
+        try (OutputStream os = exchange.getResponseBody()) {
+            os.write(bytes);
+        }
+    }
+
+    private synchronized byte[] getClientHtmlBytes() {
+        if (cachedClientHtml != null) {
+            return cachedClientHtml;
+        }
+
+        try (java.io.InputStream is = getClass().getResourceAsStream("/client/index.html")) {
+            if (is != null) {
+                cachedClientHtml = is.readAllBytes();
+                return cachedClientHtml;
+            }
+        } catch (IOException ignored) {}
+
+        return getPortalHtmlBytes();
     }
 
     public static void main(String[] args) {
