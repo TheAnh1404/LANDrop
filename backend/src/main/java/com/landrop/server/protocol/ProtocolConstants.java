@@ -67,6 +67,8 @@ public final class ProtocolConstants {
     public static final String EVENT_WEBRTC_OFFER = "webrtc.offer";
     public static final String EVENT_WEBRTC_ANSWER = "webrtc.answer";
     public static final String EVENT_WEBRTC_CANDIDATE = "webrtc.ice_candidate";
+    public static final String EVENT_WEBRTC_CANDIDATE_ALIAS = "webrtc.candidate";
+    public static final String EVENT_WEBRTC_CONNECTION_STATUS = "webrtc.connection-status";
 
     // Error Codes
     public static final String ERR_PROTOCOL_VERSION_UNSUPPORTED = "PROTOCOL_VERSION_UNSUPPORTED";

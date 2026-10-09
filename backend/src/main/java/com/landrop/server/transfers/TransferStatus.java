@@ -4,14 +4,17 @@ package com.landrop.server.transfers;
  * Status lifecycle for in-flight transfer control coordination (FOUNDATION-01A).
  */
 public enum TransferStatus {
-    PENDING,      // Requested, awaiting receiver response
+    REQUESTED,    // Awaiting receiver consent
     ACCEPTED,     // Accepted by receiver; ready for peer-to-peer data plane transfer
+    CONNECTING,
+    P2P_CONNECTED,
     REJECTED,     // Rejected by receiver
     CANCELLED,    // Cancelled by sender or receiver
     COMPLETED,    // Successfully finished
-    FAILED;       // Transfer failed or error occurred
+    FAILED,
+    EXPIRED;
 
     public boolean isTerminal() {
-        return this == REJECTED || this == CANCELLED || this == COMPLETED || this == FAILED;
+        return this == REJECTED || this == CANCELLED || this == COMPLETED || this == FAILED || this == EXPIRED;
     }
 }

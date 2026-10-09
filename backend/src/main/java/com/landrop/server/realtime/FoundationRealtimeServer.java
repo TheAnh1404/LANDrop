@@ -12,7 +12,6 @@ import com.landrop.server.logging.ServerEventLogger;
 import com.landrop.server.protocol.EventEnvelope;
 import com.landrop.server.protocol.ProtocolConstants;
 import com.landrop.server.transfers.TransferCoordinator;
-import com.landrop.server.transfers.TransferRecord;
 import com.landrop.util.AppLogger;
 import org.java_websocket.WebSocket;
 import org.java_websocket.drafts.Draft;
@@ -22,7 +21,9 @@ import org.java_websocket.handshake.ServerHandshakeBuilder;
 import org.java_websocket.exceptions.InvalidDataException;
 import org.java_websocket.server.WebSocketServer;
 
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.URI;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.*;
@@ -45,6 +46,7 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final ClientRegistry clientRegistry;
     private final TransferCoordinator transferCoordinator;
+    private final TransferSignalingHandler signalingHandler;
     private final long heartbeatIntervalMs;
     private final long heartbeatTimeoutMs;
     private final CompletableFuture<Void> ready = new CompletableFuture<>();
@@ -87,6 +89,9 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
         this.heartbeatTimeoutMs = heartbeatTimeoutMs > 0 ? heartbeatTimeoutMs : ProtocolConstants.DEFAULT_HEARTBEAT_TIMEOUT_MS;
         this.allowedOrigins = Set.copyOf(allowedOrigins);
         this.authenticationTimeoutMs = authenticationTimeoutMs > 0 ? authenticationTimeoutMs : 10_000L;
+        this.signalingHandler = new TransferSignalingHandler(clientRegistry, transferCoordinator,
+                connection -> authRequired() && validateRuntimeSession(connection),
+                (connection, envelope) -> sendEnvelope(connection.socket(), envelope));
         setReuseAddr(true);
         setConnectionLostTimeout(0); // We implement our own explicit application-level heartbeat protocol
     }
@@ -115,11 +120,35 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
     public ServerHandshakeBuilder onWebsocketHandshakeReceivedAsServer(
             WebSocket socket, Draft draft, ClientHandshake request) throws InvalidDataException {
         if (request.getResourceDescriptor().contains("?")
-                || (request.hasFieldValue("Origin") && !allowedOrigins.contains(request.getFieldValue("Origin")))) {
-            ServerEventLogger.log(ServerEvent.WS_AUTH_FAILED, "Realtime upgrade rejected by Origin/query policy.");
+                || (request.hasFieldValue("Origin") && !isOriginAllowed(request.getFieldValue("Origin")))) {
+            ServerEventLogger.log(ServerEvent.WS_AUTH_FAILED, "Realtime upgrade rejected by Origin/query policy: " + request.getFieldValue("Origin"));
             throw new InvalidDataException(1008, "Realtime upgrade rejected");
         }
         return super.onWebsocketHandshakeReceivedAsServer(socket, draft, request);
+    }
+
+    private boolean isOriginAllowed(String origin) {
+        if (origin == null || origin.isBlank()) {
+            return true;
+        }
+        if (allowedOrigins.contains("*") || allowedOrigins.contains(origin)) {
+            return true;
+        }
+        try {
+            URI uri = URI.create(origin);
+            String host = uri.getHost();
+            if (host == null || host.isBlank()) {
+                return false;
+            }
+            if ("localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host) || "::1".equals(host)) {
+                return true;
+            }
+            InetAddress addr = InetAddress.getByName(host);
+            if (addr.isSiteLocalAddress() || addr.isLoopbackAddress() || addr.isLinkLocalAddress()) {
+                return true;
+            }
+        } catch (Exception ignored) {}
+        return false;
     }
 
     /** Connects persistent workspace chat broadcasts to the authenticated client gateway. */
@@ -127,14 +156,30 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
         this.channelChatService = channelChatService;
     }
 
+    public void setSignalingWorkspaceRepository(com.landrop.database.repository.WorkspaceRepository repository) {
+        signalingHandler.setWorkspaceRepository(repository);
+    }
+
     public void awaitReady() throws Exception {
         ready.get(10, TimeUnit.SECONDS);
+    }
+
+    public boolean cancelTransferFromAdmin(String transferId) {
+        return signalingHandler.cancelFromAdmin(transferId);
     }
 
     /** Control-plane hook for the Admin Dashboard; no client auth model is changed here. */
     public boolean disconnectClient(String clientInstanceId, String reasonCode, String reasonMessage) {
         if (clientInstanceId == null || clientInstanceId.isBlank()) return false;
         ClientConnection connection = clientRegistry.findByInstanceId(clientInstanceId).orElse(null);
+        if (connection == null) return false;
+        return disconnectConnection(connection.connectionId(), reasonCode, reasonMessage);
+    }
+
+    /** Disconnects the selected socket only, even if its client instance subsequently reconnects. */
+    public boolean disconnectConnection(String connectionId, String reasonCode, String reasonMessage) {
+        if (connectionId == null || connectionId.isBlank()) return false;
+        ClientConnection connection = clientRegistry.get(connectionId).orElse(null);
         if (connection == null) return false;
         String code = reasonCode == null || reasonCode.isBlank() ? ProtocolConstants.ERR_ADMIN_DISCONNECT : reasonCode;
         String message = reasonMessage == null || reasonMessage.isBlank() ? "Disconnected by server administrator." : reasonMessage;
@@ -169,6 +214,7 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
                         }
                     }
                 }
+                signalingHandler.sweep();
                 clientRegistry.sweepTimeouts(heartbeatTimeoutMs, staleConn -> {
                     ServerEventLogger.log(ServerEvent.HEARTBEAT_TIMEOUT, staleConn.connectionId(),
                             "Inactive for > " + heartbeatTimeoutMs + "ms; terminating connection.");
@@ -230,18 +276,31 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
             if (!connection.isOpen() || clientRegistry.get(connection.connectionId()).orElse(null) != connection) return;
             connection.updateHeartbeat();
 
-            if (authRequired() && !ProtocolConstants.EVENT_AUTH.equals(type)) {
-                if (!connection.isAuthenticated() && !ProtocolConstants.EVENT_HEARTBEAT.equals(type)) {
-                    if ("channel.join".equals(type)) ServerEventLogger.log(
-                            ServerEvent.CHANNEL_SUBSCRIBE_DENIED, connection.connectionId(), "Authentication required.");
-                    sendEnvelope(socket, EventEnvelope.error(requestId, AuthErrorCode.AUTH_REQUIRED,
-                            "Authenticate before using realtime services."));
-                    return;
-                }
+            if (authRequired()) {
                 if (connection.isAuthenticated() && !validateRuntimeSession(connection)) {
                     if ("channel.join".equals(type)) ServerEventLogger.log(
                             ServerEvent.CHANNEL_SUBSCRIBE_DENIED, connection.connectionId(), "Session validation failed.");
                     return;
+                }
+
+                boolean isBasicEvent = ProtocolConstants.EVENT_AUTH.equals(type)
+                        || ProtocolConstants.EVENT_HEARTBEAT.equals(type)
+                        || ProtocolConstants.EVENT_ECHO.equals(type);
+
+                if (!isBasicEvent) {
+                    boolean isKnownProtected = type != null && (
+                        type.startsWith("channel.")
+                        || type.startsWith("transfer.")
+                        || type.startsWith("webrtc.")
+                    );
+
+                    if (isKnownProtected && !connection.isAuthenticated()) {
+                        if ("channel.join".equals(type)) ServerEventLogger.log(
+                                ServerEvent.CHANNEL_SUBSCRIBE_DENIED, connection.connectionId(), "Authentication required.");
+                        sendEnvelope(socket, EventEnvelope.error(requestId, AuthErrorCode.AUTH_REQUIRED,
+                                "Authenticate before using realtime services."));
+                        return;
+                    }
                 }
             }
 
@@ -262,24 +321,17 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
                         "serverTimestamp", Instant.now().toString()
                     )));
                 }
-                case ProtocolConstants.EVENT_TRANSFER_REQUEST -> {
-                    handleTransferRequest(connection, root, requestId);
-                }
-                case ProtocolConstants.EVENT_TRANSFER_ACCEPT -> {
-                    handleTransferAccept(connection, root, requestId);
-                }
-                case ProtocolConstants.EVENT_TRANSFER_REJECT -> {
-                    handleTransferReject(connection, root, requestId);
-                }
-                case ProtocolConstants.EVENT_TRANSFER_CANCEL -> {
-                    handleTransferCancel(connection, root, requestId);
-                }
-                case ProtocolConstants.EVENT_WEBRTC_SIGNAL,
+                case ProtocolConstants.EVENT_TRANSFER_REQUEST,
+                     ProtocolConstants.EVENT_TRANSFER_ACCEPT,
+                     ProtocolConstants.EVENT_TRANSFER_REJECT,
+                     ProtocolConstants.EVENT_TRANSFER_CANCEL,
+                     ProtocolConstants.EVENT_WEBRTC_SIGNAL,
                      ProtocolConstants.EVENT_WEBRTC_OFFER,
                      ProtocolConstants.EVENT_WEBRTC_ANSWER,
-                     ProtocolConstants.EVENT_WEBRTC_CANDIDATE -> {
-                    handleWebRTCSignal(connection, root, type, requestId);
-                }
+                     ProtocolConstants.EVENT_WEBRTC_CANDIDATE,
+                     ProtocolConstants.EVENT_WEBRTC_CANDIDATE_ALIAS,
+                     ProtocolConstants.EVENT_WEBRTC_CONNECTION_STATUS ->
+                        signalingHandler.handle(connection, type, root.path("payload"), requestId);
                 case "channel.join" -> handleChannelJoin(connection, root.path("payload"), requestId);
                 case "channel.leave" -> handleChannelLeave(connection, root.path("payload"), requestId);
                 default -> {
@@ -349,69 +401,6 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
             sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INVALID_PAYLOAD,
                     "A valid channelId is required."));
             return null;
-        }
-    }
-
-    /**
-     * WebRTC signaling relay transferring SDP offers, answers, and ICE candidates
-     * directly between authenticated browser sessions without the server ever touching file bytes.
-     */
-    private void handleWebRTCSignal(ClientConnection connection, JsonNode root, String eventType, String requestId) {
-        JsonNode payload = root.path("payload");
-        if (payload.isMissingNode() || payload.isNull()) {
-            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INVALID_PAYLOAD,
-                    "Payload is required for WebRTC signaling."));
-            return;
-        }
-
-        String transferId = payload.hasNonNull("transferId") ? payload.path("transferId").asText(null) : null;
-        String toConnId = payload.hasNonNull("toConnectionId") ? payload.path("toConnectionId").asText(null) : null;
-
-        // Resolve destination connection via active TransferRecord if only transferId was supplied
-        if ((toConnId == null || toConnId.isBlank()) && transferId != null && !transferId.isBlank()) {
-            TransferRecord record = transferCoordinator.getTransfer(transferId).orElse(null);
-            if (record != null) {
-                if (record.senderConnectionId().equals(connection.connectionId())) {
-                    toConnId = record.receiverConnectionId();
-                } else if (record.receiverConnectionId().equals(connection.connectionId())) {
-                    toConnId = record.senderConnectionId();
-                }
-            }
-        }
-
-        if (toConnId == null || toConnId.isBlank()) {
-            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INVALID_PAYLOAD,
-                    "Target receiver connection or valid transferId is required for WebRTC signaling."));
-            return;
-        }
-
-        ClientConnection target = clientRegistry.get(toConnId).orElse(null);
-        if (target == null || !target.isOpen()) {
-            sendEnvelope(connection.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_RECEIVER_NOT_FOUND,
-                    "Target peer for WebRTC signaling is offline or not found."));
-            return;
-        }
-
-        // Convert payload into a map and stamp sender metadata
-        Map<String, Object> forwardedPayload = new HashMap<>();
-        Iterator<Map.Entry<String, JsonNode>> fields = payload.fields();
-        while (fields.hasNext()) {
-            Map.Entry<String, JsonNode> entry = fields.next();
-            forwardedPayload.put(entry.getKey(), entry.getValue());
-        }
-        forwardedPayload.put("fromConnectionId", connection.connectionId());
-        forwardedPayload.put("fromUserId", connection.userId() != null ? connection.userId().toString() : "");
-        forwardedPayload.put("fromDeviceName", connection.deviceName() != null ? connection.deviceName() : "Browser Session");
-
-        // Forward signaling envelope directly to target peer
-        sendEnvelope(target.socket(), EventEnvelope.event(eventType, null, forwardedPayload));
-
-        // Acknowledge delivery to sender if client specified a requestId
-        if (requestId != null && !requestId.isBlank()) {
-            sendEnvelope(connection.socket(), EventEnvelope.event(eventType + "_ack", requestId, Map.of(
-                "status", "delivered",
-                "toConnectionId", toConnId
-            )));
         }
     }
 
@@ -537,154 +526,6 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
             ProtocolConstants.PROTOCOL_VERSION, heartbeatIntervalMs));
     }
 
-    private void handleTransferRequest(ClientConnection sender, JsonNode root, String requestId) {
-        JsonNode payload = root.path("payload");
-        String receiverConnId = payload.hasNonNull("receiverConnectionId") ? payload.path("receiverConnectionId").asText() :
-                (payload.hasNonNull("targetConnectionId") ? payload.path("targetConnectionId").asText() : null);
-        String fileName = payload.path("fileName").asText(null);
-        long fileSize = payload.path("fileSize").asLong(-1);
-        String sha256 = payload.hasNonNull("sha256") ? payload.path("sha256").asText() : null;
-
-        try {
-            TransferRecord record = transferCoordinator.requestTransfer(sender.connectionId(), receiverConnId, fileName, fileSize, sha256);
-            ServerEventLogger.log(ServerEvent.TRANSFER_REQUESTED, sender.connectionId(),
-                    "Transfer " + record.transferId() + " -> Receiver: " + receiverConnId + " (" + fileName + ", " + fileSize + " bytes)");
-
-            // Confirm request accepted to sender
-            ServerEventLogger.log(ServerEvent.TRANSFER_STATUS, sender.connectionId(),
-                    "Transfer " + record.transferId() + " -> PENDING");
-            sendEnvelope(sender.socket(), EventEnvelope.event(
-                ProtocolConstants.EVENT_TRANSFER_STATUS,
-                requestId,
-                Map.of(
-                    "transferId", record.transferId(),
-                    "status", record.status().name(),
-                    "fileName", record.fileName(),
-                    "fileSize", record.fileSize()
-                )
-            ));
-
-            // Signal request to target receiver
-            clientRegistry.get(receiverConnId).ifPresent(receiver -> {
-                sendEnvelope(receiver.socket(), EventEnvelope.event(
-                    ProtocolConstants.EVENT_TRANSFER_REQUEST,
-                    null,
-                    Map.of(
-                        "transferId", record.transferId(),
-                        "senderConnectionId", sender.connectionId(),
-                        "senderDeviceName", sender.deviceName(),
-                        "fileName", record.fileName(),
-                        "fileSize", record.fileSize(),
-                        "sha256", record.sha256() != null ? record.sha256() : ""
-                    )
-                ));
-            });
-
-        } catch (IllegalStateException e) {
-            if ("RECEIVER_NOT_FOUND".equals(e.getMessage())) {
-                ServerEventLogger.log(ServerEvent.TRANSFER_FAILED, sender.connectionId(), "Receiver connection not found: " + receiverConnId);
-                sendEnvelope(sender.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_RECEIVER_NOT_FOUND,
-                        "Target client receiver not found or offline."));
-            } else {
-                sendEnvelope(sender.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INVALID_TRANSFER_STATE, e.getMessage()));
-            }
-        } catch (IllegalArgumentException e) {
-            ServerEventLogger.log(ServerEvent.TRANSFER_FAILED, sender.connectionId(), "Invalid transfer request: " + e.getMessage());
-            sendEnvelope(sender.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INVALID_PAYLOAD, e.getMessage()));
-        }
-    }
-
-    private void handleTransferAccept(ClientConnection receiver, JsonNode root, String requestId) {
-        JsonNode payload = root.path("payload");
-        String transferId = payload.path("transferId").asText(null);
-
-        try {
-            TransferRecord record = transferCoordinator.acceptTransfer(transferId, receiver.connectionId());
-            ServerEventLogger.log(ServerEvent.TRANSFER_ACCEPTED, receiver.connectionId(), "Transfer " + transferId + " accepted.");
-            ServerEventLogger.log(ServerEvent.TRANSFER_STATUS, receiver.connectionId(), "Transfer " + transferId + " -> ACCEPTED");
-
-            // Status ack to receiver
-            sendEnvelope(receiver.socket(), EventEnvelope.event(
-                ProtocolConstants.EVENT_TRANSFER_STATUS,
-                requestId,
-                Map.of("transferId", transferId, "status", record.status().name())
-            ));
-
-            // Notify sender
-            clientRegistry.get(record.senderConnectionId()).ifPresent(sender -> {
-                sendEnvelope(sender.socket(), EventEnvelope.event(
-                    ProtocolConstants.EVENT_TRANSFER_ACCEPT,
-                    null,
-                    Map.of("transferId", transferId, "receiverConnectionId", receiver.connectionId())
-                ));
-            });
-
-        } catch (Exception e) {
-            sendEnvelope(receiver.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INVALID_TRANSFER_STATE, e.getMessage()));
-        }
-    }
-
-    private void handleTransferReject(ClientConnection receiver, JsonNode root, String requestId) {
-        JsonNode payload = root.path("payload");
-        String transferId = payload.path("transferId").asText(null);
-        String reason = payload.hasNonNull("reason") ? payload.path("reason").asText() : "Rejected by receiver";
-
-        try {
-            TransferRecord record = transferCoordinator.rejectTransfer(transferId, receiver.connectionId(), reason);
-            ServerEventLogger.log(ServerEvent.TRANSFER_STATUS, receiver.connectionId(), "Transfer " + transferId + " -> REJECTED");
-
-            sendEnvelope(receiver.socket(), EventEnvelope.event(
-                ProtocolConstants.EVENT_TRANSFER_STATUS,
-                requestId,
-                Map.of("transferId", transferId, "status", record.status().name())
-            ));
-
-            clientRegistry.get(record.senderConnectionId()).ifPresent(sender -> {
-                sendEnvelope(sender.socket(), EventEnvelope.event(
-                    ProtocolConstants.EVENT_TRANSFER_REJECT,
-                    null,
-                    Map.of("transferId", transferId, "reason", reason)
-                ));
-            });
-
-        } catch (Exception e) {
-            sendEnvelope(receiver.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INVALID_TRANSFER_STATE, e.getMessage()));
-        }
-    }
-
-    private void handleTransferCancel(ClientConnection actor, JsonNode root, String requestId) {
-        JsonNode payload = root.path("payload");
-        String transferId = payload.path("transferId").asText(null);
-        String reason = payload.hasNonNull("reason") ? payload.path("reason").asText() : "Cancelled by user";
-
-        try {
-            TransferRecord record = transferCoordinator.cancelTransfer(transferId, actor.connectionId(), reason);
-            ServerEventLogger.log(ServerEvent.TRANSFER_STATUS, actor.connectionId(), "Transfer " + transferId + " -> CANCELLED");
-
-            sendEnvelope(actor.socket(), EventEnvelope.event(
-                ProtocolConstants.EVENT_TRANSFER_STATUS,
-                requestId,
-                Map.of("transferId", transferId, "status", record.status().name())
-            ));
-
-            // Notify counterpart
-            String otherConnId = record.senderConnectionId().equals(actor.connectionId())
-                    ? record.receiverConnectionId()
-                    : record.senderConnectionId();
-
-            clientRegistry.get(otherConnId).ifPresent(other -> {
-                sendEnvelope(other.socket(), EventEnvelope.event(
-                    ProtocolConstants.EVENT_TRANSFER_CANCEL,
-                    null,
-                    Map.of("transferId", transferId, "reason", reason)
-                ));
-            });
-
-        } catch (Exception e) {
-            sendEnvelope(actor.socket(), EventEnvelope.error(requestId, ProtocolConstants.ERR_INVALID_TRANSFER_STATE, e.getMessage()));
-        }
-    }
-
     @Override
     public void onClose(WebSocket socket, int code, String reason, boolean remote) {
         synchronized (socket) {
@@ -727,6 +568,7 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
         authorizationHeaders.clear();
         channelSubscribers.clear();
         clientRegistry.clear();
+        transferCoordinator.clear();
     }
 
     private void cleanupConnection(String connectionId) {
@@ -740,19 +582,7 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
     }
 
     private void notifyDisconnectedPeerTransfers(String disconnectedConnId) {
-        List<TransferRecord> cancelled = transferCoordinator.onClientDisconnected(disconnectedConnId);
-        for (TransferRecord t : cancelled) {
-            String peerConnId = t.senderConnectionId().equals(disconnectedConnId)
-                    ? t.receiverConnectionId()
-                    : t.senderConnectionId();
-            clientRegistry.get(peerConnId).ifPresent(peer -> {
-                sendEnvelope(peer.socket(), EventEnvelope.event(
-                    ProtocolConstants.EVENT_TRANSFER_CANCEL,
-                    null,
-                    Map.of("transferId", t.transferId(), "reason", "PEER_DISCONNECTED")
-                ));
-            });
-        }
+        signalingHandler.disconnected(disconnectedConnId);
     }
 
     private void handleAuth(ClientConnection connection, JsonNode root, String requestId) {
