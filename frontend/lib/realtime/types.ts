@@ -96,3 +96,92 @@ export interface AuthCommandPayload {
   accessToken: string;
   deviceId?: string;
 }
+
+export interface TransferRequestPayload {
+  transferId?: string;
+  workspaceId: string;
+  receiverConnectionId?: string;
+  targetConnectionId?: string;
+  senderConnectionId?: string;
+  senderDeviceName?: string;
+  senderUserId?: string;
+  fileName: string;
+  fileSize: number;
+  sha256?: string;
+  status?: string;
+}
+
+export interface TransferAcceptPayload {
+  transferId: string;
+  receiverConnectionId?: string;
+}
+
+export interface TransferRejectPayload {
+  transferId: string;
+  reason?: string;
+}
+
+export interface TransferCancelPayload {
+  transferId: string;
+  reason?: string;
+}
+
+export interface TransferStatusPayload {
+  transferId: string;
+  status: string;
+  fileName?: string;
+  fileSize?: number;
+  reason?: string;
+  workspaceId?: string;
+  senderConnectionId?: string;
+  receiverConnectionId?: string;
+  senderUserId?: string;
+  receiverUserId?: string;
+  createdAt?: string;
+  expiresAt?: string;
+}
+
+export interface WebRTCOfferPayload {
+  transferId: string;
+  sdp: {
+    type: 'offer';
+    sdp: string;
+  };
+  workspaceId?: string;
+  toConnectionId?: string;
+  fromConnectionId?: string;
+  fromUserId?: string;
+  fromDeviceName?: string;
+}
+
+export interface WebRTCAnswerPayload {
+  transferId: string;
+  sdp: {
+    type: 'answer';
+    sdp: string;
+  };
+  workspaceId?: string;
+  toConnectionId?: string;
+  fromConnectionId?: string;
+  fromUserId?: string;
+  fromDeviceName?: string;
+}
+
+export interface WebRTCIceCandidatePayload {
+  transferId: string;
+  candidate: {
+    candidate: string;
+    sdpMid?: string | null;
+    sdpMLineIndex?: number | null;
+    usernameFragment?: string | null;
+  } | null;
+  workspaceId?: string;
+  toConnectionId?: string;
+  fromConnectionId?: string;
+}
+
+export interface WebRTCConnectionStatusPayload {
+  transferId: string;
+  status: 'connecting' | 'connected' | 'disconnected' | 'failed' | 'closed';
+  fromConnectionId?: string;
+}

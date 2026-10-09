@@ -57,6 +57,8 @@ export class RealtimeClient {
   private readonly messageListeners = new Set<ChatEventListener>();
   private readonly reconnectListeners = new Set<ReconnectListener>();
   private readonly channelJoinedListeners = new Set<ChannelJoinedListener>();
+  private readonly envelopeListeners = new Set<(envelope: RealtimeEnvelope) => void>();
+  private connectionId: string | null = null;
 
   constructor() {
     this.clientInstanceId = this.resolveClientInstanceId();
@@ -167,11 +169,24 @@ export class RealtimeClient {
       return;
     }
 
+    // Notify registered generic envelope listeners (e.g. WebRTC peer service)
+    this.envelopeListeners.forEach(listener => {
+      try {
+        listener(envelope);
+      } catch (err) {
+        this.logDebug('LISTENER_ERROR', 'Envelope listener threw an unhandled error');
+      }
+    });
+
     const type = envelope.type;
 
     switch (type) {
       case 'welcome': {
         const welcome = (envelope.payload || envelope) as WelcomePayload;
+        this.connectionId = welcome.connectionId || (envelope as any).connectionId || null;
+        if (this.connectionId) {
+          this.logDebug('WS_CONNECTION_ID', `Connection ID assigned: ${this.connectionId}`);
+        }
         this.heartbeatIntervalMs = welcome.heartbeatIntervalMs || DEFAULT_HEARTBEAT_INTERVAL_MS;
         this.startHeartbeat();
 
@@ -463,6 +478,7 @@ export class RealtimeClient {
       }
       this.ws = null;
     }
+    this.connectionId = null;
   }
 
   private sendJson(payload: object): boolean {
@@ -532,6 +548,19 @@ export class RealtimeClient {
   public onChannelJoined(listener: ChannelJoinedListener): () => void {
     this.channelJoinedListeners.add(listener);
     return () => this.channelJoinedListeners.delete(listener);
+  }
+
+  public getConnectionId(): string | null {
+    return this.connectionId;
+  }
+
+  public sendEnvelope(envelope: object): boolean {
+    return this.sendJson(envelope);
+  }
+
+  public onEnvelope(listener: (envelope: RealtimeEnvelope) => void): () => void {
+    this.envelopeListeners.add(listener);
+    return () => this.envelopeListeners.delete(listener);
   }
 }
 
