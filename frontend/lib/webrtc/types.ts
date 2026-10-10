@@ -29,6 +29,8 @@ export interface WebRTCDiagnostics {
   peerConnectionState: RTCPeerConnectionState | 'none';
   dataChannelState: RTCDataChannelState | 'none';
   roundTripLatencyMs: number | null;
+  chatReceiveRttMs?: number;
+  chatDurableRttMs?: number;
   lastError: string | null;
   lastUpdated: number;
 }
@@ -112,6 +114,10 @@ export interface P2PChatMessage {
   ack?: boolean;
   pending?: boolean;
   status?: string;
+  received?: boolean;
+  receiveRttMs?: number;
+  durableRttMs?: number;
+  storageError?: string;
 }
 
 export type TechnicalDataMessage =

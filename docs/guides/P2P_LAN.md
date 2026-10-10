@@ -63,7 +63,7 @@ Cho phép cổng proxy qua firewall và kết nối WebRTC giữa hai máy theo 
 5. Tiến trình dựa trên byte được receiver xác nhận đã ghi/checkpoint. Trạng thái xác minh/lưu có thể mất thời gian với tệp lớn.
 6. Completed chỉ sau SHA-256 và receipt từ receiver. Nếu lưu trong trình duyệt, dùng **Tải tệp đã xác minh** để xuất ra thư mục.
 
-Chế độ không có disk sink giới hạn tổng 64 MiB mỗi peer và mất tệp tạm khi reload. OPFS cần quota; staging và bản lưu ngoài có thể chiếm hai lần dung lượng. Không hứa tệp bất kỳ lớn bao nhiêu cũng nhận được.
+Chế độ không có disk sink giới hạn tổng 64 MiB mỗi peer và mất tệp tạm khi reload. OPFS cần quota; staging và bản lưu ngoài có thể chiếm hai lần dung lượng. Private browsing có thể bị giới hạn dung lượng thấp hơn; dùng profile thường cho tệp lớn. Không hứa tệp bất kỳ lớn bao nhiêu cũng nhận được.
 
 ## Pause, mất mạng và reload
 
@@ -94,7 +94,7 @@ npm run build
 mvn -pl backend test '-Dlandrop.database.enabled=false' '-Dtest=WebRTCSignalingRelayTest'
 ```
 
-Đã cài dev dependency Playwright. Browser scripts mặc định dùng Chrome đã cài; `CHROME_PATH` ghi đè đường dẫn. Protocol smoke tự tạo server loopback và hai browser context cô lập, ghi report vào `output/p2p/browser-report.json`:
+Đã cài dev dependency Playwright. Browser scripts mặc định dùng Chrome đã cài; `CHROME_PATH` ghi đè đường dẫn. Protocol smoke tự tạo server loopback và hai browser context cô lập, ghi report vào `output/p2p/browser-report.json` và file theo kích thước. Với bài lớn hơn 128 MiB, harness tạo hai profile Chrome thường riêng rồi dọn sau kiểm thử:
 
 ```powershell
 $env:LANDROP_TEST_MIB = '128'

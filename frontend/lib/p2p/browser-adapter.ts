@@ -2,18 +2,19 @@ import { WebRTCPeerService } from '../webrtc/webrtc-peer-service';
 import type { RealtimeClient } from '../realtime/realtime-client';
 import type { RealtimeEnvelope } from '../realtime/types';
 import type { OnlinePeerItem } from '../webrtc/types';
+import { uuid } from './engine';
 export * from './engine';
 
 interface BrowserOptions {
   userId: string; name: string; serverUrl: string;
   send: (packet: unknown) => boolean; connectionId: () => string;
-  onChat: (peer: OnlinePeerItem, message: unknown) => void;
+  onChat: (peer: OnlinePeerItem, message: unknown, workspace: string) => void;
   onTasks: (tasks: unknown[]) => void;
-  onState: (peer: OnlinePeerItem, service: WebRTCPeerService) => void;
-  onReceived: (peer: OnlinePeerItem, file: unknown) => void;
+  onState: (peer: OnlinePeerItem, service: WebRTCPeerService, workspace: string) => void;
+  onReceived: (peer: OnlinePeerItem, file: unknown, workspace: string) => void;
   onError: (message: string) => void;
 }
-interface BrowserEntry { peer: OnlinePeerItem; workspace: string; service: WebRTCPeerService; unsubs: (() => void)[]; stopped: boolean; attempts: number; lastAttempt: number; }
+interface BrowserEntry { peer: OnlinePeerItem; workspace: string; service: WebRTCPeerService; unsubs: (() => void)[]; stopped: boolean; attempts: number; lastAttempt: number; connecting?: Promise<void>; }
 export class BrowserPeerManager {
   private listeners = new Set<(packet: RealtimeEnvelope) => void>();
   private entries = new Map<string, BrowserEntry>();
@@ -37,19 +38,26 @@ export class BrowserPeerManager {
     const entry: BrowserEntry = { peer, workspace, service, unsubs: [], stopped: false, attempts: 0, lastAttempt: 0 };
     this.entries.set(key, entry);
     entry.unsubs = [
-      service.onChatMessage(message => this.options.onChat(entry.peer, message)),
+      service.onChatMessage(message => this.options.onChat(entry.peer, message, entry.workspace)),
       service.onTasks(() => this.options.onTasks([...this.entries.values()].flatMap(item => item.service.getTasks().map(task => ({ ...task, peerName: item.peer.displayName }))))),
-      service.onStateChange(state => { if (state === 'CONNECTED') entry.attempts = 0; this.options.onState(entry.peer, service); }),
+      service.onStateChange(state => {
+        if (state === 'CONNECTED') entry.attempts = 0;
+        this.options.onState(entry.peer, service, entry.workspace);
+        if (state === 'DISCONNECTED' && !entry.stopped) this.options.send({ type: 'peer.list', requestId: `recover-${uuid()}` });
+      }),
       service.onDiagnostics(diagnostics => { if (diagnostics.lastError) this.options.onError(diagnostics.lastError); }),
-      service.onFileReceived(file => this.options.onReceived(entry.peer, file)),
+      service.onFileReceived(file => this.options.onReceived(entry.peer, file, entry.workspace)),
     ];
     return entry;
   }
   async select(peer: OnlinePeerItem, workspace: string) {
     const entry = this.entry(peer, workspace); this.current = entry; entry.stopped = false;
-    this.options.onState(peer, entry.service);
+    this.options.onState(peer, entry.service, entry.workspace);
+    if (entry.connecting) { await entry.connecting; return; }
     if (!['CONNECTED', 'REQUESTING', 'WAITING_ACCEPT', 'SIGNALING', 'CONNECTING'].includes(entry.service.getState())) {
-      await entry.service.requestConnection({ workspaceId: workspace, receiverConnectionId: peer.connectionId, targetUserId: peer.userId || undefined, targetDeviceId: peer.deviceId || undefined, targetDeviceName: peer.deviceName || peer.displayName, fileName: 'p2p-chat-session', fileSize: 0 });
+      const connecting = entry.service.requestConnection({ workspaceId: workspace, receiverConnectionId: peer.connectionId, targetUserId: peer.userId || undefined, targetDeviceId: peer.deviceId || undefined, targetDeviceName: peer.deviceName || peer.displayName, fileName: 'p2p-chat-session', fileSize: 0 });
+      entry.connecting = connecting;
+      try { await connecting; } finally { if (entry.connecting === connecting) entry.connecting = undefined; }
     }
   }
   handle(packet: RealtimeEnvelope): boolean {
@@ -84,8 +92,18 @@ export class BrowserPeerManager {
     return packet.type.startsWith('transfer.') || packet.type.startsWith('webrtc.');
   }
   getService() { return this.current?.service || null; }
-  async sendChat(text: string) { if (!this.current) throw new Error('Select a peer first.'); return this.current.service.sendChatMessage(text); }
-  async sendFile(file: File) { if (!this.current) throw new Error('Select a peer first.'); await this.current.service.sendFile(file); }
+  async sendChat(text: string, peer?: OnlinePeerItem, workspace?: string) {
+    const entry = peer && workspace ? this.entry(peer, workspace) : this.current;
+    if (!entry) throw new Error('Select a peer first.');
+    if (peer && workspace) await this.select(peer, workspace);
+    return entry.service.sendChatMessage(text);
+  }
+  async sendFile(file: File, peer?: OnlinePeerItem, workspace?: string) {
+    const entry = peer && workspace ? this.entry(peer, workspace) : this.current;
+    if (!entry) throw new Error('Select a peer first.');
+    if (peer && workspace) await this.select(peer, workspace);
+    await entry.service.sendFile(file);
+  }
   task(id: string) { const entry = [...this.entries.values()].find(item => item.service.getTasks().some(task => task.id === id)); const core = entry?.service.getReliable(); if (!core) throw new Error('Transfer not found.'); return core; }
   suspend() { for (const entry of this.entries.values()) entry.service.suspend(); }
   disconnect() { if (this.current) { this.current.stopped = true; this.current.service.cancelConnection(); } }

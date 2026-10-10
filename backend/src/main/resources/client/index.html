@@ -1012,6 +1012,7 @@
             <div class="chat-peer-status" id="chat-active-status">
               <span class="status-dot"></span>
               <span id="chat-active-status-text">Đang kiểm tra kết nối...</span>
+              <span id="chat-receive-latency" title="RTT từ gửi qua mạng đến phản hồi bên nhận; không phải thời gian một chiều hay ACK ghi đĩa"></span>
             </div>
           </div>
         </div>
@@ -1179,14 +1180,18 @@
         userId: currentUser.id, name: currentUser.displayName || currentUser.username, serverUrl: window.location.origin,
         send: packet => { if (ws?.readyState !== WebSocket.OPEN) return false; ws.send(JSON.stringify(packet)); return true; },
         connectionId: () => myConnectionId,
-        onChat: (peer, message) => {
-          const list = conversations[peer.connectionId] || (conversations[peer.connectionId] = []);
+        onChat: (peer, message, conversationWorkspace) => {
+          const list = conversationForPeer(peer, conversationWorkspace);
           const item = { ...message, isSelf: message.direction === 'sent' };
           const index = list.findIndex(row => row.id === item.id); if (index < 0) list.push(item); else list[index] = item;
-          if (selectedPeer?.userId === peer.userId && selectedPeer?.deviceId === peer.deviceId) { selectedPeer = peer; renderChatTimeline(); }
+          if (conversationWorkspace === workspaceId && selectedPeer?.userId === peer.userId && selectedPeer?.deviceId === peer.deviceId) {
+            selectedPeer = peer; updateChatMessage(item);
+            if (Number.isFinite(message.receiveRttMs)) document.getElementById('chat-receive-latency').textContent = ' · Chat RTT ' + message.receiveRttMs.toFixed(2) + ' ms';
+          }
         },
         onTasks: tasks => { reliableTasks = tasks; renderReliableTasks(); },
-        onState: (peer, service) => {
+        onState: (peer, service, conversationWorkspace) => {
+          if (conversationWorkspace !== workspaceId) return;
           if (!selectedPeer || (selectedPeer.userId === peer.userId && selectedPeer.deviceId === peer.deviceId)) {
             if (!selectedPeer) {
               selectedPeer = peer;
@@ -1201,10 +1206,10 @@
             updateChatHeaderStatus(service.getState() === 'CONNECTED', service.getState() === 'CONNECTED' ? 'P2P đã kết nối · Chat và tệp được xác nhận' : 'Đang kết nối với thiết bị…');
           }
         },
-        onReceived: (peer, file) => {
-          const list = conversations[peer.connectionId] || (conversations[peer.connectionId] = []);
+        onReceived: (peer, file, conversationWorkspace) => {
+          const list = conversationForPeer(peer, conversationWorkspace);
           if (!list.some(row => row.id === file.id)) list.push({ id: file.id, text: file.fileName, timestamp: file.receivedAt, type: 'file', isSelf: false, fileMeta: { name: file.fileName, size: file.fileSize }, transferStatus: 'completed', blobUrl: file.blobUrl });
-          if (selectedPeer?.userId === peer.userId) renderChatTimeline();
+          if (conversationWorkspace === workspaceId && selectedPeer?.userId === peer.userId && selectedPeer?.deviceId === peer.deviceId) updateChatMessage(list.find(row => row.id === file.id));
         },
         onError: message => { document.getElementById('client-feedback').textContent = message; }
       });
@@ -1214,13 +1219,15 @@
       let panel = document.getElementById('p2p-transfer-panel');
       if (!panel) { panel = document.createElement('section'); panel.id = 'p2p-transfer-panel'; panel.setAttribute('aria-label', 'Hàng đợi tệp có xác minh'); document.getElementById('chat-pane').prepend(panel); }
       panel.style.cssText = 'flex-shrink:0;max-height:280px;overflow:auto;padding:14px 20px;background:linear-gradient(120deg,#0b172b,#082b34);border-bottom:1px solid #164e63;color:#cbd5e1';
-      const labels = { queued:'Trong hàng đợi', preparing:'Đang kiểm tra tệp', waiting:'Chờ người nhận', offered:'Tệp được gửi đến', transferring:'Đang truyền', paused:'Đã tạm dừng', interrupted:'Chờ kết nối lại', verifying:'Đang xác minh và lưu', completed:'Đã lưu · SHA-256 khớp', cancelled:'Đã hủy', rejected:'Đã từ chối', failed:'Cần thử lại' };
+      const labels = { queued:'Trong hàng đợi', preparing:'Đang kiểm tra tệp', waiting:'Chờ người nhận', offered:'Tệp được gửi đến', transferring:'Đang truyền', paused:'Đã tạm dừng', interrupted:'Chờ kết nối lại', verifying:'Đang xác minh và lưu', completed:'Đã xác minh · SHA-256 khớp', cancelled:'Đã hủy', rejected:'Đã từ chối', failed:'Cần thử lại' };
       panel.innerHTML = '<div style="display:flex;justify-content:space-between;font-weight:700;font-size:12px;color:#67e8f9"><span>TỆP CỦA BẠN · ĐƯỢC LƯU TRỌN VẸN</span><span>' + reliableTasks.filter(task => task.verified).length + ' đã xác minh</span></div>'
         + (!window.isSecureContext ? '<p style="font-size:11px;color:#fcd34d">HTTPS và Chrome/Edge cần thiết để nhận tệp lớn và tiếp tục sau tải lại.</p>' : '')
         + (!reliableTasks.length ? '<p style="font-size:12px;color:#64748b;margin:10px 0">Chọn thiết bị và thêm tệp. Người nhận quyết định trước khi truyền.</p>' : reliableTasks.slice().reverse().map(task => {
           const percent = task.size ? Math.floor(task.offset / task.size * 100) : task.verified ? 100 : 0;
+          const timing = task.speed && task.status === 'transferring' ? ' · ' + formatBytes(task.speed) + '/s · còn khoảng ' + Math.ceil((task.size - task.offset) / task.speed) + ' s' : '';
           const button = (action, label) => '<button class="btn-download-file" style="margin:4px;font-size:11px" onclick="p2pTaskAction(\'' + action + '\',\'' + task.id + '\')">' + label + '</button>';
-          return '<article style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:12px"><strong>' + escapeHtml(task.name) + '</strong><span>' + escapeHtml(labels[task.status] || task.status) + '</span></div><div style="height:4px;background:#1e293b;border-radius:4px;margin:8px 0"><div style="height:100%;border-radius:4px;width:' + percent + '%;background:' + (task.verified ? '#34d399' : '#22d3ee') + '"></div></div><div style="font-size:10px;color:#94a3b8">' + formatBytes(task.offset) + ' / ' + formatBytes(task.size) + ' · ' + escapeHtml(task.peerName || '') + '</div>'
+          return '<article style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:12px"><strong>' + escapeHtml(task.name) + '</strong><span>' + escapeHtml(labels[task.status] || task.status) + '</span></div><div style="height:4px;background:#1e293b;border-radius:4px;margin:8px 0"><div style="height:100%;border-radius:4px;width:' + percent + '%;background:' + (task.verified ? '#34d399' : '#22d3ee') + '"></div></div><div style="font-size:10px;color:#94a3b8">' + formatBytes(task.offset) + ' / ' + formatBytes(task.size) + timing + ' · ' + escapeHtml(task.peerName || '') + '</div>'
+            + (task.verified ? '<p style="font-size:10px;color:#34d399;margin-top:6px">' + (task.savedTo === 'disk' ? 'Đã lưu vào thư mục đã chọn' : task.savedTo === 'browser' ? 'Đã lưu trong trình duyệt' : 'Dữ liệu tạm trong tab; tải xuống trước khi đóng') + '</p>' : '')
             + (task.error ? '<p style="font-size:11px;color:#fcd34d">' + escapeHtml(task.error) + '</p>' : '')
             + (task.status === 'offered' ? button('accept','Nhận và lưu') + button('reject','Từ chối') : '')
             + (task.status === 'completed' && task.direction === 'receiving' ? button('download','Tải tệp đã xác minh') : '')
@@ -1241,6 +1248,15 @@
         if (action === 'download') { const file = await core.savedFile(id); const link = document.createElement('a'); link.href = file.blobUrl; link.download = task.name; link.click(); }
         if (action === 'resume') { const input = document.createElement('input'); input.type = 'file'; input.onchange = () => { if (input.files[0]) core.resume(id, input.files[0]).catch(error => document.getElementById('client-feedback').textContent = error.message); }; input.click(); }
       } catch (error) { if (error.name !== 'AbortError') document.getElementById('client-feedback').textContent = error.message; }
+    }
+    async function p2pMessageAction(action, id) {
+      try {
+        if (!selectedPeer || !p2pManager) return;
+        await p2pManager.select(selectedPeer, workspaceId);
+        const core = p2pManager.getService().getReliable();
+        if (action === 'retry') await core.retryChat(id);
+        if (action === 'cancel') await core.cancelChat(id);
+      } catch (error) { document.getElementById('client-feedback').textContent = error.message; }
     }
     // --- STATE MANAGEMENT ---
     let myConnectionId = '';
@@ -1837,7 +1853,8 @@
     }
 
     function getLastMessageForPeer(peerConnId) {
-      const list = conversations[peerConnId];
+      const peer = peersList.find(item => item.connectionId === peerConnId) || (selectedPeer?.connectionId === peerConnId ? selectedPeer : null);
+      const list = peer && p2pManager ? conversationForPeer(peer) : conversations[peerConnId];
       if (!list || list.length === 0) return null;
       const last = list[list.length - 1];
       return {
@@ -1909,15 +1926,33 @@
     }
 
     // --- CHAT TIMELINE RENDERING ---
+    function conversationForPeer(peer, conversationWorkspace = workspaceId) {
+      // A WebSocket connection ID changes after Wi-Fi reconnect. Conversation
+      // identity must match the engine's account/workspace/device storage scope.
+      const key = JSON.stringify([currentUser?.id, conversationWorkspace, peer.userId, peer.deviceId || peer.userId]);
+      return conversations[key] || (conversations[key] = []);
+    }
+    function updateChatMessage(message) {
+      if (!message) return;
+      const stream = document.getElementById('messages-stream');
+      const existing = document.getElementById('msg-' + message.id);
+      const element = createMessageElement(message);
+      // Receipt/journal updates must not replay the message entrance animation.
+      element.style.animation = 'none';
+      if (existing && existing.parentNode === stream) existing.replaceWith(element);
+      else { stream.appendChild(element); scrollChatToBottom(); }
+    }
     function renderChatTimeline() {
       const stream = document.getElementById('messages-stream');
       stream.innerHTML = '';
       if (!selectedPeer) return;
 
-      const msgs = conversations[selectedPeer.connectionId] || [];
+      const msgs = p2pManager ? conversationForPeer(selectedPeer) : conversations[selectedPeer.connectionId] || [];
+      const fragment = document.createDocumentFragment();
       msgs.forEach(msg => {
-        stream.appendChild(createMessageElement(msg));
+        fragment.appendChild(createMessageElement(msg));
       });
+      stream.appendChild(fragment);
       scrollChatToBottom();
     }
 
@@ -1974,6 +2009,17 @@
             </div>
           </div>
         `;
+        if (p2pManager && msg.isSelf && !msg.ack && msg.status !== 'cancelled') {
+          const actions = document.createElement('div'); actions.style.cssText = 'display:flex;gap:10px;margin-top:5px;font-size:10px';
+          for (const [action, label] of [['retry','Gửi lại'], ['cancel','Hủy gửi']]) {
+            const button = document.createElement('button'); button.textContent = label; button.onclick = () => p2pMessageAction(action, msg.id); actions.append(button);
+          }
+          group.append(actions);
+        }
+        if (msg.status === 'cancelled') { const label = document.createElement('small'); label.textContent = 'Đã hủy gửi'; group.append(label); }
+        if (msg.storageError) { const label = document.createElement('small'); label.textContent = 'Chưa lưu được lịch sử: ' + msg.storageError; group.append(label); }
+        const tick = group.querySelector('.ack-tick');
+        if (tick) tick.title = msg.ack ? 'Bên nhận đã lưu lịch sử' : msg.received ? 'Bên nhận đã hiển thị · đang lưu lịch sử' : msg.pending ? 'Chờ kết nối hoặc lưu outbox' : 'Đã gửi qua mạng';
       }
       return group;
     }
@@ -2024,7 +2070,7 @@
       const manager = getP2PManager();
       if (manager) {
         textarea.value = ''; textarea.style.height = 'auto';
-        manager.select(selectedPeer, workspaceId).then(() => manager.sendChat(text)).catch(error => document.getElementById('client-feedback').textContent = error.message);
+        manager.sendChat(text, selectedPeer, workspaceId).catch(error => document.getElementById('client-feedback').textContent = error.message);
         return;
       }
 
@@ -2429,7 +2475,7 @@
 
     async function sendFileOverDataChannel(file) {
       const manager = getP2PManager();
-      if (manager && selectedPeer) { await manager.select(selectedPeer, workspaceId); await manager.sendFile(file); return; }
+      if (manager && selectedPeer) { await manager.sendFile(file, selectedPeer, workspaceId); return; }
       if (!selectedPeer) return;
       if (!rtcDataChannel || rtcDataChannel.readyState !== 'open') {
         pendingOutgoingFile = file;

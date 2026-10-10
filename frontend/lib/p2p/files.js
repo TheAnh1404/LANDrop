@@ -30,6 +30,7 @@ export class FileIO {
     });
   }
   hash(file) { return typeof Worker !== 'undefined' ? this.call('hash', { file }) : hashFile(file); }
+  blockHash(bytes) { return typeof Worker !== 'undefined' ? this.call('blockHash', { bytes: bytes.buffer }) : Promise.resolve(hashBytes(bytes)); }
   async open(offer, offset, disk = this.disk) {
     if (disk) return this.call('open', { key: diskKey(this.scope, offer.id), offset });
     if (offer.size > MEMORY_LIMIT) throw new Error('Large files require HTTPS and persistent browser file storage.');
@@ -63,6 +64,11 @@ export class FileIO {
     if (disk) await this.call(discard ? 'drop' : 'close', { key: diskKey(this.scope, offer.id) });
     else if (discard) { this.memory.delete(offer.id); this.retained.delete(offer.id); }
     if (discard) { const url = this.urls.get(offer.id); if (url) URL.revokeObjectURL(url); this.urls.delete(offer.id); }
+  }
+  cancelHash() {
+    const worker = this.hashWorker; if (!worker) return;
+    worker.terminate(); this.hashWorker = null;
+    for (const [id, pending] of this.calls) if (pending.worker === worker) { pending.reject(new Error('Source hashing paused.')); this.calls.delete(id); }
   }
   dispose() { this.worker?.terminate(); this.hashWorker?.terminate(); this.worker = null; this.hashWorker = null; for (const pending of this.calls.values()) pending.reject(new Error('File worker stopped.')); this.calls.clear(); for (const url of this.urls.values()) URL.revokeObjectURL(url); this.urls.clear(); this.memory.clear(); this.retained.clear(); }
 }

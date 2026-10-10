@@ -8,6 +8,7 @@
     "p2p:check": "node scripts/build-p2p.mjs --check",
     "test:p2p:browser": "node scripts/p2p-browser-smoke.mjs",
     "test:p2p:live": "node scripts/p2p-live-browser.mjs",
+    "test:p2p:chat": "node scripts/p2p-chat-benchmark.mjs",
     "server:secure": "node scripts/lan-proxy.mjs",
     "server": "node scripts/start-server.mjs",
     "server:desktop": "node scripts/start-server.mjs",

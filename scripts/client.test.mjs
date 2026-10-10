@@ -10,8 +10,12 @@ function client() {
   const elements = new Map();
   function element() {
     return {
+      children: [], parentNode: null,
+      set id(value) { this.nodeId = value; elements.set(value, this); }, get id() { return this.nodeId; },
       style: {}, classList: { add() {}, remove() {} }, value: '', textContent: '', innerHTML: '', options: [],
-      appendChild() {}, removeChild() {}, querySelector() { return null; }, querySelectorAll() { return []; },
+      appendChild(node) { if (node.fragment) { for (const child of node.children) this.appendChild(child); } else { this.children.push(node); node.parentNode = this; } },
+      replaceWith(node) { const index = this.parentNode.children.indexOf(this); this.parentNode.children[index] = node; node.parentNode = this.parentNode; this.parentNode = null; },
+      removeChild() {}, querySelector() { return null; }, querySelectorAll() { return []; },
       click() {}, setAttribute() {}, addEventListener() {},
     };
   }
@@ -22,6 +26,7 @@ function client() {
     document: {
       getElementById(id) { if (!elements.has(id)) elements.set(id, element()); return elements.get(id); },
       querySelector() { return element(); }, createElement: element, body: element(),
+      createDocumentFragment() { return { ...element(), fragment: true }; },
     },
     navigator: { userAgent: 'Windows', clipboard: { writeText() {} } },
     localStorage: { getItem() { return null; }, setItem() {} },
@@ -53,6 +58,26 @@ test('bundled client authenticates after welcome and uses the server-issued tran
   assert.equal(run('activeTransferId'), null);
   run(`handleGatewayMessage({ type: 'transfer.status', payload: { status: 'REQUESTED', transferId: 'server-id', receiverConnectionId: 'bob' } });`);
   assert.equal(run('activeTransferId'), 'server-id');
+});
+
+test('bundled realtime chat updates only the arriving message and keeps device history across connection IDs', () => {
+  const { run, context, elements } = client();
+  context.window.LANDropP2P = { BrowserPeerManager: class { constructor(options) { context.managerOptions = options; } } };
+  run(`selectedPeer = { connectionId: 'old-connection', userId: 'bob', deviceId: 'bob-laptop' }; getP2PManager();`);
+  const peer = { connectionId: 'new-connection', userId: 'bob', deviceId: 'bob-laptop' };
+  const message = (id, text) => ({ id, text, timestamp: Date.now(), type: 'text', direction: 'received', status: 'received' });
+  context.managerOptions.onChat(peer, message('one', 'First visible message'), 'team');
+  const firstNode = elements.get('msg-one');
+  context.managerOptions.onChat(peer, message('two', 'Second visible message'), 'team');
+  assert.equal(elements.get('msg-one'), firstNode, 'Unrelated message DOM must remain intact');
+  assert.equal(elements.get('messages-stream').children.length, 2);
+  context.managerOptions.onChat(peer, { ...message('two', 'Second visible message'), ack: true, status: 'delivered' }, 'team');
+  assert.equal(elements.get('messages-stream').children.length, 2, 'Storage completion updates the same message');
+  assert.equal(run('selectedPeer.connectionId'), 'new-connection');
+  assert.equal(run(`conversationForPeer({ userId: 'bob', deviceId: 'bob-laptop', connectionId: 'another-connection' }).length`), 2);
+  context.managerOptions.onChat(peer, message('private', 'Other workspace'), 'other-team');
+  assert.equal(elements.get('messages-stream').children.length, 2);
+  assert.equal(run(`conversationForPeer(selectedPeer, 'other-team').length`), 1);
 });
 
 test('bundled client accepts incoming chat without replacing the server session', () => {

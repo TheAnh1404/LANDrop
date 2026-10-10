@@ -60,6 +60,10 @@ export class WebRTCPeerService {
   private reliable: ReliablePeer | null = null;
   private reliableScope = '';
   private fileChannel: RTCDataChannel | null = null;
+  private chatChannel: RTCDataChannel | null = null;
+  private chatReceiveRttMs?: number;
+  private chatDurableRttMs?: number;
+  private resourceEpoch = 0;
   private targetDeviceId: string | null = null;
   private generation = 0;
   private coordinatedConnected = false;
@@ -92,8 +96,9 @@ export class WebRTCPeerService {
       scope, localName: this.configOptions.localName, remoteName: this.targetDeviceName || 'Peer',
       maxMessageSize: this.pc?.sctp?.maxMessageSize || 65536,
       onChat: message => { if (message.direction === 'received') this.handleChatTyping({ type: 'CHAT_TYPING', isTyping: false }); const index = this.chatMessages.findIndex(item => item.id === message.id); if (index < 0) this.chatMessages.push(message); else this.chatMessages[index] = message; this.emitChatMessage(message); },
-      onTasks: tasks => { this.tasks = tasks; this.taskListeners.forEach(listener => listener(tasks)); },
+      onTasks: tasks => { this.tasks = tasks; this.receivedFiles = this.receivedFiles.filter(file => tasks.some(task => task.id === file.id)); this.taskListeners.forEach(listener => listener(tasks)); },
       onError: message => { this.lastError = message; this.emitDiagnostics(); },
+      onChatTiming: timing => { if (timing.stage === 'received') this.chatReceiveRttMs = timing.roundTripMs; else this.chatDurableRttMs = timing.roundTripMs; this.emitDiagnostics(); },
       onReceived: task => {
         const item: ReceivedFileItem = { id: task.id, fileName: task.name, fileSize: task.size, mimeType: task.mime, blobUrl: task.blobUrl, receivedAt: Date.now(), senderName: this.targetDeviceName || 'Peer' };
         this.receivedFiles = [item, ...this.receivedFiles]; this.emitFileReceived(item);
@@ -247,6 +252,8 @@ export class WebRTCPeerService {
       peerConnectionState: this.pc?.connectionState ?? 'none',
       dataChannelState: this.dataChannel?.readyState ?? 'none',
       roundTripLatencyMs: this.testResult?.roundTripMs ?? null,
+      chatReceiveRttMs: this.chatReceiveRttMs,
+      chatDurableRttMs: this.chatDurableRttMs,
       lastError: this.lastError,
       lastUpdated: this.lastUpdated,
     };
@@ -402,9 +409,10 @@ export class WebRTCPeerService {
     this.lastError = null;
     this.testResult = null;
     this.loadChatHistory();
-    const reliable = this.ensureReliable(); if (reliable) await reliable.initialized;
-
     this.setState('REQUESTING');
+    const resourceEpoch = this.resourceEpoch;
+    const reliable = this.ensureReliable(); if (reliable) await reliable.initialized;
+    if (this.resourceEpoch !== resourceEpoch || this.getState() !== 'REQUESTING') return;
     this.startSignalingTimeout();
 
     const sent = this.realtimeClient.sendEnvelope({
@@ -696,7 +704,7 @@ export class WebRTCPeerService {
       senderDeviceName: payload.senderDeviceName || 'Peer Browser',
       senderDeviceId: payload.senderDeviceId,
       fileName: payload.fileName || 'landrop-p2p.dat',
-      fileSize: payload.fileSize || 1024,
+      fileSize: payload.fileSize ?? 1024,
       receivedAt: Date.now(),
     };
 
@@ -739,9 +747,11 @@ export class WebRTCPeerService {
     this.clearSignalingTimeout();
     this.setState('CONNECTING');
 
-    const pc = this.initializePeerConnection(), transferId = this.transferId, generation = this.generation;
+    let pc: RTCPeerConnection | null = null;
+    const transferId = this.transferId, generation = this.generation;
     const current = () => this.pc === pc && this.transferId === transferId && this.generation === generation;
     try {
+      pc = this.initializePeerConnection();
       await pc.setRemoteDescription(new RTCSessionDescription({
         type: 'offer',
         sdp: payload.sdp.sdp,
@@ -884,6 +894,8 @@ export class WebRTCPeerService {
 
     pc.ondatachannel = event => {
       if (event.channel.label === 'landrop-file-v2') { this.setupFileChannel(event.channel); return; }
+      if (event.channel.label === 'landrop-chat-v2') { this.setupChatChannel(event.channel); return; }
+      if (this.configOptions?.localUserId && event.channel.label !== 'landrop-p2p') { event.channel.close(); return; }
       this.dataChannel = event.channel;
       this.setupDataChannel(event.channel);
     };
@@ -892,16 +904,23 @@ export class WebRTCPeerService {
   }
 
   private async startOffererNegotiation(restart = false) {
-    const pc = this.initializePeerConnection(), transferId = this.transferId, generation = this.generation;
+    let pc: RTCPeerConnection | null = null;
+    const transferId = this.transferId, generation = this.generation;
     const current = () => this.pc === pc && this.transferId === transferId && this.generation === generation;
     try {
+      pc = this.initializePeerConnection();
 
       if (!restart) {
       this.dataChannel = pc.createDataChannel('landrop-p2p', {
         ordered: true,
       });
       this.setupDataChannel(this.dataChannel);
-      if (this.configOptions?.localUserId) this.setupFileChannel(pc.createDataChannel('landrop-file-v2', { ordered: true }));
+      if (this.configOptions?.localUserId) {
+        this.setupFileChannel(pc.createDataChannel('landrop-file-v2', { ordered: true }));
+        // Keep chat ordering and unlimited transport retries, on a separate
+        // stream from file frames and transfer control packets.
+        this.setupChatChannel(pc.createDataChannel('landrop-chat-v2', { ordered: true }));
+      }
       }
 
       const offer = await pc.createOffer(restart ? { iceRestart: true } : undefined);
@@ -936,7 +955,7 @@ export class WebRTCPeerService {
     channel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD;
 
     channel.onopen = () => {
-      this.ensureReliable()?.attach(channel, this.fileChannel);
+      this.ensureReliable()?.attach(channel, this.fileChannel, this.chatChannel);
       this.clearSignalingTimeout();
       this.emitDiagnostics();
 
@@ -979,7 +998,8 @@ export class WebRTCPeerService {
       this.stopHeartbeat();
       this.handleChatTyping({ type: 'CHAT_TYPING', isTyping: false });
       this.emitDiagnostics();
-      this.setState('FAILED', 'Data Channel gặp lỗi truyền dữ liệu.');
+      this.setState(this.configOptions?.localUserId ? 'DISCONNECTED' : 'FAILED', 'Data Channel gặp lỗi truyền dữ liệu.');
+      if (this.configOptions?.localUserId) this.cleanupPeerResources();
     };
   }
 
@@ -987,7 +1007,17 @@ export class WebRTCPeerService {
     this.fileChannel = channel; channel.binaryType = 'arraybuffer';
     channel.onopen = () => this.ensureReliable()?.setFileChannel(channel);
     channel.onmessage = event => { this.reliable?.receive(event.data); };
-    channel.onclose = () => { this.reliable?.detach(); };
+    // Detaching only the core while leaving the service CONNECTED would strand
+    // all future chats in the outbox with no HELLO or reconnect to flush them.
+    channel.onclose = channel.onerror = () => { this.setState('DISCONNECTED', 'File channel closed. Reconnecting peer.'); this.cleanupPeerResources(); };
+  }
+
+  private setupChatChannel(channel: RTCDataChannel) {
+    this.chatChannel = channel; channel.binaryType = 'arraybuffer';
+    channel.onopen = () => this.ensureReliable()?.setChatChannel(channel);
+    channel.onmessage = event => { this.reliable?.receive(event.data); };
+    // Control remains a compatible reliable fallback if just this lane closes.
+    channel.onclose = channel.onerror = () => { if (this.chatChannel === channel) { this.chatChannel = null; this.reliable?.setChatChannel(null); } };
   }
 
   public restartIce(): void {
@@ -1764,10 +1794,12 @@ export class WebRTCPeerService {
   }
 
   private cleanupPeerResources() {
+    this.resourceEpoch++;
     if (this.iceRecoveryTimer) clearTimeout(this.iceRecoveryTimer); this.iceRecoveryTimer = null;
     this.iceRestartPending = false; this.leaseDeadline = 0;
     this.reliable?.detach(); this.generation = 0; this.coordinatedConnected = false;
-    if (this.fileChannel) { this.fileChannel.onclose = null; this.fileChannel.onmessage = null; this.fileChannel.onopen = null; this.fileChannel.close(); this.fileChannel = null; }
+    if (this.fileChannel) { this.fileChannel.onclose = null; this.fileChannel.onerror = null; this.fileChannel.onmessage = null; this.fileChannel.onopen = null; this.fileChannel.close(); this.fileChannel = null; }
+    if (this.chatChannel) { this.chatChannel.onclose = null; this.chatChannel.onerror = null; this.chatChannel.onmessage = null; this.chatChannel.onopen = null; this.chatChannel.close(); this.chatChannel = null; }
     this.clearSignalingTimeout();
     this.clearPingTimeout();
     this.stopHeartbeat();

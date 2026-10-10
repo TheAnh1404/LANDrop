@@ -4,6 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 import { createLanProxy } from './lan-proxy.mjs';
 
 const require = createRequire(new URL('../frontend/package.json', import.meta.url));
@@ -26,10 +27,14 @@ const browser = await chromium.launch({ ...(process.env.CHROME_PATH ? { executab
 const contexts = [], errors = [];
 const count = Number(process.env.LANDROP_TEST_MIB || 128);
 assert.ok(Number.isInteger(count) && count >= 8 && count <= 1024, 'Test size must be 8–1024 MiB');
-const report = { browser: browser.version(), origin: new URL(url).protocol, fileMiB: count, cases: [], physicalLan: false };
+const report = { browser: browser.version(), origin: new URL(url).protocol, fileMiB: count, storageProfile: count > 128 ? 'persistent' : 'incognito', cases: [], physicalLan: false };
 const fixture = new URL(`../tmp/p2p-source-${process.pid}.bin`, import.meta.url);
+const temporaryRoot = path.resolve(fileURLToPath(new URL('../tmp/', import.meta.url)));
+const profiles = path.join(temporaryRoot, `p2p-profiles-${process.pid}`);
+let progressTimer;
 async function page(scope) {
-  const context = await browser.newContext({ ignoreHTTPSErrors: true }); contexts.push(context);
+  const launch = { ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: 'chrome' }), headless: true, ignoreHTTPSErrors: true };
+  const context = count > 128 ? await chromium.launchPersistentContext(path.join(profiles, `peer-${contexts.length}`), launch) : await browser.newContext({ ignoreHTTPSErrors: true }); contexts.push(context);
   const result = await context.newPage(); result.on('pageerror', error => errors.push(error.message));
   await result.goto(url); await setup(result, scope); return result;
 }
@@ -81,11 +86,15 @@ try {
     const block = Buffer.alloc(1024 * 1024); for (let index = 0; index < block.length; index++) block[index] = index % 251;
     for (let index = 0; index < count; index++) await fixtureHandle.write(block);
   } finally { await fixtureHandle.close(); }
-  await a.locator('#source').setInputFiles(fixture.pathname.replace(/^\/(\w:)/, '$1'));
+  await a.locator('#source').setInputFiles(fileURLToPath(fixture));
   const id = await a.evaluate(async () => {
     window.source = document.querySelector('#source').files[0];
     return core.enqueueFile(source);
   });
+  progressTimer = setInterval(async () => {
+    try { console.log('Transfer progress:', await a.evaluate(id => { const task = core.tasks.get(id); return { status: task?.status, bytes: task?.offset, error: task?.error }; }, id)); }
+    catch { /* the browser may be closing */ }
+  }, 15000);
   const fileTimeout = Math.max(180000, count * 1000);
   await b.waitForFunction(id => core.tasks.get(id)?.status === 'offered', id, { timeout: fileTimeout });
   assert.equal(await b.evaluate(id => core.tasks.get(id).offset, id), 0);
@@ -109,7 +118,7 @@ try {
   await connect(a, b);
   const started = Date.now();
   await a.evaluate(id => core.resume(id, source), id);
-  await b.locator('#source').setInputFiles(fixture.pathname.replace(/^\/(\w:)/, '$1'));
+  await b.locator('#source').setInputFiles(fileURLToPath(fixture));
   const reverseId = await b.evaluate(() => core.enqueueFile(new File([document.querySelector('#source').files[0].slice(0, 8 * 1024 * 1024)], 'reverse-8MiB.bin')));
   await a.waitForFunction(id => core.tasks.get(id)?.status === 'offered', reverseId, { timeout: fileTimeout });
   await a.evaluate(id => core.acceptFile(id), reverseId);
@@ -123,7 +132,8 @@ try {
   }
   for (const page of [a, b]) {
     await page.waitForFunction(id => ['completed', 'failed', 'cancelled', 'rejected', 'interrupted'].includes(core.tasks.get(id)?.status), id, { timeout: fileTimeout });
-    assert.equal(await page.evaluate(id => core.tasks.get(id).status, id), 'completed', 'Transfer must complete with a verified receipt');
+    const task = await page.evaluate(id => core.tasks.get(id), id);
+    assert.equal(task.status, 'completed', `Transfer failed at ${task.offset} bytes: ${task.error || 'no verified receipt'}`);
   }
   const sent = await a.evaluate(id => core.tasks.get(id), id), received = await b.evaluate(id => core.tasks.get(id), id);
   assert.equal(sent.hash, received.hash); assert.equal(received.offset, count * 1024 * 1024); assert.equal(received.savedTo, 'browser');
@@ -145,8 +155,12 @@ try {
   await fs.writeFile(new URL(`browser-report-${count}mib.json`, output), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } finally {
+  clearInterval(progressTimer);
   await Promise.all(contexts.map(context => context.close())); await browser.close();
   if (proxy) { proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); }
   server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   await fs.unlink(fixture).catch(error => { if (error.code !== 'ENOENT') throw error; });
+  const relative = path.relative(temporaryRoot, path.resolve(profiles));
+  if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Refusing to remove profiles outside the test workspace');
+  await fs.rm(profiles, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

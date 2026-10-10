@@ -65,14 +65,18 @@ export class RealtimeClient {
   }
 
   private resolveClientInstanceId(userId?: string): string {
-    if (typeof window !== 'undefined' && window.sessionStorage) {
+    if (typeof window !== 'undefined') {
       const key = userId ? `landrop.client_instance_id:${userId}` : 'landrop.client_instance_id';
-      let id = window.sessionStorage.getItem(key);
-      if (!id) {
-        id = `tab-${generateSafeUuid()}`;
-        window.sessionStorage.setItem(key, id);
+      for (const name of ['localStorage', 'sessionStorage'] as const) {
+        try {
+          const storage = window[name]; if (!storage) continue;
+          let id = storage.getItem(key);
+          if (!id && name === 'localStorage') id = window.sessionStorage?.getItem(key) || null;
+          if (!id) id = `browser-${generateSafeUuid()}`;
+          storage.setItem(key, id);
+          return id;
+        } catch { /* blocked persistent storage falls back to the current tab */ }
       }
-      return id;
     }
     return `tab-${generateSafeUuid()}`;
   }

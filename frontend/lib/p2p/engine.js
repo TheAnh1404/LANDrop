@@ -1,6 +1,6 @@
 import { LocalStore } from './store.js';
 import { FileIO } from './files.js';
-import { VERSION, BLOCK_SIZE, FRAME_SIZE, MEMORY_LIMIT, MAX_FILE_SIZE, decodeFrame, encodeFrame, hashBytes, uuid, validId, validHash, validateOffer, delay } from './protocol.js';
+import { VERSION, BLOCK_SIZE, FRAME_SIZE, MEMORY_LIMIT, MAX_FILE_SIZE, decodeFrame, encodeFrame, uuid, validId, validHash, validateOffer, delay } from './protocol.js';
 
 export { LocalStore, FileIO, MEMORY_LIMIT, VERSION };
 export { uuid } from './protocol.js';
@@ -13,10 +13,11 @@ export class ReliablePeer {
     if (!options.scope) throw new Error('An authenticated conversation scope is required.');
     this.options = options; this.scope = options.scope;
     this.store = options.store || new LocalStore(); this.io = options.io || new FileIO(this.scope, options.workerUrl);
-    this.control = null; this.files = null; this.capable = false; this.disposed = false;
+    this.control = null; this.files = null; this.chat = null; this.capable = false; this.disposed = false;
     this.tasks = new Map(); this.sources = new Map(); this.incoming = new Map(); this.destinations = new Map();
     this.waiters = new Map(); this.retryTimers = new Map(); this.attempts = new Map(); this.running = false;
-    this.messages = new Map(); this.queue = []; this.inbound = Promise.resolve(); this.chatInbound = Promise.resolve(); this.queuedBytes = 0;
+    this.messages = new Map(); this.chatIndex = new Map(); this.outbox = new Map(); this.chatWrites = new Map(); this.chatAckWrites = new Map(); this.chatClock = new Map();
+    this.queue = []; this.inbound = Promise.resolve(); this.queuedBytes = 0;
     this.maxMessageSize = options.maxMessageSize || 65536; this.activeIncoming = null;
     this.initialized = this.restore();
   }
@@ -26,7 +27,12 @@ export class ReliablePeer {
   emitChat(message) { this.options.onChat?.({ ...message }); }
   async restore() {
     const messages = await this.store.list(this.key('chat'));
+    this.chatSequence = 0;
+    for (const { value } of messages) { this.chatIndex.set(value.id, value); if (value.direction === 'sent' && Number.isSafeInteger(value.sequence)) this.chatSequence = Math.max(this.chatSequence, value.sequence); }
     for (const { value } of messages.sort((a, b) => a.value.timestamp - b.value.timestamp).slice(-1000)) { this.messages.set(value.id, value); this.emitChat(value); }
+    const outbox = await this.store.list(this.key('outbox'));
+    outbox.sort((a, b) => Number.isSafeInteger(a.value.sequence) && Number.isSafeInteger(b.value.sequence) ? a.value.sequence - b.value.sequence : a.value.timestamp - b.value.timestamp);
+    for (const { value } of outbox) this.outbox.set(value.id, this.messages.get(value.id) || value);
     const tasks = await this.store.list(this.key('task'));
     for (const { value } of tasks) {
       if (!TERMINAL.has(value.status)) value.status = 'interrupted';
@@ -34,16 +40,18 @@ export class ReliablePeer {
     }
     this.emitTasks();
   }
-  attach(control, files = null) {
-    this.detach(); this.control = control; this.files = files; this.capable = false; this.disposed = false;
+  attach(control, files = null, chat = null) {
+    this.detach(); this.control = control; this.files = files; this.chat = chat; this.capable = false; this.disposed = false;
     this.initialized.then(() => {
       if (this.control !== control || control.readyState !== 'open') return;
-      this.send('HELLO', { version: VERSION, blockSize: BLOCK_SIZE, maxMessageSize: this.maxMessageSize, durableChat: !this.store.memory, disk: this.io.disk });
+      this.send('HELLO', { version: VERSION, blockSize: BLOCK_SIZE, maxMessageSize: this.maxMessageSize, durableChat: !this.store.memory, chatReceipt: true, disk: this.io.disk });
     }).catch(error => this.report(error));
   }
   setFileChannel(channel) { this.files = channel; }
+  setChatChannel(channel) { this.chat = channel; }
   send(type, payload = {}, lane = 'control') {
-    const channel = lane === 'file' ? this.files || this.control : this.control;
+    const chatPacket = ['CHAT', 'CHAT_ACK', 'CHAT_RECEIVED'].includes(type);
+    const channel = lane === 'file' ? this.files || this.control : chatPacket && this.chat?.readyState === 'open' ? this.chat : this.control;
     if (!channel || channel.readyState !== 'open') throw new Error('Peer disconnected. Reconnect to continue.');
     const value = JSON.stringify({ v: VERSION, type, ...payload });
     if (new TextEncoder().encode(value).length > 65536) throw new Error('Control message too large.');
@@ -88,7 +96,8 @@ export class ReliablePeer {
       } finally { this.queuedBytes -= size; }
     };
     if (filePacket) this.inbound = this.inbound.then(operation);
-    else if (['CHAT', 'CHAT_ACK'].includes(packet.type)) this.chatInbound = this.chatInbound.then(operation);
+    // Each chat has its own commit barrier. One slow write must not hold up
+    // presentation of the next message or an acknowledgement in the other direction.
     else void operation();
     return true;
   }
@@ -103,6 +112,7 @@ export class ReliablePeer {
         this.capable = true; await this.flushOutbox(); void this.pump(); return;
       case 'CHAT': return this.receiveChat(packet);
       case 'CHAT_ACK': return this.ackChat(packet.id);
+      case 'CHAT_RECEIVED': return this.chatReceived(packet.id);
       case 'OFFER': return this.receiveOffer(packet);
       case 'ACCEPT': case 'PROGRESS': case 'COMPLETE': case 'PAUSE_ACK': case 'REJECT': case 'ERROR':
         return this.reply(packet);
@@ -130,16 +140,28 @@ export class ReliablePeer {
     await this.initialized;
     text = text.trim();
     if (!text || new TextEncoder().encode(text).length > 16000) throw new Error('Message must contain 1–16000 UTF-8 bytes.');
-    const outbox = await this.store.list(this.key('outbox'));
-    if (outbox.length >= 1000) throw new Error('Outbox is full. Retry or remove pending messages first.');
-    const message = { id: uuid(), text, replyToId, senderName: this.options.localName || 'Me', timestamp: Date.now(), direction: 'sent', type: 'text', ack: false, pending: true, status: 'queued' };
-    await this.store.batch([[this.key('chat', message.id), message], [this.key('outbox', message.id), message]]);
-    this.messages.set(message.id, message); this.emitChat(message); await this.transmitChat(message); return message;
+    if (replyToId !== undefined && !validId(replyToId)) throw new Error('Invalid reply ID.');
+    if (this.clearingChat) throw new Error('Chat history is being cleared. Try again.');
+    if (this.outbox.size >= 1000) throw new Error('Outbox is full. Retry or remove pending messages first.');
+    const message = { id: uuid(), sequence: ++this.chatSequence, text, replyToId, senderName: this.options.localName || 'Me', timestamp: Date.now(), direction: 'sent', type: 'text', ack: false, pending: true, status: 'queued' };
+    this.messages.set(message.id, message); this.outbox.set(message.id, message); this.emitChat(message);
+    const writing = this.store.batch([[this.key('chat', message.id), { ...message }], [this.key('outbox', message.id), { ...message }]])
+      .then(() => this.chatIndex.set(message.id, { ...message }));
+    this.chatWrites.set(message.id, writing);
+    // Online delivery runs alongside the local journal. Offline sends still
+    // resolve only after the outbox is durable; ACK processing waits for this write.
+    void this.transmitChat(message);
+    try { await writing; return message; }
+    catch (error) {
+      clearTimeout(this.retryTimers.get(message.id)); this.retryTimers.delete(message.id);
+      message.pending = true; message.status = 'failed'; message.storageError = error.message; this.emitChat(message); throw error;
+    } finally { if (this.chatWrites.get(message.id) === writing) this.chatWrites.delete(message.id); }
   }
   async transmitChat(message) {
-    if (!this.capable || this.control?.readyState !== 'open' || this.disposed) return;
+    if (!this.capable || this.control?.readyState !== 'open' || this.disposed || message.ack || message.status === 'cancelled' || message.storageError) return;
     try {
-      this.send('CHAT', { id: message.id, text: message.text, replyToId: message.replyToId, timestamp: message.timestamp });
+      if (!this.chatClock.has(message.id)) this.chatClock.set(message.id, globalThis.performance?.now() ?? Date.now());
+      this.send('CHAT', { id: message.id, sequence: message.sequence, text: message.text, replyToId: message.replyToId, timestamp: message.timestamp });
       message.status = 'sending'; message.pending = false; this.emitChat(message);
       clearTimeout(this.retryTimers.get(message.id));
       const attempt = (this.attempts.get(message.id) || 0) + 1; this.attempts.set(message.id, attempt);
@@ -153,45 +175,92 @@ export class ReliablePeer {
     } catch (error) { message.pending = true; message.status = 'queued'; this.emitChat(message); this.report(error); }
   }
   async flushOutbox() {
-    for (const { value } of await this.store.list(this.key('outbox'))) {
-      const message = this.messages.get(value.id) || value;
-      if (!this.retryTimers.has(value.id)) await this.transmitChat(message);
-    }
+    for (const [id, message] of this.outbox) if (!this.retryTimers.has(id)) void this.transmitChat(message);
   }
-  async retryChat(id) { this.attempts.delete(id); const message = await this.store.get(this.key('outbox', id)); if (message) await this.transmitChat(this.messages.get(id) || message); }
+  async retryChat(id) {
+    const message = this.outbox.get(id); if (!message || message.ack || message.status === 'cancelled') return;
+    if (message.storageError) {
+      await this.store.batch([[this.key('chat', id), { ...message, storageError: undefined }], [this.key('outbox', id), { ...message, storageError: undefined }]]);
+      delete message.storageError; this.chatIndex.set(id, { ...message });
+    }
+    this.attempts.delete(id); await this.transmitChat(message);
+  }
   async cancelChat(id) {
     clearTimeout(this.retryTimers.get(id)); this.retryTimers.delete(id);
     const message = this.messages.get(id);
-    if (message && !message.ack) { message.status = 'cancelled'; message.pending = false; await this.store.batch([[this.key('outbox', id), undefined], [this.key('chat', id), message]]); this.emitChat(message); }
+    if (message && !message.ack) {
+      message.status = 'cancelled'; message.pending = false;
+      await Promise.allSettled([this.chatWrites.get(id), this.chatAckWrites.get(id)].filter(Boolean));
+      await this.store.batch([[this.key('outbox', id), undefined], [this.key('chat', id), { ...message }]]);
+      this.outbox.delete(id); this.chatIndex.set(id, { ...message }); this.chatClock.delete(id); this.emitChat(message);
+    }
   }
   async receiveChat(packet) {
     if (!validId(packet.id) || typeof packet.text !== 'string' || !packet.text.trim() || new TextEncoder().encode(packet.text).length > 16000
-        || !Number.isSafeInteger(packet.timestamp) || (packet.replyToId !== undefined && !validId(packet.replyToId))) throw new Error('Invalid chat packet.');
-    const key = this.key('chat', packet.id), previous = await this.store.get(key);
-    if (previous && (previous.text !== packet.text || previous.direction !== 'received')) throw new Error('Message ID conflicts with saved content.');
-    if (!previous) {
-      const message = { id: packet.id, text: packet.text, replyToId: packet.replyToId, timestamp: packet.timestamp, senderName: this.options.remoteName || 'Peer', direction: 'received', type: 'text', ack: true, status: 'delivered' };
-      await this.store.put(key, message); this.messages.set(packet.id, message); this.emitChat(message);
-    }
-    this.send('CHAT_ACK', { id: packet.id });
+        || !Number.isSafeInteger(packet.timestamp) || (packet.replyToId !== undefined && !validId(packet.replyToId))
+        || (packet.sequence !== undefined && (!Number.isSafeInteger(packet.sequence) || packet.sequence < 1))) throw new Error('Invalid chat packet.');
+    if (this.clearingChat) return;
+    const key = this.key('chat', packet.id), previous = this.messages.get(packet.id) || this.chatIndex.get(packet.id);
+    if (previous && (previous.text !== packet.text || previous.direction !== 'received' || previous.replyToId !== packet.replyToId || previous.timestamp !== packet.timestamp)) throw new Error('Message ID conflicts with saved content.');
+    const receipt = () => { if (this.remote?.chatReceipt) { try { this.send('CHAT_RECEIVED', { id: packet.id }); } catch { /* a reconnect will replay the message */ } } };
+    if (this.chatWrites.has(packet.id)) { receipt(); await this.chatWrites.get(packet.id); }
+    else if (!previous || !previous.ack) {
+      const message = previous || { id: packet.id, sequence: packet.sequence, text: packet.text, replyToId: packet.replyToId, timestamp: packet.timestamp, senderName: this.options.remoteName || 'Peer', direction: 'received', type: 'text', ack: false, status: 'received' };
+      message.status = 'received'; delete message.storageError;
+      this.messages.set(packet.id, message); this.emitChat(message);
+      const saved = { ...message, ack: true, status: 'delivered' };
+      const writing = this.store.put(key, saved); this.chatWrites.set(packet.id, writing); receipt();
+      try { await writing; this.chatIndex.set(packet.id, saved); Object.assign(message, saved); this.emitChat(message); }
+      catch (error) { message.status = 'failed'; message.storageError = error.message; this.emitChat(message); throw error; }
+      finally { if (this.chatWrites.get(packet.id) === writing) this.chatWrites.delete(packet.id); }
+    } else receipt();
+    if (this.control?.readyState === 'open' && !this.disposed) this.send('CHAT_ACK', { id: packet.id });
+  }
+  chatReceived(id) {
+    if (!validId(id)) throw new Error('Invalid chat receipt.');
+    const message = this.messages.get(id), start = this.chatClock.get(id);
+    if (!message || message.direction !== 'sent' || message.received || message.status === 'cancelled' || start === undefined) return;
+    message.received = true; message.receiveRttMs = Math.max(0, (globalThis.performance?.now() ?? Date.now()) - start);
+    this.emitChat(message); this.options.onChatTiming?.({ id, stage: 'received', roundTripMs: message.receiveRttMs });
   }
   async ackChat(id) {
     if (!validId(id)) throw new Error('Invalid chat acknowledgement.');
     const message = this.messages.get(id);
     if (!message || message.direction !== 'sent' || message.status === 'cancelled') return;
-    const saved = { ...message, ack: true, pending: false, status: 'delivered' };
-    await this.store.batch([[this.key('chat', id), saved], [this.key('outbox', id), undefined]]);
-    Object.assign(message, saved);
-    clearTimeout(this.retryTimers.get(id)); this.retryTimers.delete(id); this.attempts.delete(id); this.emitChat(message);
+    if (message.ack || this.chatAckWrites.has(id)) return;
+    const writing = (async () => {
+      await this.chatWrites.get(id);
+      if (message.status === 'cancelled' || message.storageError) return;
+      const saved = { ...message, ack: true, received: true, pending: false, status: 'delivered' };
+      await this.store.batch([[this.key('chat', id), saved], [this.key('outbox', id), undefined]]);
+      if (message.status === 'cancelled') return;
+      Object.assign(message, saved); this.chatIndex.set(id, saved); this.outbox.delete(id);
+      const start = this.chatClock.get(id);
+      if (start !== undefined) { message.durableRttMs = Math.max(0, (globalThis.performance?.now() ?? Date.now()) - start); this.options.onChatTiming?.({ id, stage: 'durable', roundTripMs: message.durableRttMs }); }
+      this.chatClock.delete(id);
+      clearTimeout(this.retryTimers.get(id)); this.retryTimers.delete(id); this.attempts.delete(id); this.emitChat(message);
+    })();
+    this.chatAckWrites.set(id, writing);
+    try { await writing; } finally { if (this.chatAckWrites.get(id) === writing) this.chatAckWrites.delete(id); }
   }
   async clearChat() {
-    for (const timer of this.retryTimers.values()) clearTimeout(timer); this.retryTimers.clear();
-    const records = [...await this.store.list(this.key('chat')), ...await this.store.list(this.key('outbox'))];
-    await this.store.batch(records.map(record => [record.key, undefined])); this.messages.clear();
+    this.clearingChat = true;
+    try {
+      await Promise.allSettled([...this.chatWrites.values(), ...this.chatAckWrites.values()]);
+      for (const timer of this.retryTimers.values()) clearTimeout(timer); this.retryTimers.clear();
+      const records = [...await this.store.list(this.key('chat')), ...await this.store.list(this.key('outbox'))];
+      await this.store.batch(records.map(record => [record.key, undefined])); this.messages.clear(); this.chatIndex.clear(); this.outbox.clear(); this.chatClock.clear();
+    } finally { this.clearingChat = false; }
   }
   async persistTask(task) {
     task.updatedAt = Date.now(); const saved = { ...task }; delete saved.blobUrl;
     await this.store.put(this.key('task', task.id), saved); this.emitTasks();
+  }
+  async commitCompletion(task, savedTo) {
+    const completed = { ...task, status: 'completed', verified: true, offset: task.size, savedTo, updatedAt: Date.now() };
+    delete completed.blobUrl;
+    await this.store.put(this.key('task', task.id), completed);
+    Object.assign(task, completed); this.emitTasks();
   }
   async enqueueFile(file, resumeId) {
     await this.initialized;
@@ -213,12 +282,13 @@ export class ReliablePeer {
       while (this.queue.length && !this.disposed && this.control?.readyState === 'open') {
         const id = this.queue.shift(), task = this.tasks.get(id);
         if (!task || task.status === 'cancelled') continue;
-        try { await this.sendFile(task, this.sources.get(id)); }
+        try { this.activeSending = id; await this.sendFile(task, this.sources.get(id)); }
         catch (error) {
           if (task.status === 'paused' || task.status === 'cancelled') continue;
           if (!TERMINAL.has(task.status) && task.status !== 'paused') task.status = this.control?.readyState === 'open' ? 'failed' : 'interrupted';
           task.error = error.message; await this.persistTask(task).catch(failure => this.report(failure)); this.report(error);
         }
+        finally { this.activeSending = null; }
       }
     } finally { this.running = false; }
   }
@@ -250,10 +320,10 @@ export class ReliablePeer {
   }
   async drain(channel) {
     const deadline = Date.now() + 30000;
-    while (channel.bufferedAmount > 262144) {
+    while (channel.bufferedAmount > 32768) {
       if (channel.readyState !== 'open' || this.disposed) throw new Error('File channel disconnected.');
       if (Date.now() > deadline) throw new Error('File channel stalled.');
-      await delay(5);
+      await delay(1);
     }
     if (channel.readyState !== 'open' || this.disposed) throw new Error('File channel disconnected.');
   }
@@ -283,13 +353,20 @@ export class ReliablePeer {
       if (this.disposed || this.control?.readyState !== 'open') throw new Error('Peer disconnected.');
       const offset = task.offset;
       const bytes = new Uint8Array(await file.slice(offset, offset + BLOCK_SIZE).arrayBuffer());
-      const blockHash = hashBytes(bytes);
+      const blockHash = await this.io.blockHash(bytes);
       const acknowledgement = this.waitReply(task.id, 'PROGRESS');
       // BLOCK and its binary frames share the same ordered channel.
       this.send('BLOCK', { id: task.id, offset, size: bytes.length, hash: blockHash }, 'file');
       const framePayload = Math.min(FRAME_SIZE, this.maxMessageSize - 32, (this.remote?.maxMessageSize || 65536) - 32);
       for (let index = 0; index < bytes.length; index += framePayload) {
+        if (TERMINAL.has(task.status)) throw new Error('Transfer stopped.');
         await this.drain(channel); channel.send(encodeFrame(task.id, offset + index, bytes.subarray(index, index + framePayload)));
+        // Microtask-only loops can starve RTC message tasks. Yield a browser
+        // task after 64 KiB rather than submitting a whole block in one turn.
+        if ((index / framePayload + 1) % 4 === 0) {
+          if (globalThis.scheduler?.yield) await globalThis.scheduler.yield();
+          else await delay(0);
+        }
       }
       const result = await acknowledgement;
       if (result.offset !== offset + bytes.length || result.hash !== blockHash) throw new Error('Invalid block acknowledgement.');
@@ -306,8 +383,7 @@ export class ReliablePeer {
       try {
         const result = await completed;
         if (result.hash !== hash || result.size !== task.size) throw new Error('Invalid completion receipt.');
-        task.status = 'completed'; task.verified = true; task.offset = task.size; task.savedTo = result.savedTo;
-        await this.persistTask(task); this.sources.delete(task.id); return;
+        await this.commitCompletion(task, result.savedTo); this.sources.delete(task.id); return;
       } catch (error) { if (attempt === 2 || this.disposed || this.control?.readyState !== 'open' || task.status === 'cancelled') throw error; }
     }
   }
@@ -317,7 +393,7 @@ export class ReliablePeer {
     if (task && (task.hash !== packet.hash || task.size !== packet.size || task.direction !== 'receiving')) throw new Error('Transfer ID conflicts with saved content.');
     if (task?.status === 'completed') { this.send('ACCEPT', { id: packet.id, offset: task.size }); return; }
     if (task?.status === 'cancelled') { this.send('REJECT', { id: packet.id, reason: 'This transfer was cancelled.' }); return; }
-    if (this.incoming.has(packet.id)) { this.send('ACCEPT', { id: packet.id, offset: task.offset }); return; }
+    if (this.incoming.has(packet.id)) { task.status = 'transferring'; task.startedAt = Date.now(); task.initialOffset = task.offset; await this.persistTask(task); this.send('ACCEPT', { id: packet.id, offset: task.offset }); return; }
     if ([...this.tasks.values()].filter(row => row.direction === 'receiving' && !TERMINAL.has(row.status) && row.status !== 'interrupted' && row.status !== 'failed').length >= 8) {
       this.send('REJECT', { id: packet.id, reason: 'Incoming queue is full.' }); return;
     }
@@ -342,7 +418,7 @@ export class ReliablePeer {
       if (task.offset) { task.offset = 0; await this.io.open(task, 0, task.disk); } else throw error;
     }
     this.destinations.set(id, destination); this.incoming.set(id, { task, block: null }); this.activeIncoming = id;
-    task.status = 'transferring'; task.startedAt = Date.now(); await this.persistTask(task);
+    task.status = 'transferring'; task.startedAt = Date.now(); task.initialOffset = task.offset; await this.persistTask(task);
     this.send('ACCEPT', { id, offset: task.offset });
   }
   async rejectFile(id) {
@@ -362,7 +438,7 @@ export class ReliablePeer {
     block.bytes.set(packet.bytes, block.received); block.received += packet.bytes.length;
     if (block.received !== block.bytes.length) return;
     const end = await this.io.write(state.task, block.offset, block.bytes, block.hash, state.task.disk);
-    state.task.offset = end; state.task.speed = Math.round(end / Math.max(0.1, (Date.now() - state.task.startedAt) / 1000));
+    state.task.offset = end; state.task.speed = Math.round((end - (state.task.initialOffset || 0)) / Math.max(0.1, (Date.now() - state.task.startedAt) / 1000));
     state.block = null; await this.persistTask(state.task);
     this.send('PROGRESS', { id: packet.id, offset: end, hash: block.hash });
   }
@@ -375,16 +451,20 @@ export class ReliablePeer {
     task.status = 'verifying'; await this.persistTask(task);
     const result = await this.io.finish(task, task.disk, this.destinations.get(task.id));
     if (task.status === 'cancelled' || this.disposed) return;
-    task.status = 'completed'; task.verified = true; task.savedTo = result.savedTo;
-    await this.persistTask(task); this.incoming.delete(task.id); this.activeIncoming = null;
+    await this.commitCompletion(task, result.savedTo); this.incoming.delete(task.id); this.activeIncoming = null;
     this.options.onReceived?.({ ...task, ...result });
     this.send('COMPLETE', { id: task.id, size: task.size, hash: result.hash, savedTo: result.savedTo });
   }
   async pause(id) {
-    const task = this.tasks.get(id); if (!task || !BUSY.has(task.status)) return;
+    const task = this.tasks.get(id); if (!task || !['preparing', 'waiting', 'transferring'].includes(task.status)) return;
+    const phase = task.status;
     task.status = 'paused'; await this.persistTask(task);
-    this.rejectWaiters(id, new Error('Transfer paused.'));
+    if (phase === 'preparing') this.io.cancelHash?.();
+    if (phase === 'waiting') this.rejectWaiters(id, new Error('Transfer paused.'));
     try {
+      // Finish the current sender block before placing PAUSE on the ordered file lane.
+      // Inserting PAUSE among its binary frames would acknowledge an unfinished checkpoint.
+      if (task.direction === 'sending') while (this.activeSending === id && this.control?.readyState === 'open') await delay(5);
       const receipt = task.direction === 'sending' ? this.waitReply(id, 'PAUSE_ACK') : null;
       this.send('PAUSE', { id }, 'file');
       if (receipt) await receipt;
@@ -410,7 +490,9 @@ export class ReliablePeer {
   }
   async removeTask(id) {
     const task = this.tasks.get(id); if (!task || BUSY.has(task.status)) throw new Error('Stop this transfer before removing it.');
+    if (!TERMINAL.has(task.status)) await this.cancel(id);
     if (task.direction === 'receiving') await this.io.close(task, task.disk, true);
+    this.sources.delete(id); this.queue = this.queue.filter(value => value !== id); this.destinations.delete(id);
     await this.store.remove(this.key('task', id)); this.tasks.delete(id); this.emitTasks();
   }
   async savedFile(id) {
@@ -423,7 +505,7 @@ export class ReliablePeer {
     return { blobUrl, hash: task.hash, savedTo: task.savedTo };
   }
   detach() {
-    this.capable = false; this.control = null; this.files = null;
+    this.capable = false; this.control = null; this.files = null; this.chat = null;
     for (const timer of this.retryTimers.values()) clearTimeout(timer); this.retryTimers.clear(); this.attempts.clear();
     for (const [key, waiter] of this.waiters) { clearTimeout(waiter.timer); waiter.reject(new Error('Peer disconnected.')); this.waiters.delete(key); }
     for (const task of this.tasks.values()) if (BUSY.has(task.status)) { task.status = 'interrupted'; void this.persistTask(task).catch(error => this.report(error)); }

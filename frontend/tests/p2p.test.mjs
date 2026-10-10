@@ -65,6 +65,62 @@ test('chat receiver never ACKs when durable storage fails', async t => {
   await until(() => errors.includes('Quota exceeded'));
   assert.equal(packets.filter(packet => packet.type === 'CHAT_ACK').length, 0);
   assert.equal(message.ack, false);
+  assert.equal(b.messages.get(message.id).status, 'failed');
+  assert.equal(b.messages.get(message.id).storageError, 'Quota exceeded');
+});
+
+test('online chat is visible before either journal commits and later messages bypass a blocked write', async t => {
+  const events = [];
+  const { a, b } = pair(t, { b: { onChat: message => events.push(message) } }); const packets = connect(a, b);
+  await until(() => a.capable && b.capable);
+  let release; const gate = new Promise(resolve => { release = resolve; }); t.after(() => release());
+  for (const peer of [a, b]) { const batch = peer.store.batch.bind(peer.store); peer.store.batch = async changes => { await gate; return batch(changes); }; }
+  const first = a.sendChat('first with stalled disk'), second = a.sendChat('second bypasses stalled disk');
+  await until(() => b.messages.size === 2);
+  const message = [...a.messages.values()][0];
+  b.receive(JSON.stringify({ v: 2, type: 'CHAT', id: message.id, text: message.text, timestamp: message.timestamp }));
+  await until(() => [...a.messages.values()].every(message => message.received));
+  assert.equal(events.filter(message => message.status === 'received').length, 2, 'A replay must not create another visible message');
+  assert.equal(packets.filter(packet => packet.type === 'CHAT_ACK').length, 0);
+  assert.equal(a.outbox.size, 2);
+  release(); await Promise.all([first, second]);
+  await until(() => [...a.messages.values()].every(message => message.ack));
+  assert.equal(a.outbox.size, 0);
+});
+
+test('an early receiver ACK waits for the initial sender journal and cannot resurrect its outbox', async t => {
+  const { a, b } = pair(t); connect(a, b); await until(() => a.capable && b.capable);
+  let release; const gate = new Promise(resolve => { release = resolve; }); t.after(() => release());
+  const batch = a.store.batch.bind(a.store); let calls = 0;
+  a.store.batch = async changes => { if (++calls === 1) await gate; return batch(changes); };
+  const sending = a.sendChat('remote saved before local journal');
+  await until(() => b.messages.size === 1 && a.chatAckWrites.size === 1);
+  const message = [...a.messages.values()][0]; assert.equal(message.ack, false);
+  release(); await sending; await until(() => message.ack);
+  assert.equal((await a.store.list(a.key('outbox'))).length, 0);
+  assert.equal((await a.store.get(a.key('chat', message.id))).status, 'delivered');
+});
+
+test('cancel and clear wait for outstanding chat commits without reviving cancelled messages', async t => {
+  const { a, b } = pair(t); connect(a, b); await until(() => a.capable && b.capable);
+  let release; const gate = new Promise(resolve => { release = resolve; }); t.after(() => release());
+  const batch = a.store.batch.bind(a.store); let calls = 0;
+  a.store.batch = async changes => { if (++calls === 1) await gate; return batch(changes); };
+  const sending = a.sendChat('cancel while initial commit is pending');
+  await until(() => a.messages.size === 1);
+  const message = [...a.messages.values()][0]; const cancelling = a.cancelChat(message.id);
+  release(); await Promise.all([sending, cancelling]); await sleep(10);
+  assert.equal(message.status, 'cancelled'); assert.equal(message.ack, false);
+  assert.equal((await a.store.list(a.key('outbox'))).length, 0);
+  await a.clearChat(); assert.equal((await a.store.list(a.key('chat'))).length, 0);
+});
+
+test('hot chat path uses the restored index instead of scanning or reading IndexedDB per message', async t => {
+  const { a, b } = pair(t); connect(a, b); await until(() => a.capable && b.capable);
+  for (const peer of [a, b]) { peer.store.list = peer.store.get = async () => { throw new Error('Unexpected hot-path read'); }; }
+  const messages = await Promise.all(Array.from({ length: 25 }, (_, index) => a.sendChat(`burst ${index}`)));
+  await until(() => messages.every(message => message.ack));
+  assert.equal(b.messages.size, 25); assert.equal(a.outbox.size, 0);
 });
 
 test('sender storage failure cannot convert an uncommitted ACK into delivered', async t => {
@@ -87,6 +143,16 @@ test('reload preserves outbox and isolates server/account/workspace/device', asy
   assert.equal(restored.messages.get(message.id).text, message.text);
   assert.equal(other.messages.size, 0);
   connect(restored, b); await until(() => restored.messages.get(message.id).ack);
+});
+
+test('offline replay preserves send sequence after IndexedDB cursor order changes on reload', async t => {
+  const store = new LocalStore(); const { a, b } = pair(t, { a: { store } });
+  const messages = await Promise.all(Array.from({ length: 20 }, (_, index) => a.sendChat(`ordered offline ${index}`)));
+  a.dispose(); const list = store.list.bind(store); store.list = async prefix => (await list(prefix)).reverse();
+  const restored = new ReliablePeer({ scope: a.scope, store }); t.after(() => restored.dispose()); await restored.initialized;
+  const packets = connect(restored, b); await until(() => restored.outbox.size === 0);
+  assert.deepEqual(packets.filter(packet => packet.type === 'CHAT').map(packet => packet.id), messages.map(message => message.id));
+  const next = await restored.sendChat('next after reload'); assert.equal(next.sequence, 21);
 });
 
 test('cancelled offline chat is retained in history and removed from outbox', async t => {
@@ -200,4 +266,53 @@ test('pause ACK drains the file lane; changed source is rejected before resuming
   assert.equal(packets.filter(packet => packet.type === 'OFFER').length, count);
   await a.resume(id, original); await until(() => b.tasks.get(id).status === 'offered');
   await b.acceptFile(id); await until(() => a.tasks.get(id).status === 'completed');
+});
+
+test('pause during transport backpressure follows all frames of the current committed block', async t => {
+  const { a, b } = pair(t); const packets = connect(a, b), file = source(2 * 1024 * 1024);
+  let pauseResult, stalled = false, id;
+  const channel = a.files, send = channel.send;
+  channel.send = data => {
+    send(data);
+    if (data instanceof ArrayBuffer && !stalled) {
+      stalled = true; channel.bufferedAmount = 400000;
+      pauseResult = a.pause(id);
+      setTimeout(() => { channel.bufferedAmount = 0; }, 15);
+    }
+  };
+  id = await a.enqueueFile(file);
+  await until(() => !!pauseResult); await pauseResult;
+  assert.equal(b.tasks.get(id).status, 'paused'); assert.equal(b.tasks.get(id).offset, 1024 * 1024);
+  const pauseIndex = packets.findIndex(packet => packet.type === 'PAUSE');
+  assert.equal(packets.slice(pauseIndex + 1).some(packet => packet.type === 'BINARY'), false);
+  await a.resume(id, file); await until(() => a.tasks.get(id).status === 'completed');
+});
+
+test('failure saving a completion receipt never emits COMPLETE on retries', async t => {
+  const { a, b } = pair(t); await b.initialized;
+  const put = b.store.put.bind(b.store);
+  b.store.put = async (key, value) => { if (value.status === 'completed') throw new Error('Receipt storage failed'); return put(key, value); };
+  const packets = connect(a, b), id = await a.enqueueFile(source());
+  await until(() => a.tasks.get(id)?.status === 'failed');
+  assert.equal(packets.some(packet => packet.type === 'COMPLETE'), false);
+  assert.notEqual(b.tasks.get(id).status, 'completed');
+});
+
+test('selected destination must close successfully before the receiver sends COMPLETE', async t => {
+  const { a, b } = pair(t, { b: { autoAccept: false } }); const packets = connect(a, b);
+  const file = source(50), id = await a.enqueueFile(file); let closed = false, written = 0;
+  await until(() => b.tasks.get(id)?.status === 'offered');
+  await b.acceptFile(id, { createWritable: async () => new WritableStream({ write(bytes) { written += bytes.length; }, async close() { await sleep(15); closed = true; } }) });
+  await until(() => a.tasks.get(id).status === 'completed');
+  assert.equal(closed, true); assert.equal(written, file.size); assert.equal(a.tasks.get(id).savedTo, 'disk');
+  assert.ok(packets.some(packet => packet.type === 'COMPLETE'));
+});
+
+test('destination commit failure never reports a fully received file as completed', async t => {
+  const { a, b } = pair(t, { b: { autoAccept: false } }); const packets = connect(a, b);
+  const id = await a.enqueueFile(source(50)); await until(() => b.tasks.get(id)?.status === 'offered');
+  await b.acceptFile(id, { createWritable: async () => new WritableStream({ close() { throw new Error('Destination permission revoked'); } }) });
+  await until(() => a.tasks.get(id).status === 'failed');
+  assert.equal(packets.some(packet => packet.type === 'COMPLETE'), false);
+  assert.equal(b.tasks.get(id).offset, 50); assert.notEqual(b.tasks.get(id).status, 'completed');
 });

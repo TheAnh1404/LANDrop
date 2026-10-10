@@ -336,6 +336,60 @@ test('shared browser manager keeps two peers alive when focus changes and refuse
   assert.equal(sent.filter(packet => packet.type === 'transfer.request').length, 2);
 });
 
+test('dedicated reliable chat lane cannot overwrite control, and its closure falls back without detaching chat', async t => {
+  const { client } = createConnectedRealtimeClient('conn-self');
+  const service = new WebRTCPeerService(client, { localUserId: 'alice', serverUrl: 'https://lan.test' }); t.after(() => service.destroy());
+  service.targetUserId = 'bob'; service.workspaceId = 'workspace';
+  const core = service.ensureReliable(); await core.initialized;
+  const pc = service.initializePeerConnection();
+  const control = new MockRTCDataChannel('landrop-p2p', { ordered: true }); pc.ondatachannel({ channel: control }); control.simulateOpen();
+  const chat = new MockRTCDataChannel('landrop-chat-v2', { ordered: true }); pc.ondatachannel({ channel: chat }); chat.simulateOpen();
+  assert.equal(service.getDataChannel(), control); assert.equal(core.chat, chat);
+  core.capable = true; const message = await core.sendChat('separate lane');
+  assert.equal(chat.sentMessages.map(JSON.parse).some(packet => packet.type === 'CHAT'), true);
+  assert.equal(control.sentMessages.map(JSON.parse).some(packet => packet.type === 'CHAT'), false);
+  chat.close(); assert.equal(core.capable, true); assert.equal(core.chat, null);
+  await core.retryChat(message.id);
+  assert.equal(control.sentMessages.map(JSON.parse).some(packet => packet.type === 'CHAT'), true);
+});
+
+test('file channel closure makes the peer reconnectable instead of leaving a detached core marked CONNECTED', async t => {
+  const { client } = createConnectedRealtimeClient('conn-self');
+  const service = new WebRTCPeerService(client, { localUserId: 'alice', serverUrl: 'https://lan.test' }); t.after(() => service.destroy());
+  service.targetUserId = 'bob'; service.workspaceId = 'workspace';
+  await service.ensureReliable().initialized;
+  const control = new MockRTCDataChannel('landrop-p2p'); service.dataChannel = control; service.setupDataChannel(control); control.simulateOpen();
+  const file = new MockRTCDataChannel('landrop-file-v2'); service.setupFileChannel(file); file.simulateOpen(); service.setState('CONNECTED');
+  file.close(); assert.equal(service.getState(), 'DISCONNECTED'); assert.equal(control.readyState, 'closed');
+  const queued = await service.sendChatMessage('wait for reconnect'); assert.equal(queued.status, 'queued');
+  assert.equal(service.getReliable().outbox.size, 1);
+});
+
+test('browser manager pins concurrent sends to the selected device and starts just one negotiation', async t => {
+  const sent = [];
+  const manager = new BrowserPeerManager({ userId: 'alice', name: 'Alice', serverUrl: 'https://lan.test', send: packet => { sent.push(packet); return true; }, connectionId: () => 'alice-connection', onChat() {}, onTasks() {}, onState() {}, onReceived() {}, onError() {} });
+  t.after(() => manager.dispose());
+  const bob = { connectionId: 'bob-connection', userId: 'bob', deviceId: 'bob-device', displayName: 'Bob', platform: 'browser' };
+  const sending = Array.from({ length: 10 }, (_, index) => manager.sendChat(`Bob ${index}`, bob, 'workspace'));
+  await manager.select({ connectionId: 'carol-connection', userId: 'carol', deviceId: 'carol-device', displayName: 'Carol', platform: 'browser' }, 'workspace');
+  const messages = await Promise.all(sending);
+  const carol = manager.getService(); assert.equal(carol.getChatMessages().length, 0);
+  await manager.select(bob, 'workspace'); assert.equal(manager.getService().getChatMessages().length, 10);
+  assert.equal(sent.filter(packet => packet.type === 'transfer.request' && packet.payload.receiverConnectionId === 'bob-connection').length, 1);
+  assert.equal(new Set(messages.map(message => message.id)).size, 10);
+});
+
+test('cancel during local history restore cannot send a late connection request', async t => {
+  const { client, ws } = createConnectedRealtimeClient('conn-self');
+  const service = new WebRTCPeerService(client, { localUserId: 'alice', serverUrl: 'https://lan.test' }); t.after(() => service.destroy());
+  service.targetUserId = 'bob'; service.workspaceId = 'workspace';
+  const core = service.ensureReliable(); await core.initialized;
+  let release; core.initialized = new Promise(resolve => { release = resolve; });
+  const requesting = service.requestConnection({ workspaceId: 'workspace', receiverConnectionId: 'bob-connection', targetUserId: 'bob' });
+  service.cancelConnection(); release(); await requesting;
+  assert.equal(service.getState(), 'CANCELLED'); assert.equal(ws.sent.some(packet => packet.type === 'transfer.request'), false);
+});
+
 function createChatPeer(connectionId) {
   const { client } = createConnectedRealtimeClient(connectionId);
   const service = createService(client);

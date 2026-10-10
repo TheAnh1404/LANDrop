@@ -53,13 +53,13 @@ Sai ID, offset, biên block, kích thước, hash hay framing bị từ chối t
 
 ## Chat: ý nghĩa ACK
 
-Sender commit history + outbox trong cùng IndexedDB transaction trước gửi. Receiver commit trước ACK; lỗi quota/store không ACK. Sender cũng commit delivered + xóa outbox trước hiển thị delivered. Trạng thái queued → sending → delivered, hoặc failed/cancelled. Delivered không đồng nghĩa đã đọc.
+Sender commit history + outbox trong cùng IndexedDB transaction với durability strict trước gửi. Receiver commit trước ACK; lỗi quota/store không ACK. Sender cũng commit delivered + xóa outbox trước hiển thị delivered. Trạng thái queued → sending → delivered, hoặc failed/cancelled. Delivered không đồng nghĩa đã đọc.
 
 Retry cùng UUID, tối đa 5 lần, backoff 1.5–15 giây; vẫn giữ outbox sau thất bại để người dùng gửi lại. Reconnect/reload flush outbox sau capability exchange. Outbox giới hạn 1000; restore hiển thị 1000 tin gần nhất, dedup dựa trên dữ liệu đã lưu. Logout giữ dữ liệu trong origin nhưng không gửi tiếp; đăng nhập tài khoản khác dùng scope khác. Xóa history đồng thời xóa outbox.
 
 ## Lưu tệp và recovery
 
-SHA-256 dùng `@noble/hashes`, tính tăng dần trong worker, đọc từng 1 MiB. Sender đọc một lượt để lấy full hash trước OFFER; resume kiểm tra lại toàn bộ file nguồn. Không chỉ so tên/kích thước. Receiver kiểm tra hash từng block rồi hash toàn tệp trước COMPLETE. Preflight và final verification thêm I/O/CPU, được hiển thị thành trạng thái riêng.
+SHA-256 dùng `@noble/hashes`, tính tăng dần trong worker, đọc từng 1 MiB. Hash nguồn có worker riêng để không chặn worker ghi/checkpoint chiều nhận. Sender đọc một lượt để lấy full hash trước OFFER; resume kiểm tra lại toàn bộ file nguồn. Không chỉ so tên/kích thước. Receiver kiểm tra hash từng block rồi hash toàn tệp trước COMPLETE. Preflight và final verification thêm I/O/CPU, được hiển thị thành trạng thái riêng.
 
 HTTPS + OPFS: worker dùng sync access handle, ghi đúng offset và `flush()` trước khi main thread lưu checkpoint trong IndexedDB. Hai nơi lưu không có transaction chung: khi mở lại, file ngắn hơn metadata thì quay về zero; phần đuôi chưa ACK được truncate tới checkpoint. Nếu nội dung checkpoint sai, full hash cuối sẽ chặn COMPLETE; hủy và gửi lại từ đầu để khôi phục.
 

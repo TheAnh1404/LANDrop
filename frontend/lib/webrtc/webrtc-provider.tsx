@@ -11,7 +11,7 @@ interface ConnectionParams {
   workspaceId: string; receiverConnectionId: string; targetUserId?: string; targetDeviceId?: string;
   targetDeviceName?: string; fileName?: string; fileSize?: number;
 }
-interface Entry { key: string; service: WebRTCPeerService; params: ConnectionParams; stop: boolean; lastAttempt: number; attempts: number; subscriptions: (() => void)[]; }
+interface Entry { key: string; service: WebRTCPeerService; params: ConnectionParams; stop: boolean; approved: boolean; lastAttempt: number; attempts: number; subscriptions: (() => void)[]; }
 interface WebRTCContextValue {
   service: WebRTCPeerService | null; state: WebRTCPeerState; role: WebRTCRole | null; diagnostics: WebRTCDiagnostics;
   incomingRequest: IncomingTransferRequest | null; testResult: PeerTestResult | null; localConnectionId: string | null;
@@ -60,10 +60,10 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
       inactive.subscriptions.forEach(unsubscribe => unsubscribe()); inactive.service.destroy(); pool.current.delete(inactive.key);
     }
     const service = new WebRTCPeerService(client, { localUserId: user.id, localName: user.name, serverUrl, managed: true });
-    const entry: Entry = { key, service, params, stop: false, lastAttempt: 0, attempts: 0, subscriptions: [] };
+    const entry: Entry = { key, service, params, stop: false, approved: false, lastAttempt: 0, attempts: 0, subscriptions: [] };
     pool.current.set(key, entry);
     entry.subscriptions = [
-      service.onStateChange(state => { if (state === 'CONNECTED') entry.attempts = 0; redraw(); }),
+      service.onStateChange(state => { if (state === 'CONNECTED') entry.attempts = 0; redraw(); if (state === 'DISCONNECTED' && !entry.stop) client.sendEnvelope({ type: 'peer.list', requestId: `recover-${Date.now()}` }); }),
       service.onDiagnostics(() => redraw()), service.onChatMessage(() => redraw()), service.onTasks(() => redraw()),
       service.onTransferProgress(() => redraw()), service.onFileReceived(() => redraw()), service.onQuickText(() => redraw()),
       service.onChatTyping(value => { typing.current.set(key, value); redraw(); }),
@@ -103,7 +103,7 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
         if (['REQUESTING', 'WAITING_ACCEPT', 'SIGNALING', 'CONNECTING'].includes(state)) entry.service.cancelConnection('Resolve simultaneous connection requests');
         entry.service.receiveIncomingRequest(payload); pending.current.set(payload.transferId, entry);
         if (!focus.current) focus.current = entry;
-        if (entry.attempts > 0) void entry.service.acceptIncomingRequest(payload.transferId).catch(() => redraw());
+        if (entry.approved && !entry.stop) void entry.service.acceptIncomingRequest(payload.transferId).catch(() => redraw());
         redraw();
       } catch (error) { client.sendEnvelope({ type: 'transfer.reject', payload: { transferId: payload.transferId, reason: error instanceof Error ? error.message : 'Connection limit reached.' } }); }
     }
@@ -124,7 +124,7 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
   const requestP2P = async (params: ConnectionParams) => {
     const target = peers.current.find(peer => peer.connectionId === params.receiverConnectionId);
     const entry = createEntry({ ...params, targetUserId: params.targetUserId || target?.userId || undefined, targetDeviceId: params.targetDeviceId || target?.deviceId || undefined });
-    focus.current = entry; entry.stop = false; redraw();
+    focus.current = entry; entry.stop = false; entry.approved = true; redraw();
     if (['CONNECTED', 'REQUESTING', 'WAITING_ACCEPT', 'SIGNALING', 'CONNECTING'].includes(entry.service.getState())) return;
     await entry.service.requestConnection({ ...entry.params, fileName: 'p2p-chat-session', fileSize: 0 });
   };
@@ -145,14 +145,14 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
     peerTyping: focus.current ? typing.current.get(focus.current.key) || null : null, onlinePeers,
     fileTasks: [...pool.current.values()].flatMap(entry => entry.service.getTasks()), backgroundConnections: Math.max(0, [...pool.current.values()].filter(entry => entry.service.getState() === 'CONNECTED').length - (service?.getState() === 'CONNECTED' ? 1 : 0)),
     requestP2P,
-    acceptIncomingRequest: async id => { const entry = pending.current.get(id || request?.transferId || ''); if (!entry) throw new Error('Yêu cầu không còn tồn tại.'); focus.current = entry; await entry.service.acceptIncomingRequest(id); redraw(); },
+    acceptIncomingRequest: async id => { const entry = pending.current.get(id || request?.transferId || ''); if (!entry) throw new Error('Yêu cầu không còn tồn tại.'); focus.current = entry; entry.approved = true; entry.stop = false; await entry.service.acceptIncomingRequest(id); redraw(); },
     rejectIncomingRequest: (reason, id) => { pending.current.get(id || request?.transferId || '')?.service.rejectIncomingRequest(reason, id); redraw(); },
     cancelConnection: reason => { if (focus.current) { focus.current.stop = true; focus.current.service.cancelConnection(reason); } },
     resetToIdle: () => { if (focus.current) { focus.current.stop = true; focus.current.service.resetToIdle(); } },
     sendFile: file => requireService().sendFile(file), sendQuickText: text => requireService().sendQuickText(text),
     sendChatMessage: async (text, reply) => requireService().sendChatMessage(text, reply), sendChatTyping: active => service?.sendChatTyping(active),
     clearChatMessages: () => { service?.clearChatMessages(); redraw(); }, fetchOnlinePeers,
-    clearReceivedFiles: () => { for (const entry of pool.current.values()) for (const file of entry.service.getReceivedFiles()) { hiddenFiles.current.add(file.id); URL.revokeObjectURL(file.blobUrl); } redraw(); },
+    clearReceivedFiles: () => { for (const entry of pool.current.values()) for (const file of entry.service.getReceivedFiles()) hiddenFiles.current.add(file.id); redraw(); },
     clearQuickMessages: () => { service?.clearQuickMessages(); redraw(); },
     acceptFile: (id, destination) => taskOwner(id).acceptFile(id, destination), rejectFile: id => taskOwner(id).rejectFile(id),
     pauseFile: id => taskOwner(id).pause(id), resumeFile: async (id, file) => { await taskOwner(id).resume(id, file); }, cancelFile: id => taskOwner(id).cancel(id), removeFile: id => taskOwner(id).removeTask(id),

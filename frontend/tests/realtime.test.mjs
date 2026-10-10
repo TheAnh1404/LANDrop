@@ -39,6 +39,17 @@ const {
   reconcileMessages,
 } = require(path.join(output, 'reconcile.js'));
 
+test('authenticated device identity survives closing the tab and stays isolated by account', t => {
+  const previous = globalThis.window, persistent = new Map(), transient = new Map();
+  const storage = records => ({ getItem: key => records.get(key) || null, setItem: (key, value) => records.set(key, value) });
+  globalThis.window = { localStorage: storage(persistent), sessionStorage: storage(transient) };
+  t.after(() => { globalThis.window = previous; });
+  const before = new RealtimeClient().getClientInstanceId('alice');
+  transient.clear();
+  assert.equal(new RealtimeClient().getClientInstanceId('alice'), before);
+  assert.notEqual(new RealtimeClient().getClientInstanceId('bob'), before);
+});
+
 // Mock WebSocket implementation for unit testing browser protocol interactions
 class MockWebSocket {
   static OPEN = 1;
@@ -189,7 +200,7 @@ test('RealtimeClient sends flat hello on open without token or deviceId', () => 
   assert.equal(hello.deviceName, 'MacBook Pro');
   assert.equal(hello.token, undefined);
   assert.equal(hello.deviceId, undefined);
-  assert.ok(hello.clientInstanceId.startsWith('tab-'));
+  assert.ok(hello.clientInstanceId.startsWith('browser-'));
 });
 
 test('Welcome with missing credentials transitions to AUTH_REQUIRED without joining rooms', () => {

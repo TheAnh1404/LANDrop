@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import { once } from 'node:events';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import { createLanProxy } from './lan-proxy.mjs';
 
 const { chromium } = createRequire(new URL('../frontend/package.json', import.meta.url))('playwright');
@@ -13,7 +14,7 @@ const proxy = createLanProxy({ cert: await fs.readFile(process.env.LANDROP_TEST_
 proxy.listen(0, '127.0.0.1'); await once(proxy, 'listening');
 const origin = `https://127.0.0.1:${proxy.address().port}`;
 const browser = await chromium.launch({ ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: 'chrome' }), headless: true });
-const errors = [], gatewayErrors = [], connected = new Set(); let renewals = 0;
+const errors = [], gatewayErrors = [], connected = new Set(); let renewals = 0, chatStress;
 const suffix = Date.now().toString(36), ownerName = `p2p_o_${suffix}`, memberName = `p2p_n_${suffix}`;
 const password = 'LAN-test-only-Password-123!';
 const artifact = new URL('../output/p2p/', import.meta.url); await fs.mkdir(artifact, { recursive: true });
@@ -53,6 +54,37 @@ try {
   await owner.locator('#composer-textarea').fill('Chat LAN: Next.js ↔ client Java'); await owner.locator('#btn-composer-send').click();
   await member.getByText('Chat LAN: Next.js ↔ client Java', { exact: true }).waitFor();
   console.log('Cross-client WebRTC chat received');
+  if (process.env.LANDROP_TEST_CHAT_STRESS === 'true') {
+    const latencies = await owner.evaluate(async () => {
+      const values = [];
+      for (let index = 0; index < 100; index++) {
+        const message = await p2pManager.sendChat(`Client RTT sample ${index}`, selectedPeer, workspaceId);
+        const deadline = performance.now() + 10000;
+        while (!message.ack) { if (performance.now() > deadline) throw new Error('UI chat ACK timed out'); await new Promise(resolve => setTimeout(resolve, 1)); }
+        values.push(message.receiveRttMs);
+      }
+      if (values.some(value => !Number.isFinite(value))) throw new Error('Fast receiver receipt was not negotiated');
+      values.sort((a, b) => a - b); return { samples: 100, minMs: values[0], p50Ms: values[49], p95Ms: values[94], p99Ms: values[98], maxMs: values[99] };
+    });
+    await owner.evaluate(() => Promise.all(Array.from({ length: 30 }, (_, index) => p2pManager.sendChat(`Burst client ${index}`, selectedPeer, workspaceId))));
+    await member.waitForFunction(() => Array.from(document.querySelectorAll('div')).filter(element => element.textContent?.trim() === 'Burst client 29').length > 0);
+    await owner.waitForFunction(() => p2pManager.getService().getChatMessages().filter(message => message.text.startsWith('Burst client ') && message.ack).length === 30);
+    assert.equal(await member.locator('div').filter({ hasText: /^Burst client 0$/ }).count(), 1);
+    // Reproduce the detached-core/CONNECTED bug and send while reconnecting.
+    await owner.evaluate(async () => { p2pManager.getService().fileChannel.close(); await p2pManager.sendChat('Queued chat survives a closed file lane', selectedPeer, workspaceId); });
+    await member.getByText('Queued chat survives a closed file lane', { exact: true }).waitFor({ timeout: 30000 });
+    await owner.waitForFunction(() => p2pManager.getService().getChatMessages().some(message => message.text === 'Queued chat survives a closed file lane' && message.ack), null, { timeout: 30000 });
+    // A full gateway reconnect changes connectionId while deviceId remains stable.
+    const oldConnectionId = await owner.evaluate(() => myConnectionId);
+    await owner.evaluate(() => ws.close());
+    await owner.waitForFunction(old => authenticated && myConnectionId && myConnectionId !== old && ws?.readyState === WebSocket.OPEN, oldConnectionId, { timeout: 30000 });
+    await owner.locator('#composer-textarea').fill('Chat after gateway reconnect'); await owner.locator('#btn-composer-send').click();
+    await member.getByText('Chat after gateway reconnect', { exact: true }).waitFor({ timeout: 30000 });
+    await owner.getByText('Burst client 0', { exact: true }).waitFor();
+    assert.equal(await owner.locator('#messages-stream .msg-group').count(), 133, 'Device-scoped history survives connection ID changes without duplicates');
+    chatStress = { receiverReceiptRoundTrip: latencies, burst: 30, duplicateMessages: 0, fileChannelRecovery: true, changedGatewayConnectionId: true, stableDeviceHistory: true };
+    console.log('Client latency, burst, file-lane recovery and gateway reconnect verified.');
+  }
   const bytes = Buffer.from('LAN integrity test\n'.repeat(20000));
   await owner.locator('#composer-file-input').setInputFiles({ name: 'LAN kiểm tra.txt', mimeType: 'text/plain', buffer: bytes });
   await member.getByRole('button', { name: 'Nhận và lưu', exact: true }).click();
@@ -61,20 +93,21 @@ try {
   const downloading = member.waitForEvent('download'); await member.getByRole('button', { name: 'Tải tệp đã xác minh', exact: true }).click();
   assert.deepEqual(await fs.readFile(await (await downloading).path()), bytes);
   const leaseSeconds = Number(process.env.LANDROP_TEST_LEASE_SECONDS || 135);
-  console.log(`Cross-client file integrity passed. Keeping the session for ${leaseSeconds}s to cross its initial lease.`);
+  console.log(`Cross-client file integrity passed. Checking session renewal for ${leaseSeconds}s.`);
   await new Promise(resolve => setTimeout(resolve, leaseSeconds * 1000));
   await owner.locator('#composer-textarea').fill('Chat sau khi vượt lease ban đầu'); await owner.locator('#btn-composer-send').click();
   await member.getByText('Chat sau khi vượt lease ban đầu', { exact: true }).waitFor();
   assert.equal(connected.size, 2); assert.deepEqual(gatewayErrors, []); assert.deepEqual(errors, []);
   await owner.evaluate(() => window.scrollTo(0, 0)); await member.evaluate(() => window.scrollTo(0, 0));
-  await owner.screenshot({ path: new URL('bundled-desktop.png', artifact).pathname.replace(/^\/(\w:)/, '$1'), fullPage: true });
-  await member.screenshot({ path: new URL('next-desktop.png', artifact).pathname.replace(/^\/(\w:)/, '$1'), fullPage: true });
+  await owner.screenshot({ path: fileURLToPath(new URL('bundled-desktop.png', artifact)), fullPage: true });
+  await member.screenshot({ path: fileURLToPath(new URL('next-desktop.png', artifact)), fullPage: true });
   await member.setViewportSize({ width: 390, height: 844 });
   await member.evaluate(() => window.scrollTo(0, 0)); await member.waitForTimeout(250);
   assert.equal(await member.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Mobile page must not overflow horizontally');
-  await member.screenshot({ path: new URL('next-mobile.png', artifact).pathname.replace(/^\/(\w:)/, '$1'), fullPage: true });
-  const report = { browser: browser.version(), cases: ['HTTPS same-origin API and WSS proxy', 'Real PostgreSQL registration and workspace permissions', 'Next.js ↔ bundled shared-engine chat', 'File consent and verified completion', 'Downloaded bytes exactly match source', leaseSeconds >= 120 ? 'Connected session survives initial lease and delivers another message' : 'Connected session remains usable through lease renewal', 'Desktop and mobile screenshots'], bytes: bytes.length, leaseSeconds, renewals, browserErrors: errors, gatewayErrors, physicalLan: false };
+  await member.screenshot({ path: fileURLToPath(new URL('next-mobile.png', artifact)), fullPage: true });
+  const report = { browser: browser.version(), cases: ['HTTPS same-origin API and WSS proxy', 'Real PostgreSQL registration and workspace permissions', 'Next.js ↔ bundled shared-engine chat', 'File consent and verified completion', 'Downloaded bytes exactly match source', leaseSeconds >= 120 ? 'Connected session survives initial lease and delivers another message' : 'Connected session remains usable through lease renewal', 'Desktop and mobile screenshots'], bytes: bytes.length, leaseSeconds, renewals, browserErrors: errors, gatewayErrors, physicalLan: false, chatStress };
   await fs.writeFile(new URL('live-browser-report.json', artifact), JSON.stringify(report, null, 2));
   await fs.writeFile(new URL(`live-browser-report-${leaseSeconds}s.json`, artifact), JSON.stringify(report, null, 2));
+  if (chatStress) await fs.writeFile(new URL('chat-live-report.json', artifact), JSON.stringify(report, null, 2));
   console.log(JSON.stringify(report, null, 2));
 } finally { await browser.close(); proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); }
