@@ -30,11 +30,11 @@ public final class ServerDashboardPanel extends JPanel {
     public record TransferRow(String id, String fileName, long size, String sender, String receiver, String status, Instant expiresAt) { }
     public record Activity(Instant at, String level, String text) { }
     private static final Color NAVY = new Color(0x111C30);
-    private static final Color BLUE = new Color(0x4779F3);
-    private static final Color GREEN = new Color(0x169C72);
-    private static final Color AMBER = new Color(0xD28A28);
-    private static final Color RED = new Color(0xD95562);
-    private static final Font FONT = new Font("Segoe UI", Font.PLAIN, 13);
+    private static final Color BLUE = DesktopUi.BLUE;
+    private static final Color GREEN = DesktopUi.GREEN;
+    private static final Color AMBER = DesktopUi.AMBER;
+    private static final Color RED = DesktopUi.RED;
+    private static final Font FONT = DesktopUi.FONT;
     private static final DateTimeFormatter TIME = DateTimeFormatter.ofPattern("HH:mm:ss").withZone(ZoneId.systemDefault());
     private final Actions actions;
     private final List<Runnable> themeBindings = new ArrayList<>();
@@ -64,6 +64,10 @@ public final class ServerDashboardPanel extends JPanel {
     private final JLabel accessHealth = new JLabel("Chưa chạy");
     private final JLabel clientLink = new JLabel();
     private final JLabel connectionHint = new JLabel();
+    private final JLabel welcomeTitle = new JLabel();
+    private final JLabel welcomeHint = new JLabel();
+    private final JLabel databaseGuidance = new JLabel();
+    private final JButton copyLinkButton;
     private final JLabel backendLink = new JLabel();
     private final JLabel qrLabel = new JLabel("QR", SwingConstants.CENTER);
     private final JComboBox<NetworkHelper.LanInterfaceInfo> interfaces = new JComboBox<>();
@@ -108,15 +112,16 @@ public final class ServerDashboardPanel extends JPanel {
         this.actions = actions;
         this.dark = dark;
         setLayout(new BorderLayout());
-        startButton = button("Khởi động", "play", BLUE, actions::start);
-        stopButton = button("Dừng", "stop", null, actions::stop);
+        startButton = button("Bật máy chủ", "play", BLUE, actions::start);
+        stopButton = button("Dừng máy chủ", "stop", null, actions::stop);
         restartButton = button("Khởi động lại", "restart", null, actions::restart);
         themeButton = button("Giao diện tối", "theme", null, this::toggleTheme);
-        clientButton = button("Mở client", "link", BLUE, actions::openClient);
-        adminButton = button("Quản trị dữ liệu", "shield", null, () -> showPage("administration"));
+        clientButton = button("Mở trang kết nối", "link", BLUE, actions::openClient);
+        copyLinkButton = button("Sao chép đường dẫn", "copy", null, () -> actions.copy(clientLink.getText()));
+        adminButton = button("Quản lý người dùng", "users", null, () -> showPage("users"));
         administration = new DesktopAdminPanel(actions::applyServiceConfig);
         disconnectButton = button("Ngắt kết nối", "stop", RED, () -> actions.disconnect(selectedClientId()));
-        cancelButton = button("Hủy phiên đã chọn", "stop", RED, () -> actions.cancelTransfer(selectedTransferId()));
+        cancelButton = button("Hủy yêu cầu đã chọn", "stop", null, () -> actions.cancelTransfer(selectedTransferId()));
         add(sidebar(), BorderLayout.WEST);
         JPanel main = transparent(new BorderLayout(0, 18));
         main.setBorder(new EmptyBorder(26, 28, 16, 28));
@@ -128,15 +133,16 @@ public final class ServerDashboardPanel extends JPanel {
         pageContainer.add(logsPage(), "logs");
         pageContainer.add(settingsPage(), "settings");
         pageContainer.add(administration, "administration");
+        pageContainer.add(helpPage(), "help");
         main.add(pageContainer, BorderLayout.CENTER);
         JPanel status = transparent(new BorderLayout());
         style(footer, 11, false, true);
         status.add(footer, BorderLayout.WEST);
-        JLabel version = label("LANDrop  ·  Protocol v1", 11, false, true);
+        JLabel version = label("LANDrop Server Desktop", 11, false, true);
         status.add(version, BorderLayout.EAST);
         main.add(status, BorderLayout.SOUTH);
         add(main, BorderLayout.CENTER);
-        themeBindings.add(() -> setBackground(this.dark ? new Color(0x0E1624) : new Color(0xF4F6FA)));
+        themeBindings.add(() -> setBackground(DesktopUi.canvas(this.dark)));
         bindSearch(clientTable, clientSearch, clientCount, "kết nối");
         bindSearch(transferTable, transferSearch, transferCount, "phiên đang hoạt động");
         clientTable.getSelectionModel().addListSelectionListener(e -> updateSelection());
@@ -157,29 +163,30 @@ public final class ServerDashboardPanel extends JPanel {
     private JPanel sidebar() {
         JPanel side = new JPanel(new BorderLayout());
         side.setBackground(NAVY);
-        side.setPreferredSize(new Dimension(210, 0));
-        side.setBorder(new EmptyBorder(30, 18, 24, 18));
-        JPanel upper = transparent(new BorderLayout(0, 38));
+        side.setPreferredSize(new Dimension(220, 0));
+        side.setBorder(new EmptyBorder(28, 16, 20, 16));
+        JPanel upper = transparent(new BorderLayout(0, 28));
         JPanel brand = transparent(new BorderLayout(12, 0));
         JLabel mark = new JLabel("L", SwingConstants.CENTER);
         mark.setOpaque(true); mark.setBackground(BLUE); mark.setForeground(Color.WHITE);
         mark.setFont(FONT.deriveFont(Font.BOLD, 25)); mark.setPreferredSize(new Dimension(42, 42));
         JPanel brandText = transparent(new GridLayout(2, 1, 0, 3));
         JLabel name = new JLabel("LANDrop"); name.setForeground(Color.WHITE); name.setFont(FONT.deriveFont(Font.BOLD, 21));
-        JLabel product = new JLabel("SERVER CONSOLE"); product.setFont(FONT.deriveFont(10f)); product.setForeground(new Color(0x91A4C2));
+        JLabel product = new JLabel("Không gian quản lý"); product.setFont(FONT.deriveFont(12f)); product.setForeground(new Color(0xA7B8D0));
         brandText.add(name); brandText.add(product); brand.add(mark, BorderLayout.WEST); brand.add(brandText);
         upper.add(brand, BorderLayout.NORTH);
-        JPanel nav = transparent(new GridLayout(7, 1, 0, 8));
-        JLabel caption = new JLabel("ĐIỀU KHIỂN MÁY CHỦ"); caption.setForeground(new Color(0x7185A4)); caption.setFont(FONT.deriveFont(Font.BOLD, 10));
-        nav.add(caption);
-        String[][] entries = {{"overview", "Tổng quan", "home"}, {"clients", "Thiết bị kết nối", "users"},
-                {"transfers", "Phiên truyền", "transfer"}, {"administration", "Quản trị dữ liệu", "shield"},
-                {"logs", "Nhật ký", "logs"}, {"settings", "Cấu hình", "settings"}};
+        JPanel nav = transparent(new GridLayout(11, 1, 0, 5));
+        nav.add(navCaption("QUẢN LÝ HẰNG NGÀY"));
+        String[][] entries = {{"overview", "Tổng quan", "home"}, {"users", "Người dùng", "users"},
+                {"clients", "Thiết bị", "server"}, {"workspaces", "Nhóm làm việc", "shield"},
+                {"transfers", "Truyền tệp", "transfer"}, {"data", "Dữ liệu lưu trữ", "logs"},
+                {"logs", "Nhật ký hoạt động", "clock"}, {"settings", "Cài đặt", "settings"}, {"help", "Hướng dẫn", "help"}};
         ButtonGroup group = new ButtonGroup();
         for (String[] entry : entries) {
+            if (entry[0].equals("data")) nav.add(navCaption("VẬN HÀNH & HỖ TRỢ"));
             JToggleButton item = new JToggleButton(entry[1], new LineIcon(entry[2]));
             item.setActionCommand(entry[0]); item.setHorizontalAlignment(SwingConstants.LEFT);
-            item.setIconTextGap(12); item.setFont(FONT.deriveFont(Font.BOLD, 13)); item.setPreferredSize(new Dimension(174, 44));
+            item.setIconTextGap(12); item.setFont(FONT.deriveFont(Font.PLAIN, 14)); item.setPreferredSize(new Dimension(184, 42));
             item.setBorder(new EmptyBorder(12, 12, 12, 8)); item.setFocusPainted(false);
             item.putClientProperty("JButton.buttonType", "roundRect");
             item.addActionListener(e -> showPage(entry[0])); group.add(item); navigation.add(item); nav.add(item);
@@ -189,47 +196,51 @@ public final class ServerDashboardPanel extends JPanel {
         JLabel local = new JLabel("MÁY CHỦ CỤC BỘ"); local.setForeground(new Color(0x7185A4)); local.setFont(FONT.deriveFont(Font.BOLD, 10));
         sidebarStatus.setForeground(new Color(0xCFDAEC)); sidebarStatus.setFont(FONT.deriveFont(Font.BOLD, 13));
         themeButton.setHorizontalAlignment(SwingConstants.LEFT);
-        JLabel hint = new JLabel("Cùng mạng. Cùng không gian."); hint.setForeground(new Color(0x7185A4)); hint.setFont(FONT.deriveFont(11f));
+        JLabel hint = new JLabel("Chia sẻ dễ dàng. Quản lý rõ ràng."); hint.setForeground(new Color(0xA7B8D0)); hint.setFont(FONT.deriveFont(11f));
         lower.add(local); lower.add(sidebarStatus); lower.add(themeButton); lower.add(hint); side.add(lower, BorderLayout.SOUTH);
         return side;
     }
 
+    private JLabel navCaption(String text) {
+        JLabel caption = new JLabel(text); caption.setForeground(new Color(0x91A4C2));
+        caption.setFont(FONT.deriveFont(Font.BOLD, 10)); caption.setBorder(new EmptyBorder(10, 10, 0, 0)); return caption;
+    }
+
     private JPanel header() {
         JPanel header = transparent(new BorderLayout(12, 12));
-        JPanel titles = transparent(new GridLayout(2, 1, 0, 5));
-        style(pageTitle, 26, true, false); style(pageDescription, 12, false, true);
-        titles.add(pageTitle); titles.add(pageDescription); header.add(titles, BorderLayout.CENTER);
+        style(pageTitle, 27, true, false); style(pageDescription, 13, false, true);
+        header.add(pageTitle, BorderLayout.CENTER);
         JPanel controls = transparent(new FlowLayout(FlowLayout.RIGHT, 8, 7));
         statusBadge.setFont(FONT.deriveFont(Font.BOLD, 11)); statusBadge.setOpaque(true);
         statusBadge.setBorder(new EmptyBorder(9, 12, 9, 12));
         controls.add(statusBadge); controls.add(startButton); controls.add(stopButton); controls.add(restartButton);
         header.add(controls, BorderLayout.EAST);
-        style(notice, 12, false, true); notice.setBorder(new EmptyBorder(0, 0, 0, 0));
-        header.add(notice, BorderLayout.SOUTH);
+        JPanel description = transparent(new GridLayout(2, 1, 0, 8)); description.add(pageDescription);
+        style(notice, 12, false, true); description.add(notice); header.add(description, BorderLayout.SOUTH);
         return header;
     }
 
     private JComponent overview() {
         JPanel body = transparent(new BorderLayout(0, 18));
-        JPanel metrics = transparent(new GridLayout(1, 4, 14, 0));
-        metrics.add(metric("THIẾT BỊ KẾT NỐI", clientsMetric, "users", "Các kết nối đang online"));
-        metrics.add(metric("PHIÊN ĐANG HOẠT ĐỘNG", transfersMetric, "transfer", "Điều phối kết nối P2P"));
-        metrics.add(metric("THỜI GIAN HOẠT ĐỘNG", uptimeMetric, "clock", "Tính từ khi server sẵn sàng"));
-        metrics.add(metric("BỘ NHỚ ĐANG SỬ DỤNG", memoryMetric, "server", "Bộ nhớ Java hiện tại"));
-        body.add(metrics, BorderLayout.NORTH);
+        JPanel metrics = transparent(new GridLayout(1, 3, 14, 0));
+        metrics.add(metric("THIẾT BỊ ĐANG KẾT NỐI", clientsMetric, "users", "Đang truy cập máy chủ"));
+        metrics.add(metric("YÊU CẦU TRUYỀN TỆP", transfersMetric, "transfer", "Đang chờ hoặc đang kết nối"));
+        metrics.add(metric("THỜI GIAN HOẠT ĐỘNG", uptimeMetric, "clock", "Từ lần bật máy chủ gần nhất"));
+        body.add(connectionCard(), BorderLayout.NORTH);
         JPanel stack = transparent(new BorderLayout(0, 18));
-        stack.add(connectionCard(), BorderLayout.NORTH);
+        stack.add(metrics, BorderLayout.NORTH);
         JPanel lower = transparent(new GridLayout(1, 2, 18, 0));
         JPanel health = surface(new BorderLayout(0, 18));
-        health.add(sectionTitle("Tình trạng dịch vụ", "server"), BorderLayout.NORTH);
+        health.add(sectionTitle("Máy chủ có hoạt động tốt?", "server"), BorderLayout.NORTH);
         JPanel statuses = transparent(new GridLayout(4, 1, 0, 10));
-        statuses.add(healthRow("HTTP API", apiHealth)); statuses.add(healthRow("WebSocket", wsHealth));
-        statuses.add(healthRow("Xác thực & workspace", accessHealth)); statuses.add(healthRow("Cơ sở dữ liệu", databaseHealth));
-        health.add(statuses); health.setPreferredSize(new Dimension(380, 218));
+        statuses.add(healthRow("Trang kết nối", apiHealth)); statuses.add(healthRow("Kết nối trực tiếp", wsHealth));
+        statuses.add(healthRow("Đăng nhập & nhóm", accessHealth)); statuses.add(healthRow("Dữ liệu lưu trữ", databaseHealth));
+        health.add(statuses); style(databaseGuidance, 11, false, true); health.add(databaseGuidance, BorderLayout.SOUTH);
+        health.setPreferredSize(new Dimension(380, 228));
         JPanel recent = surface(new BorderLayout(0, 14));
         JPanel recentHeader = transparent(new BorderLayout()); recentHeader.add(sectionTitle("Hoạt động gần đây", "logs"));
         JButton seeLogs = button("Xem tất cả", "arrow", null, () -> showPage("logs")); recentHeader.add(seeLogs, BorderLayout.EAST);
-        recent.add(recentHeader, BorderLayout.NORTH); recentLines.setLayout(new GridLayout(5, 1, 0, 8)); recentLines.setOpaque(false);
+        recent.add(recentHeader, BorderLayout.NORTH); recentLines.setLayout(new GridLayout(4, 1, 0, 8)); recentLines.setOpaque(false);
         style(recentActivity, 12, false, true); recentActivity.setText("Nhật ký sẽ xuất hiện khi máy chủ hoạt động.");
         recentLines.add(recentActivity); recent.add(recentLines); lower.add(health); lower.add(recent);
         stack.add(lower, BorderLayout.CENTER); body.add(stack, BorderLayout.CENTER);
@@ -247,28 +258,30 @@ public final class ServerDashboardPanel extends JPanel {
 
     private JPanel connectionCard() {
         JPanel card = surface(new BorderLayout(24, 16));
-        card.add(sectionTitle("Cho người dùng kết nối", "link"), BorderLayout.NORTH);
+        JPanel intro = transparent(new BorderLayout(0, 7));
+        style(welcomeTitle, 22, true, false); style(welcomeHint, 13, false, true);
+        intro.add(welcomeTitle, BorderLayout.NORTH); intro.add(welcomeHint); card.add(intro, BorderLayout.NORTH);
         JPanel details = transparent(new BorderLayout(0, 12));
         JPanel network = transparent(new BorderLayout(12, 0));
-        network.add(label("Mạng chia sẻ", 12, false, true), BorderLayout.WEST);
+        network.add(label("Mạng đang dùng", 12, false, true), BorderLayout.WEST);
         interfaces.setFont(FONT); network.add(interfaces);
         network.add(button("Làm mới", "restart", null, actions::refreshNetwork), BorderLayout.EAST); details.add(network, BorderLayout.NORTH);
         JPanel linkBox = new JPanel(new BorderLayout(0, 6)); linkBox.setBorder(new EmptyBorder(12, 14, 12, 14));
         themeBindings.add(() -> linkBox.setBackground(dark ? new Color(0x182A45) : new Color(0xEFF4FF)));
-        linkBox.add(label("URL DÀNH CHO CLIENT", 10, true, true), BorderLayout.NORTH);
-        clientLink.setFont(new Font("Consolas", Font.BOLD, 14)); clientLink.setForeground(BLUE); clientLink.putClientProperty("html.disable", true);
-        linkBox.add(clientLink); linkBox.add(button("Sao chép", "copy", null, () -> actions.copy(clientLink.getText())), BorderLayout.EAST);
+        linkBox.add(label("ĐƯỜNG DẪN CHIA SẺ", 10, true, true), BorderLayout.NORTH);
+        clientLink.setFont(FONT.deriveFont(Font.BOLD, 16)); clientLink.setForeground(BLUE); clientLink.putClientProperty("html.disable", true);
+        linkBox.add(clientLink);
         details.add(linkBox);
         JPanel tools = transparent(new BorderLayout(0, 8));
-        JPanel links = transparent(new FlowLayout(FlowLayout.LEFT, 8, 0)); links.add(clientButton); links.add(adminButton);
+        JPanel links = transparent(new FlowLayout(FlowLayout.LEFT, 8, 0)); links.add(copyLinkButton); links.add(clientButton);
         style(backendLink, 11, false, true); backendLink.setToolTipText("Địa chỉ backend API và gateway WebSocket.");
-        tools.add(links, BorderLayout.NORTH); tools.add(backendLink, BorderLayout.CENTER); style(connectionHint, 11, false, true);
+        tools.add(links, BorderLayout.NORTH); style(connectionHint, 12, false, true);
         tools.add(connectionHint, BorderLayout.SOUTH); details.add(tools, BorderLayout.SOUTH);
         card.add(details);
         JPanel qr = transparent(new BorderLayout(0, 9)); qrLabel.setPreferredSize(new Dimension(148, 148));
         qrLabel.setOpaque(true); qrLabel.setBackground(Color.WHITE); qrLabel.setForeground(new Color(0x16223A));
         qrLabel.setBorder(new EmptyBorder(5, 5, 5, 5)); qr.add(qrLabel);
-        JLabel caption = label("Quét QR để vào client", 11, false, true); caption.setHorizontalAlignment(SwingConstants.CENTER);
+        JLabel caption = label("Quét mã để kết nối", 12, false, true); caption.setHorizontalAlignment(SwingConstants.CENTER);
         qr.add(caption, BorderLayout.SOUTH); card.add(qr, BorderLayout.EAST);
         return card;
     }
@@ -299,7 +312,7 @@ public final class ServerDashboardPanel extends JPanel {
         page.add(searchBar(transferSearch, transferCount, "Tìm tệp, người gửi hoặc người nhận…"), BorderLayout.NORTH);
         page.add(tableCard(transferTable, "Chưa có phiên truyền đang hoạt động", "Các yêu cầu và phiên WebRTC xuất hiện tại đây khi người dùng bắt đầu kết nối."));
         JPanel tools = transparent(new BorderLayout(16, 0));
-        tools.add(label("Máy chủ hiển thị phiên signaling; dữ liệu tệp được gửi trực tiếp giữa các client.", 11, false, true));
+        tools.add(label("Đây là các yêu cầu kết nối; chưa thể hiện tiến độ gửi tệp.", 12, false, true));
         tools.add(cancelButton, BorderLayout.EAST); page.add(tools, BorderLayout.SOUTH); return page;
     }
 
@@ -334,35 +347,76 @@ public final class ServerDashboardPanel extends JPanel {
         tools.add(logSearch); tools.add(logFilter, BorderLayout.WEST);
         JPanel controls = transparent(new FlowLayout(FlowLayout.RIGHT, 8, 0)); autoScroll.setOpaque(false); controls.add(autoScroll);
         controls.add(button("Sao chép", "copy", null, () -> actions.copy(logText.getText())));
-        controls.add(button("Xóa màn hình", "logs", null, () -> {
+        controls.add(button("Ẩn nhật ký đã xem", "logs", null, () -> {
             logsClearedAt = Instant.now(); renderLogs();
         })); tools.add(controls, BorderLayout.EAST); page.add(tools, BorderLayout.NORTH);
         logText.setEditable(false); logText.setFont(new Font("Consolas", Font.PLAIN, 12)); logText.setMargin(new Insets(18, 18, 18, 18));
         themeBindings.add(() -> { logText.setBackground(dark ? new Color(0x0B1220) : Color.WHITE); logText.setForeground(textColor()); });
         logScroll = scroll(logText); page.add(logScroll);
-        page.add(label("Bộ đệm hiển thị tối đa 2.000 dòng. Xóa màn hình không xóa nhật ký trên máy chủ.", 11, false, true), BorderLayout.SOUTH);
+        JPanel explanation = transparent(new BorderLayout(8, 0));
+        explanation.add(label("Ẩn nhật ký đã xem chỉ làm sạch màn hình, không xóa lịch sử quản trị.", 12, false, true));
+        explanation.add(button("Lịch sử quản trị", "shield", null, () -> showPage("audit")), BorderLayout.EAST);
+        page.add(explanation, BorderLayout.SOUTH);
         return page;
     }
 
     private JComponent settingsPage() {
         JPanel body = transparent(new BorderLayout(0, 16));
+        JPanel basics = surface(new BorderLayout(0, 14));
+        basics.add(sectionTitle("Cài đặt thường dùng", "settings"), BorderLayout.NORTH);
+        JPanel simple = transparent(new GridLayout(0, 1, 0, 12));
+        minimizeTray.setFont(FONT); minimizeTray.setOpaque(false); simple.add(minimizeTray);
+        simple.add(label("Máy chủ vẫn hoạt động khi cửa sổ được thu nhỏ xuống khay hệ thống.", 12, false, true));
+        JPanel links = transparent(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        links.add(button("Lưu cài đặt cửa sổ", "settings", BLUE, () -> {
+            var next = new DesktopServerSettings(settings.bindHost(), settings.httpPort(), settings.wsPort(),
+                    settings.externalClient(), settings.clientPort(), minimizeTray.isSelected()); actions.applySettings(next);
+        }));
+        links.add(button("Thông tin & dịch vụ nâng cao", "server", null, () -> showPage("server")));
+        simple.add(links); basics.add(simple); body.add(basics, BorderLayout.NORTH);
         JPanel form = surface(new GridBagLayout()); GridBagConstraints c = new GridBagConstraints();
         c.fill = GridBagConstraints.HORIZONTAL; c.weightx = 1; c.insets = new Insets(0, 0, 20, 0); c.gridx = 0; c.gridy = 0; c.gridwidth = 2;
-        form.add(sectionTitle("Mạng & truy cập", "settings"), c);
+        form.add(sectionTitle("Mạng & cổng kết nối", "settings"), c);
         settingRow(form, c, "Địa chỉ lắng nghe", hostField, "0.0.0.0 cho thiết bị LAN; 127.0.0.1 chỉ cho máy này.");
-        settingRow(form, c, "Cổng HTTP API", httpField, "Client đi kèm và trang quản trị web dùng cổng này.");
+        settingRow(form, c, "Cổng trang kết nối", httpField, "Trang kết nối và các chức năng máy chủ dùng cổng này.");
         settingRow(form, c, "Cổng WebSocket", wsField, "Dùng cho chat realtime và điều phối WebRTC.");
-        settingRow(form, c, "Giao diện người dùng", clientMode, "Chọn Next.js nếu bạn chạy frontend riêng trên máy chủ.");
+        settingRow(form, c, "Trang kết nối", clientMode, "Chỉ chọn trang riêng khi frontend đã được chạy riêng.");
         settingRow(form, c, "Cổng Next.js client", clientPortField, "Frontend phải được chạy riêng; desktop không tự khởi động Next.js.");
-        c.gridy++; c.gridwidth = 2; minimizeTray.setFont(FONT); minimizeTray.setOpaque(false); form.add(minimizeTray, c);
-        c.gridy++; style(settingsFeedback, 12, false, true); form.add(settingsFeedback, c);
+        c.gridy++; c.gridwidth = 2;
         c.gridy++; c.insets = new Insets(0, 0, 0, 0); form.add(button("Áp dụng cấu hình", "settings", BLUE, this::applySettings), c);
-        body.add(form, BorderLayout.NORTH);
+        JPanel advancedBody = transparent(new BorderLayout(0, 14)); advancedBody.add(form, BorderLayout.NORTH);
         JPanel note = surface(new BorderLayout(0, 10)); note.add(label("Cấu hình có hiệu lực thế nào?", 14, true, false), BorderLayout.NORTH);
         JTextArea explanation = new JTextArea("Cài đặt áp dụng cho lần chạy desktop hiện tại. Nếu thay đổi cổng hoặc địa chỉ lắng nghe khi server đang chạy, hãy khởi động lại để sử dụng cấu hình mới.\n\nURL/QR luôn dùng cổng thực tế của server đang chạy. Với Next.js trên máy khác, cần cho phép origin frontend trong WS_ALLOWED_ORIGINS.");
         explanation.setEditable(false); explanation.setOpaque(false); explanation.setLineWrap(true); explanation.setWrapStyleWord(true);
         explanation.setFont(FONT.deriveFont(12f)); explanation.setRows(5); themeBindings.add(() -> explanation.setForeground(mutedColor())); note.add(explanation);
-        body.add(note); return pageScroll(body);
+        advancedBody.add(note);
+        JPanel advanced = transparent(new BorderLayout(0, 14));
+        JToggleButton disclosure = new JToggleButton("›  Cài đặt mạng nâng cao"); disclosure.setFont(FONT.deriveFont(Font.BOLD));
+        disclosure.setHorizontalAlignment(SwingConstants.LEFT); disclosure.setMargin(new Insets(14, 16, 14, 16));
+        disclosure.getAccessibleContext().setAccessibleDescription("Mở cài đặt địa chỉ mạng, cổng và trang kết nối.");
+        advancedBody.setVisible(false); disclosure.addActionListener(event -> {
+            advancedBody.setVisible(disclosure.isSelected()); disclosure.setText(disclosure.isSelected()
+                    ? "⌄  Cài đặt mạng nâng cao" : "›  Cài đặt mạng nâng cao"); body.revalidate();
+        });
+        advanced.add(disclosure, BorderLayout.NORTH); advanced.add(advancedBody); body.add(advanced);
+        style(settingsFeedback, 13, false, true); body.add(settingsFeedback, BorderLayout.SOUTH);
+        return pageScroll(body);
+    }
+
+    private JComponent helpPage() {
+        JPanel body = transparent(new GridLayout(0, 1, 0, 16));
+        body.add(helpCard("Bắt đầu chỉ với 3 bước", "1. Bật máy chủ và kiểm tra trạng thái.\n2. Cho các thiết bị dùng cùng mạng Wi-Fi hoặc mạng nội bộ.\n3. Gửi đường dẫn hoặc cho người dùng quét mã QR trên trang Tổng quan."));
+        body.add(helpCard("Quản lý người dùng và nhóm", "Mở Người dùng để tìm tài khoản, xem thiết bị hoặc khóa quyền truy cập. Mở Nhóm làm việc để chọn chủ nhóm và thêm thành viên bằng tên tài khoản."));
+        body.add(helpCard("Thiết bị khác không kết nối được?", "Kiểm tra máy chủ đã bật, hai thiết bị dùng cùng mạng và đường dẫn được sao chép từ Tổng quan. Nếu địa chỉ là 127.0.0.1, chỉ máy này truy cập được; hãy chọn mạng nội bộ và kiểm tra cài đặt mạng nâng cao."));
+        body.add(helpCard("Chưa đọc được dữ liệu lưu trữ?", "Kiểm tra mục Dữ liệu lưu trữ trên Tổng quan. Quản lý tài khoản và nhóm cần kết nối cơ sở dữ liệu đã được cấu hình. Nếu có lỗi, nhờ người thiết lập máy chủ kiểm tra kết nối và dùng Làm mới để thử lại."));
+        body.add(helpCard("Dừng máy chủ hoặc khóa tài khoản có tác dụng gì?", "Dừng máy chủ ngắt kết nối các thiết bị. Khóa tài khoản ngăn đăng nhập và kết thúc các phiên liên quan. Trước các thao tác này, ứng dụng sẽ giải thích tác động và yêu cầu xác nhận khi cần."));
+        return pageScroll(body);
+    }
+
+    private JPanel helpCard(String title, String explanation) {
+        JPanel card = surface(new BorderLayout(0, 12)); card.add(sectionTitle(title, "help"), BorderLayout.NORTH);
+        JTextArea text = DesktopUi.paragraph(explanation); text.setRows(3);
+        themeBindings.add(() -> text.setForeground(mutedColor())); card.add(text); return card;
     }
 
     private void settingRow(JPanel form, GridBagConstraints c, String name, JComponent field, String hint) {
