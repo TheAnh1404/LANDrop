@@ -29,7 +29,7 @@ public class FoundationHttpServer {
     private final int port;
     private final HealthService healthService;
     private final ClientRegistry clientRegistry;
-    private final int wsPort;
+    private volatile int wsPort;
     private final ObjectMapper objectMapper = com.landrop.auth.server.AuthHttpServer.createObjectMapper();
     private AdminHttpServer adminHttpServer;
     private AuthHttpHandler authHttpHandler;
@@ -40,6 +40,7 @@ public class FoundationHttpServer {
     private HttpServer server;
     private byte[] cachedPortalHtml;
     private byte[] cachedClientHtml;
+    private java.util.concurrent.ExecutorService executor;
 
     public FoundationHttpServer(String host, int port, int wsPort, HealthService healthService, ClientRegistry clientRegistry) {
         this(host, port, wsPort, healthService, clientRegistry, null, null, null);
@@ -135,7 +136,8 @@ public class FoundationHttpServer {
         if (server != null) return;
 
         server = HttpServer.create(new InetSocketAddress(host, port), 0);
-        server.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
+        executor = Executors.newVirtualThreadPerTaskExecutor();
+        server.setExecutor(executor);
 
         server.createContext("/", this::handleRoot);
         server.createContext("/connect", this::handleClientUi);
@@ -181,6 +183,10 @@ public class FoundationHttpServer {
             server.stop(delaySeconds);
             server = null;
         }
+        if (executor != null) {
+            executor.shutdownNow();
+            executor = null;
+        }
     }
 
     public int getPort() {
@@ -188,6 +194,10 @@ public class FoundationHttpServer {
             return server.getAddress().getPort();
         }
         return port;
+    }
+
+    public void setRealtimePort(int actualPort) {
+        this.wsPort = actualPort;
     }
 
     private void handleHealth(HttpExchange exchange) throws IOException {
@@ -295,7 +305,35 @@ public class FoundationHttpServer {
     }
 
     private void handleApiRoot(HttpExchange exchange) throws IOException {
+        String path = exchange.getRequestURI().getPath();
+        if (!"/api".equals(path) && !"/api/".equals(path)) {
+            exchange.getResponseHeaders().set("Access-Control-Allow-Origin", "*");
+            exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+            exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Authorization, Content-Type");
+            if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) {
+                exchange.sendResponseHeaders(204, -1);
+                exchange.close();
+                return;
+            }
+            boolean unavailable = authHttpHandler == null && (path.startsWith("/api/auth/")
+                || path.startsWith("/api/devices") || path.startsWith("/api/workspaces")
+                || path.startsWith("/api/channels") || path.startsWith("/api/messages")
+                || path.startsWith("/api/files") || path.startsWith("/api/folders") || path.startsWith("/api/transfers"));
+            byte[] bytes = objectMapper.writeValueAsBytes(Map.of(
+                "error", unavailable ? "PERSISTENCE_UNAVAILABLE" : "ROUTE_NOT_FOUND",
+                "message", unavailable ? "Database persistence is disabled. Configure DATABASE_URL and restart the server." : "Route was not found.",
+                "status", unavailable ? 503 : 404));
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+            exchange.sendResponseHeaders(unavailable ? 503 : 404, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) { os.write(bytes); }
+            return;
+        }
         if (handlePublicCors(exchange)) {
+            return;
+        }
+        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+            exchange.sendResponseHeaders(405, -1);
+            exchange.close();
             return;
         }
 

@@ -101,6 +101,11 @@ public class WorkspaceRepository {
         if(ids.size()>1) throw new SQLException("Ambiguous email identity");
         return ids.stream().findFirst();
     }
+    public Optional<UUID> userByUsername(String username) throws SQLException {
+        var ids=query("SELECT id FROM users WHERE lower(username)=? ORDER BY id LIMIT 2",rs -> rs.getObject(1,UUID.class),username.toLowerCase(Locale.ROOT));
+        if(ids.size()>1) throw new SQLException("Ambiguous username identity");
+        return ids.stream().findFirst();
+    }
     public WorkspaceMember addMember(WorkspaceMember m) throws SQLException {
         return one(query("""
             INSERT INTO workspace_members(id,workspace_id,user_id,role,joined_at,updated_at)

@@ -17,7 +17,6 @@ import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import java.net.URI;
 import java.net.http.*;
-import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
 import java.util.*;
 
@@ -45,16 +44,7 @@ class WorkspacePostgresTest {
             s.execute("CREATE SCHEMA " + SCHEMA); schemaCreated = true;
         }
         db = DatabaseManager.forSchema(url, SCHEMA);
-        try (var c = db.getConnection(); var s = c.createStatement()) {
-            assertEquals(SCHEMA, c.getSchema());
-            for (String resource : List.of("V1__init_cloud_database_phase14.sql", "V2__auth_sessions_phase15.sql", "V3__realtime_message_identity.sql")) {
-                try (var in = WorkspacePostgresTest.class.getResourceAsStream("/db/migration/" + resource)) {
-                    assertNotNull(in); String sql = new String(in.readAllBytes(), StandardCharsets.UTF_8)
-                            .replace("WHERE typname = 'WorkspaceRole'", "WHERE typname = 'WorkspaceRole' AND typnamespace = current_schema()::regnamespace");
-                    s.execute(sql);
-                }
-            }
-        }
+        new com.landrop.database.migration.DatabaseMigrator(db).migrate();
         var users = new UserRepository(db);
         var jwt = new JwtService("workspace-access-key-with-32-characters", "workspace-refresh-key-with-32-characters", 900, 3600);
         var auth = new AuthService(users, new RefreshTokenRepository(db), jwt);

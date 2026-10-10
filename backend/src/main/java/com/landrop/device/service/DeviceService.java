@@ -66,71 +66,75 @@ public class DeviceService {
         String platform = request.resolvedPlatform();
         String clientVersion = request.resolvedClientVersion();
 
-        Optional<Device> existingOpt = deviceRepository.findByClientInstanceId(clientInstanceId);
-        if (existingOpt.isPresent() && !existingOpt.get().userId().equals(userId)) {
-            throw new ConflictException("This client installation belongs to another user. Ask an administrator to resolve ownership.",
-                    AuthErrorCode.DEVICE_ALREADY_OWNED);
-        }
-        RefreshToken session = sessionRepository != null
-                ? SessionVerifier.requireActive(sessionRepository, sessionId, userId) : null;
-        if (session != null && session.deviceId() != null
-                && (existingOpt.isEmpty() || !session.deviceId().equals(existingOpt.get().id()))) {
-            throw new ConflictException("Session is already bound to another device", AuthErrorCode.DEVICE_CONFLICT);
-        }
-        Device savedDevice;
+        Enrollment enrollment = deviceRepository.inTransaction(conn -> {
+            deviceRepository.lockClientInstallation(conn, clientInstanceId);
+            Optional<Device> existingOpt = deviceRepository.findByClientInstanceId(conn, clientInstanceId);
+            if (existingOpt.isPresent() && !existingOpt.get().userId().equals(userId)) {
+                throw new ConflictException("This client installation belongs to another user. Ask an administrator to resolve ownership.",
+                        AuthErrorCode.DEVICE_ALREADY_OWNED);
+            }
+            RefreshToken session = sessionRepository != null
+                    ? SessionVerifier.requireActive(sessionRepository, sessionId, userId) : null;
+            if (session != null && session.deviceId() != null
+                    && (existingOpt.isEmpty() || !session.deviceId().equals(existingOpt.get().id()))) {
+                throw new ConflictException("Session is already bound to another device", AuthErrorCode.DEVICE_CONFLICT);
+            }
+            Device savedDevice;
 
-        if (existingOpt.isPresent()) {
-            Device existing = existingOpt.get();
-            // Same user: update existing device metadata
-            Device updated = new Device(
-                existing.id(),
-                userId,
-                clientInstanceId,
-                deviceName,
-                platform,
-                clientVersion,
-                Device.STATUS_ACTIVE,
-                existing.peerId(),
-                existing.ipAddress(),
-                existing.port(),
-                Instant.now(),
-                existing.createdAt(),
-                Instant.now()
-            );
-            savedDevice = deviceRepository.upsert(updated);
-            AppLogger.info(TAG, "Updated existing enrolled device: " + savedDevice.id() + " (" + deviceName + ") for user " + userId);
-        } else {
-            // New device: assign persistent device ID and persist
-            String deviceId = "dev_" + UUID.randomUUID().toString();
-            Device newDevice = new Device(
-                deviceId,
-                userId,
-                clientInstanceId,
-                deviceName,
-                platform,
-                clientVersion,
-                Device.STATUS_ACTIVE,
-                null,
-                null,
-                null,
-                Instant.now(),
-                Instant.now(),
-                Instant.now()
-            );
-            savedDevice = deviceRepository.upsert(newDevice);
-            AppLogger.info(TAG, "Enrolled new device: " + savedDevice.id() + " (" + deviceName + ") for user " + userId);
-        }
+            if (existingOpt.isPresent()) {
+                Device existing = existingOpt.get();
+                // Same user: update existing device metadata
+                Device updated = new Device(
+                    existing.id(),
+                    userId,
+                    clientInstanceId,
+                    deviceName,
+                    platform,
+                    clientVersion,
+                    Device.STATUS_ACTIVE,
+                    existing.peerId(),
+                    existing.ipAddress(),
+                    existing.port(),
+                    Instant.now(),
+                    existing.createdAt(),
+                    Instant.now()
+                );
+                savedDevice = deviceRepository.upsert(conn, updated);
+            } else {
+                // New device: assign persistent device ID and persist
+                String deviceId = "dev_" + UUID.randomUUID().toString();
+                Device newDevice = new Device(
+                    deviceId,
+                    userId,
+                    clientInstanceId,
+                    deviceName,
+                    platform,
+                    clientVersion,
+                    Device.STATUS_ACTIVE,
+                    null,
+                    null,
+                    null,
+                    Instant.now(),
+                    Instant.now(),
+                    Instant.now()
+                );
+                savedDevice = deviceRepository.upsert(conn, newDevice);
+            }
 
-        if (session != null && !sessionRepository.bindDevice(sessionId, userId, savedDevice.id())) {
-            throw new ConflictException("Session could not be bound to this device", AuthErrorCode.DEVICE_CONFLICT);
-        }
-        OperationalLogService.getInstance().info(existingOpt.isPresent() ? "DEVICE_RECONNECTED" : "DEVICE_ENROLLED",
+            if (session != null && !sessionRepository.bindDevice(conn, sessionId, userId, savedDevice.id())) {
+                throw new ConflictException("Session could not be bound to this device", AuthErrorCode.DEVICE_CONFLICT);
+            }
+            return new Enrollment(savedDevice, existingOpt.isPresent());
+        });
+        Device savedDevice = enrollment.device();
+        AppLogger.info(TAG, "Persisted enrolled device: " + savedDevice.id() + " for user " + userId);
+        OperationalLogService.getInstance().info(enrollment.reconnected() ? "DEVICE_RECONNECTED" : "DEVICE_ENROLLED",
                 userId.toString(), savedDevice.id(),
-                existingOpt.isPresent() ? "Existing client installation enrolled again." : "New client installation enrolled.");
-
-        boolean isOnline = isDeviceOnline(savedDevice);
-        return DeviceDto.from(savedDevice, isOnline);
+                enrollment.reconnected() ? "Existing client installation enrolled again." : "New client installation enrolled.");
+        return DeviceDto.from(savedDevice, isDeviceOnline(savedDevice));
     }
+
+    private record Enrollment(Device device, boolean reconnected) {}
 
     public List<DeviceDto> listUserDevices(UUID userId) throws SQLException {
         if (userId == null) return List.of();

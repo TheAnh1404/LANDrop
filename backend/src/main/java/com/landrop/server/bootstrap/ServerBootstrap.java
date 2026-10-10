@@ -13,6 +13,7 @@ import com.landrop.auth.server.AuthMiddleware;
 import com.landrop.auth.service.AuthService;
 import com.landrop.database.DatabaseConfig;
 import com.landrop.database.DatabaseManager;
+import com.landrop.database.migration.DatabaseMigrator;
 import com.landrop.database.repository.DeviceRepository;
 import com.landrop.database.repository.UserRepository;
 import com.landrop.database.repository.WorkspaceRepository;
@@ -80,6 +81,9 @@ public class ServerBootstrap {
     private com.landrop.discovery.DiscoveryServer embeddedDiscoveryServer;
     private final AtomicBoolean running = new AtomicBoolean(false);
     private Thread shutdownHook;
+    private DatabaseManager databaseManager;
+    private boolean repositoriesInjected;
+    private boolean authSubsystemsInjected;
 
     public ServerBootstrap(ServerConfig config) {
         this.config = config != null ? config : ServerConfig.load();
@@ -99,71 +103,83 @@ public class ServerBootstrap {
             return;
         }
 
+        try {
+            startComponents();
+        } catch (Exception e) {
+            running.set(false);
+            cleanupResources();
+            throw e;
+        }
+    }
+
+    private void startComponents() throws Exception {
+
         if ("production".equalsIgnoreCase(config.getEnvironment())) {
-            String adminPassword = System.getenv("ADMIN_PASSWORD");
-            if (adminPassword == null || adminPassword.isBlank()) {
-                adminPassword = System.getProperty("landrop.admin.password");
-            }
+            String adminPassword = com.landrop.config.EnvironmentFiles.resolve("landrop.admin.password", "ADMIN_PASSWORD");
             requireProductionAdminPassword(adminPassword);
         }
 
-        // 1. Check database connectivity gracefully (database decoupling)
+        // Persistent APIs are exposed only after connectivity and schema verification succeed.
         boolean dbConnected = checkDatabaseConnectivity();
         if (dbConnected) {
-            try {
-                DatabaseManager db = DatabaseManager.getInstance();
-                this.adminDataRepository = new com.landrop.database.repository.AdminDataRepository(db);
-                if (this.userRepository == null) {
-                    this.userRepository = new UserRepository(db);
-                }
-                if (this.refreshTokenRepository == null) {
-                    this.refreshTokenRepository = new RefreshTokenRepository(db);
-                }
-                if (this.deviceRepository == null) {
-                    this.deviceRepository = new DeviceRepository(db);
-                }
-                if (this.workspaceRepository == null) {
-                    this.workspaceRepository = new WorkspaceRepository(db);
-                }
-                if (this.jwtService == null) {
-                    this.jwtService = new JwtService();
-                }
-                if (this.authService == null) {
-                    this.authService = new AuthService(this.userRepository, this.refreshTokenRepository, this.jwtService);
-                }
-                if (this.deviceService == null) {
-                    this.deviceService = new DeviceService(this.deviceRepository, this.clientRegistry, this.refreshTokenRepository);
-                }
-                if (this.authMiddleware == null) {
-                    this.authMiddleware = new AuthMiddleware(this.jwtService, this.userRepository, this.refreshTokenRepository);
-                }
-                if (this.authHttpHandler == null) {
-                    this.authHttpHandler = new AuthHttpHandler(this.authService, this.authMiddleware, this.clientRegistry, com.landrop.auth.server.AuthHttpServer.createObjectMapper());
-                }
-                if (this.deviceHttpHandler == null) {
-                    this.deviceHttpHandler = new DeviceHttpHandler(this.deviceService, this.authMiddleware, com.landrop.auth.server.AuthHttpServer.createObjectMapper());
-                }
-                // Mount the existing workspace/chat/file APIs on the same HTTP
-                // server as auth and device enrollment. Without this wiring,
-                // the client receives a plain 404 from /api/workspaces after a
-                // successful login.
-                if (this.workspaceHttpServer == null) {
-                    var mapper = com.landrop.auth.server.AuthHttpServer.createObjectMapper();
-                    this.channelChatService = new ChannelChatService();
-                    var fileService = new FileManagementService();
-                    var transferService = new TransferCoordinationService();
-                    var fileRoutes = new FileHttpServer(this.authMiddleware, fileService, transferService, mapper);
-                    this.workspaceHttpServer = new WorkspaceHttpServer(
-                        this.authMiddleware, new WorkspaceService(), this.channelChatService, fileRoutes, mapper);
-                    this.chatHttpServer = new ChatHttpServer(this.authMiddleware, this.channelChatService, mapper);
-                    this.fileHttpServer = fileRoutes;
-                }
-                this.adminBootstrapService = new AdminBootstrapService(this.userRepository);
-                this.adminBootstrapService.ensureSystemAdminExists();
-                this.adminAuthMiddleware = new AdminAuthMiddleware(this.jwtService, this.userRepository, this.refreshTokenRepository);
-            } catch (Exception e) {
-                AppLogger.warn(TAG, "Failed initializing database admin subsystems: " + e.getMessage());
+            DatabaseManager db = this.databaseManager;
+            new DatabaseMigrator(db).migrate();
+            this.adminDataRepository = new com.landrop.database.repository.AdminDataRepository(db);
+            if (this.userRepository == null) {
+                this.userRepository = new UserRepository(db);
             }
+            if (this.refreshTokenRepository == null) {
+                this.refreshTokenRepository = new RefreshTokenRepository(db);
+            }
+            if (this.deviceRepository == null) {
+                this.deviceRepository = new DeviceRepository(db);
+            }
+            if (this.workspaceRepository == null) {
+                this.workspaceRepository = new WorkspaceRepository(db);
+            }
+            if (this.jwtService == null) {
+                this.jwtService = new JwtService();
+            }
+            if (this.authService == null) {
+                this.authService = new AuthService(this.userRepository, this.refreshTokenRepository, this.jwtService);
+            }
+            if (this.deviceService == null) {
+                this.deviceService = new DeviceService(this.deviceRepository, this.clientRegistry, this.refreshTokenRepository);
+            }
+            if (this.authMiddleware == null) {
+                this.authMiddleware = new AuthMiddleware(this.jwtService, this.userRepository, this.refreshTokenRepository);
+            }
+            if (this.authHttpHandler == null) {
+                this.authHttpHandler = new AuthHttpHandler(this.authService, this.authMiddleware, this.clientRegistry, com.landrop.auth.server.AuthHttpServer.createObjectMapper());
+            }
+            if (this.deviceHttpHandler == null) {
+                this.deviceHttpHandler = new DeviceHttpHandler(this.deviceService, this.authMiddleware, com.landrop.auth.server.AuthHttpServer.createObjectMapper());
+            }
+            // Mount the existing workspace/chat/file APIs on the same HTTP
+            // server as auth and device enrollment. Without this wiring,
+            // the client receives a plain 404 from /api/workspaces after a
+            // successful login.
+            if (this.workspaceHttpServer == null) {
+                var mapper = com.landrop.auth.server.AuthHttpServer.createObjectMapper();
+                this.channelChatService = new ChannelChatService(db);
+                var fileRepository = new com.landrop.database.repository.FileRepository(db);
+                var fileService = new FileManagementService(db, fileRepository,
+                    new com.landrop.database.repository.FolderRepository(db), this.workspaceRepository);
+                var transferService = new TransferCoordinationService(db,
+                    new com.landrop.database.repository.TransferRepository(db), fileRepository,
+                    this.deviceRepository, fileService, null);
+                var fileRoutes = new FileHttpServer(this.authMiddleware, fileService, transferService, mapper);
+                this.workspaceHttpServer = new WorkspaceHttpServer(
+                    this.authMiddleware, new WorkspaceService(this.workspaceRepository), this.channelChatService, fileRoutes, mapper);
+                this.chatHttpServer = new ChatHttpServer(this.authMiddleware, this.channelChatService, mapper);
+                this.fileHttpServer = fileRoutes;
+            }
+            this.adminBootstrapService = new AdminBootstrapService(this.userRepository);
+            this.adminBootstrapService.setPreserveExistingPassword(true);
+            if (this.adminBootstrapService.ensureSystemAdminExists() == null) {
+                throw new IllegalStateException("Database administrator initialization failed; server startup aborted.");
+            }
+            this.adminAuthMiddleware = new AdminAuthMiddleware(this.jwtService, this.userRepository, this.refreshTokenRepository);
         }
 
         if (this.jwtService == null) {
@@ -194,6 +210,7 @@ public class ServerBootstrap {
             this.authService
         );
 
+        healthService.setPersistenceAvailable(dbConnected);
         // 2. Start HTTP Server with Control Center, Auth, and Device endpoints mounted
         httpServer = new FoundationHttpServer(
             config.getHost(),
@@ -224,6 +241,7 @@ public class ServerBootstrap {
         if (this.channelChatService != null) this.channelChatService.setBroadcaster(realtimeServer);
         realtimeServer.start();
         realtimeServer.awaitReady();
+        httpServer.setRealtimePort(realtimeServer.getPort());
 
         if (adminHttpServer != null) {
             adminHttpServer.setActualPorts(httpServer.getPort(), realtimeServer.getPort());
@@ -279,6 +297,12 @@ public class ServerBootstrap {
             return;
         }
 
+        cleanupResources();
+    }
+
+    private void cleanupResources() {
+        healthService.setPersistenceAvailable(false);
+
         ServerEventLogger.log(ServerEvent.SERVER_STOPPING, "Initiating graceful shutdown sequence...");
 
         // 1. Stop Realtime Server and disconnect active clients
@@ -314,13 +338,32 @@ public class ServerBootstrap {
         }
 
         // 5. Close database pool if present
-        try {
-            DatabaseManager db = DatabaseManager.getInstance();
-            if (db != null) {
-                db.close();
-            }
-        } catch (Exception ignored) {
-            // DB was not initialized or already closed
+        if (databaseManager != null) {
+            databaseManager.close();
+            databaseManager = null;
+        }
+
+        httpServer = null;
+        realtimeServer = null;
+        embeddedDiscoveryServer = null;
+        adminDataRepository = null;
+        adminAuthMiddleware = null;
+        workspaceHttpServer = null;
+        chatHttpServer = null;
+        channelChatService = null;
+        fileHttpServer = null;
+        if (!repositoriesInjected) {
+            userRepository = null;
+            refreshTokenRepository = null;
+            deviceRepository = null;
+            workspaceRepository = null;
+        }
+        if (!authSubsystemsInjected) {
+            authService = null;
+            deviceService = null;
+            authMiddleware = null;
+            authHttpHandler = null;
+            deviceHttpHandler = null;
         }
 
         AppLogger.info(TAG, "LANDrop Server stopped cleanly.");
@@ -333,16 +376,12 @@ public class ServerBootstrap {
             return false;
         }
 
-        try {
-            DatabaseManager db = DatabaseManager.getInstance();
-            if (db.testConnection()) {
-                AppLogger.info(TAG, "PostgreSQL database connection verified (Neon Cloud).");
-                return true;
-            }
-        } catch (Exception e) {
-            AppLogger.warn(TAG, "Database check encountered an error: " + e.getMessage() + ". Subsystem remains operational in standalone LAN mode.");
+        databaseManager = DatabaseManager.getInstance();
+        if (!databaseManager.testConnection()) {
+            throw new IllegalStateException("Configured PostgreSQL database is unavailable; persistent server startup aborted.");
         }
-        return false;
+        AppLogger.info(TAG, "PostgreSQL database connection verified.");
+        return true;
     }
 
     public static java.util.List<String> resolveLanIpv4Addresses() {
@@ -494,6 +533,7 @@ public class ServerBootstrap {
 
     public void setAuthSubsystems(AuthService authService, DeviceService deviceService, AuthMiddleware authMiddleware,
                                   AuthHttpHandler authHttpHandler, DeviceHttpHandler deviceHttpHandler) {
+        this.authSubsystemsInjected = true;
         this.authService = authService;
         this.deviceService = deviceService;
         this.authMiddleware = authMiddleware;
@@ -506,6 +546,7 @@ public class ServerBootstrap {
     }
 
     public void setRepositories(UserRepository userRepo, RefreshTokenRepository tokenRepo, DeviceRepository deviceRepo) {
+        this.repositoriesInjected = true;
         this.userRepository = userRepo;
         this.refreshTokenRepository = tokenRepo;
         this.deviceRepository = deviceRepo;

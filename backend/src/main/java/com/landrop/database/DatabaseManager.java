@@ -32,6 +32,9 @@ public final class DatabaseManager implements AutoCloseable {
             );
         }
 
+        if (schema != null && !schema.matches("[a-z_][a-z0-9_]{0,62}")) {
+            throw new IllegalArgumentException("Invalid database schema name");
+        }
         HikariConfig config = new HikariConfig();
         configureConnection(config, rawDatabaseUrl);
         config.setDriverClassName("org.postgresql.Driver");
@@ -57,57 +60,55 @@ public final class DatabaseManager implements AutoCloseable {
         return new DatabaseManager(databaseUrl, schema);
     }
 
-    private static void configureConnection(HikariConfig config, String rawUrl) {
+    static void configureConnection(HikariConfig config, String rawUrl) {
         String standardUrl = rawUrl.trim();
         if (standardUrl.startsWith("jdbc:postgresql://")) {
-            standardUrl = "postgresql://" + standardUrl.substring("jdbc:postgresql://".length());
+            standardUrl = standardUrl.substring("jdbc:".length());
         } else if (standardUrl.startsWith("postgres://")) {
             standardUrl = "postgresql://" + standardUrl.substring("postgres://".length());
         }
 
         try {
             java.net.URI uri = new java.net.URI(standardUrl);
+            if (!"postgresql".equals(uri.getScheme()) || uri.getHost() == null || uri.getFragment() != null
+                    || uri.getPort() > 65535 || uri.getPort() == 0) {
+                throw new IllegalArgumentException("DATABASE_URL must be a valid PostgreSQL connection URL");
+            }
             String host = uri.getHost();
             int port = uri.getPort() > 0 ? uri.getPort() : 5432;
-            String path = uri.getPath();
-            String query = uri.getQuery();
-            String userInfo = uri.getUserInfo();
-
+            String path = uri.getRawPath();
+            String query = uri.getRawQuery();
+            String userInfo = uri.getRawUserInfo();
             StringBuilder jdbcUrl = new StringBuilder("jdbc:postgresql://");
             jdbcUrl.append(host).append(":").append(port);
-            if (path != null && !path.isEmpty()) {
-                jdbcUrl.append(path);
-            } else {
-                jdbcUrl.append("/neondb");
-            }
-
+            jdbcUrl.append(path == null || path.isEmpty() || "/".equals(path) ? "/neondb" : path);
+            java.util.List<String> cleanParams = new java.util.ArrayList<>();
             if (query != null && !query.isEmpty()) {
-                String[] params = query.split("&");
-                java.util.List<String> cleanParams = new java.util.ArrayList<>();
-                for (String p : params) {
-                    // channel_binding is for libpq/scram; filter out for JDBC compatibility
-                    if (p.startsWith("channel_binding=")) {
-                        continue;
-                    }
-                    cleanParams.add(p);
-                }
-                if (!cleanParams.isEmpty()) {
-                    jdbcUrl.append("?").append(String.join("&", cleanParams));
+                for (String param : query.split("&")) {
+                    String[] pair = param.split("=", 2);
+                    String key = decode(pair[0]);
+                    String value = pair.length > 1 ? decode(pair[1]) : "";
+                    if ("user".equals(key)) config.setUsername(value);
+                    else if ("password".equals(key)) config.setPassword(value);
+                    else if (!"channel_binding".equals(key)) cleanParams.add(param);
                 }
             }
-
+            if (!cleanParams.isEmpty()) jdbcUrl.append("?").append(String.join("&", cleanParams));
+            if (userInfo != null) {
+                String[] credentials = userInfo.split(":", 2);
+                config.setUsername(decode(credentials[0].replace("+", "%2B")));
+                if (credentials.length > 1) config.setPassword(decode(credentials[1].replace("+", "%2B")));
+            }
             config.setJdbcUrl(jdbcUrl.toString());
-
-            if (userInfo != null && userInfo.contains(":")) {
-                int colonIdx = userInfo.indexOf(':');
-                config.setUsername(userInfo.substring(0, colonIdx));
-                config.setPassword(userInfo.substring(colonIdx + 1));
-            }
-            AppLogger.info(TAG, "Configured Neon PostgreSQL connection: " + maskUrl(jdbcUrl.toString()));
-        } catch (java.net.URISyntaxException e) {
-            AppLogger.warn(TAG, "Failed to parse URI, falling back to direct URL: " + e.getMessage());
-            config.setJdbcUrl(formatJdbcUrl(rawUrl));
+            AppLogger.info(TAG, "Configured PostgreSQL connection.");
+        } catch (java.net.URISyntaxException | IllegalArgumentException e) {
+            // URI exception messages can contain the password. Never include the raw URL or cause.
+            throw new IllegalArgumentException("Invalid DATABASE_URL; check PostgreSQL scheme, host and URL encoding");
         }
+    }
+
+    private static String decode(String value) {
+        return java.net.URLDecoder.decode(value, java.nio.charset.StandardCharsets.UTF_8);
     }
 
     public static DatabaseManager getInstance() {
@@ -115,7 +116,7 @@ public final class DatabaseManager implements AutoCloseable {
             synchronized (DatabaseManager.class) {
                 if (instance == null || instance.closed.get()) {
                     String url = DatabaseConfig.getDatabaseUrl();
-                    instance = new DatabaseManager(url);
+                    instance = new DatabaseManager(url, System.getProperty("landrop.database.schema"));
                 }
             }
         }
@@ -129,11 +130,35 @@ public final class DatabaseManager implements AutoCloseable {
         instance = new DatabaseManager(databaseUrl);
     }
 
+    /** Shuts down an existing pool without opening a new connection during cleanup. */
+    public static synchronized void closeIfInitialized() {
+        if (instance != null) instance.close();
+    }
+
     public Connection getConnection() throws SQLException {
         if (closed.get()) {
             throw new SQLException("DatabaseManager has been closed.");
         }
         return dataSource.getConnection();
+    }
+
+    @FunctionalInterface
+    public interface Transaction<T> {
+        T execute(Connection connection) throws SQLException;
+    }
+
+    public <T> T inTransaction(Transaction<T> transaction) throws SQLException {
+        try (Connection conn = getConnection()) {
+            conn.setAutoCommit(false);
+            try {
+                T result = transaction.execute(conn);
+                conn.commit();
+                return result;
+            } catch (SQLException | RuntimeException e) {
+                try { conn.rollback(); } catch (SQLException rollback) { e.addSuppressed(rollback); }
+                throw e;
+            }
+        }
     }
 
     public boolean testConnection() {
@@ -174,8 +199,4 @@ public final class DatabaseManager implements AutoCloseable {
         return trimmed;
     }
 
-    private static String maskUrl(String url) {
-        if (url == null) return "null";
-        return url.replaceAll("://([^:]+):([^@]+)@", "://$1:***@");
-    }
 }

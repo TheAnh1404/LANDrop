@@ -45,10 +45,7 @@ public final class DatabaseCli {
                     List<String> tables = migrator.verifyTablesCreated();
                     System.out.println("PASS: All " + tables.size() + " tables verified: " + tables);
 
-                    DatabaseSeeder seeder = new DatabaseSeeder(dbManager);
-                    seeder.seed();
-                    System.out.println("PASS: Seed completed successfully.");
-                    System.out.println("ALL PHASE 14 CHECKS PASSED.");
+                    System.out.println("ALL DATABASE CHECKS PASSED (read-only verification).");
                 }
                 default -> {
                     System.err.println("Unknown command: " + action + ". Usage: java DatabaseCli [migrate|seed|verify]");
@@ -62,7 +59,7 @@ public final class DatabaseCli {
             System.exit(1);
         } finally {
             try {
-                DatabaseManager.getInstance().close();
+                DatabaseManager.closeIfInitialized();
             } catch (Exception ignored) {}
         }
     }

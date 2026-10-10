@@ -26,6 +26,13 @@ public class DeviceRepository {
     }
 
     public Device upsert(Device device) throws SQLException {
+        try (Connection conn = databaseManager.getConnection()) {
+            return upsert(conn, device);
+        }
+    }
+
+    public Device upsert(Connection conn, Device device) throws SQLException {
+        if (conn == null) return upsert(device);
         String sql = """
             INSERT INTO devices (id, user_id, client_instance_id, device_name, platform, client_version, status, peer_id, ip_address, port, last_seen_at, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -45,8 +52,7 @@ public class DeviceRepository {
         """;
 
         Instant now = Instant.now();
-        try (Connection conn = databaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, device.id());
             ps.setObject(2, device.userId());
             ps.setString(3, device.clientInstanceId() != null ? device.clientInstanceId() : device.id());
@@ -89,10 +95,16 @@ public class DeviceRepository {
     }
 
     public Optional<Device> findByClientInstanceId(String clientInstanceId) throws SQLException {
+        try (Connection conn = databaseManager.getConnection()) {
+            return findByClientInstanceId(conn, clientInstanceId);
+        }
+    }
+
+    public Optional<Device> findByClientInstanceId(Connection conn, String clientInstanceId) throws SQLException {
+        if (conn == null) return findByClientInstanceId(clientInstanceId);
         if (clientInstanceId == null || clientInstanceId.isBlank()) return Optional.empty();
         String sql = "SELECT * FROM devices WHERE client_instance_id = ? OR id = ? LIMIT 1";
-        try (Connection conn = databaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, clientInstanceId);
             ps.setString(2, clientInstanceId);
             try (ResultSet rs = ps.executeQuery()) {
@@ -102,6 +114,19 @@ public class DeviceRepository {
             }
         }
         return Optional.empty();
+    }
+
+    public <T> T inTransaction(DatabaseManager.Transaction<T> transaction) throws SQLException {
+        if (databaseManager == null) return transaction.execute(null);
+        return databaseManager.inTransaction(transaction);
+    }
+
+    public void lockClientInstallation(Connection conn, String clientInstanceId) throws SQLException {
+        if (conn == null) return;
+        try (PreparedStatement ps = conn.prepareStatement("SELECT pg_advisory_xact_lock(hashtext(current_schema() || ':device'), hashtext(?))")) {
+            ps.setString(1, clientInstanceId);
+            ps.execute();
+        }
     }
 
     public List<Device> findByUserId(UUID userId) throws SQLException {

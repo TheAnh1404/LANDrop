@@ -91,16 +91,10 @@ public class AdminBootstrapService {
      * random password requirement, or default credentials.
      */
     private String resolveAdminPassword() {
-        String envPass = System.getenv("ADMIN_PASSWORD");
-        if (envPass != null && !envPass.isBlank()) {
+        String configured = com.landrop.config.EnvironmentFiles.resolve("landrop.admin.password", "ADMIN_PASSWORD");
+        if (configured != null && !configured.isBlank()) {
             passwordGenerated = false;
-            return envPass;
-        }
-
-        String propPass = System.getProperty("landrop.admin.password");
-        if (propPass != null && !propPass.isBlank()) {
-            passwordGenerated = false;
-            return propPass;
+            return configured;
         }
 
         boolean forceRandom = requireRandomPassword ||

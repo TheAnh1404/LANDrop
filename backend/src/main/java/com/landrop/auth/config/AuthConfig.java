@@ -2,12 +2,6 @@ package com.landrop.auth.config;
 
 import com.landrop.util.AppLogger;
 
-import java.io.BufferedReader;
-import java.io.File;
-import java.io.FileReader;
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-
 /**
  * Configuration provider for Phase 15A Authentication & User Sessions.
  * Resolves properties from System Properties, OS Environment Variables, and local .env files.
@@ -98,49 +92,6 @@ public final class AuthConfig {
     }
 
     private static String getResolvedValue(String propKey, String envKey) {
-        String val = System.getProperty(propKey);
-        if (val == null || val.isBlank()) {
-            val = System.getenv(envKey);
-        }
-        if (val == null || val.isBlank()) {
-            val = readDotEnv(envKey);
-        }
-        return val;
-    }
-
-    private static String readDotEnv(String key) {
-        File[] candidateFiles = new File[] {
-            new File(".env"),
-            new File("../.env"),
-            new File("../../.env")
-        };
-
-        for (File envFile : candidateFiles) {
-            if (envFile.exists() && envFile.isFile()) {
-                try (BufferedReader reader = new BufferedReader(new FileReader(envFile, StandardCharsets.UTF_8))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        line = line.trim();
-                        if (line.startsWith("#") || line.isEmpty()) {
-                            continue;
-                        }
-                        int eqIdx = line.indexOf('=');
-                        if (eqIdx > 0) {
-                            String k = line.substring(0, eqIdx).trim();
-                            if (k.equals(key)) {
-                                String v = line.substring(eqIdx + 1).trim();
-                                if ((v.startsWith("\"") && v.endsWith("\"")) || (v.startsWith("'") && v.endsWith("'"))) {
-                                    v = v.substring(1, v.length() - 1);
-                                }
-                                return v;
-                            }
-                        }
-                    }
-                } catch (IOException e) {
-                    AppLogger.warn(TAG, "Failed to parse .env file at " + envFile.getAbsolutePath(), e);
-                }
-            }
-        }
-        return null;
+        return com.landrop.config.EnvironmentFiles.resolve(propKey, envKey);
     }
 }

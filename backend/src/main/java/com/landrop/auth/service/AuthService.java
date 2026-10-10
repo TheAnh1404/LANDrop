@@ -18,9 +18,11 @@ import com.landrop.database.repository.UserRepository;
 import com.landrop.util.AppLogger;
 
 import java.sql.SQLException;
+import java.sql.Connection;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Locale;
 
 /**
  * High-level orchestration service for user authentication, registration,
@@ -50,7 +52,7 @@ public class AuthService {
         }
         request.validate();
 
-        String email = request.email().trim().toLowerCase();
+        String email = request.email().trim().toLowerCase(Locale.ROOT);
         String username = request.username().trim();
 
         // 1. Uniqueness check
@@ -75,11 +77,20 @@ public class AuthService {
             Instant.now(),
             Instant.now()
         );
-        User savedUser = userRepository.create(newUser);
-        AppLogger.info(TAG, "Registered new user: " + savedUser.username() + " (" + savedUser.id() + ")");
-
-        // 4. Issue access and refresh tokens
-        return issueAuthTokens(savedUser);
+        try {
+            AuthResponse response = userRepository.inTransaction(conn -> {
+                User savedUser = userRepository.create(conn, newUser);
+                return issueAuthTokens(conn, savedUser, null);
+            });
+            AppLogger.info(TAG, "Registered new user: " + newUser.username() + " (" + newUser.id() + ")");
+            return response;
+        } catch (SQLException e) {
+            // Concurrent registrations are resolved by the database's unique constraints.
+            if ("23505".equals(e.getSQLState())) {
+                throw new ConflictException("Email or username already registered");
+            }
+            throw e;
+        }
     }
 
     public AuthResponse login(LoginRequest request) throws SQLException {
@@ -105,7 +116,7 @@ public class AuthService {
         String identifier = request.resolvedIdentifier();
 
         // 1. Lookup user by email or username
-        Optional<User> userOpt = userRepository.findByEmail(identifier.toLowerCase());
+        Optional<User> userOpt = userRepository.findByEmail(identifier.toLowerCase(Locale.ROOT));
         if (userOpt.isEmpty()) {
             userOpt = userRepository.findByUsername(identifier);
         }
@@ -136,12 +147,11 @@ public class AuthService {
             throw new ForbiddenException("System administrators must sign in through the Server Control Center", AuthErrorCode.ADMIN_LOGIN_REQUIRED);
         }
 
-        AppLogger.info(TAG, "User logged in successfully: " + user.username() + " (" + user.id() + ")");
-
         // 4. Issue tokens
         // Device identity is established only by authenticated enrollment.
         // A login payload cannot pre-bind a session to a client-claimed device.
         AuthResponse response = issueAuthTokens(user);
+        AppLogger.info(TAG, "User logged in successfully: " + user.username() + " (" + user.id() + ")");
         OperationalLogService.getInstance().info("USER_LOGIN", user.id().toString(), user.id().toString(),
                 adminLogin ? "Administrator signed in." : "Client user signed in.");
         return response;
@@ -179,6 +189,9 @@ public class AuthService {
         }
 
         RefreshToken storedToken = storedOpt.get();
+        if (!storedToken.userId().equals(claims.userId()) || !storedToken.id().toString().equals(claims.sessionId())) {
+            throw new UnauthorizedException("Refresh credential does not match its session", AuthErrorCode.UNAUTHORIZED);
+        }
 
         // 3. Check revocation and expiration
         if (storedToken.revoked()) {
@@ -204,12 +217,13 @@ public class AuthService {
         }
 
         // 5. Token rotation: revoke previous refresh token to prevent reuse attacks
-        if (!refreshTokenRepository.revokeByTokenHash(tokenHash)) {
-            throw new UnauthorizedException("Refresh token has already been used", AuthErrorCode.SESSION_REVOKED);
-        }
-
-        // 6. Issue fresh token pair (preserving deviceId)
-        return issueAuthTokens(user, storedToken.deviceId());
+        return userRepository.inTransaction(conn -> {
+            if (!refreshTokenRepository.revokeByTokenHash(conn, tokenHash)) {
+                throw new UnauthorizedException("Refresh token has already been used", AuthErrorCode.SESSION_REVOKED);
+            }
+            // Failure to persist the replacement must leave the original session usable.
+            return issueAuthTokens(conn, user, storedToken.deviceId());
+        });
     }
 
     public boolean logout(String rawRefreshToken) throws SQLException {
@@ -278,6 +292,10 @@ public class AuthService {
     }
 
     public AuthResponse issueAuthTokens(User user, String deviceId) throws SQLException {
+        return issueAuthTokens(null, user, deviceId);
+    }
+
+    private AuthResponse issueAuthTokens(Connection conn, User user, String deviceId) throws SQLException {
         UUID sessionId = UUID.randomUUID();
         String accessToken = jwtService.generateAccessToken(user, sessionId.toString());
         String refreshToken = jwtService.generateRefreshToken(user, sessionId.toString());
@@ -289,7 +307,7 @@ public class AuthService {
         RefreshToken session = new RefreshToken(
             sessionId, user.id(), tokenHash, deviceId, expiresAt, now, null, false, now, now
         );
-        refreshTokenRepository.create(session);
+        refreshTokenRepository.create(conn, session);
         OperationalLogService.getInstance().info("SESSION_CREATED", user.id().toString(), session.id().toString(),
                 "Authentication session created.");
 

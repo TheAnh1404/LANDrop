@@ -29,7 +29,6 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
@@ -81,23 +80,7 @@ class FileManagementPostgresTest {
         }
 
         db = DatabaseManager.forSchema(url, SCHEMA);
-        try (var c = db.getConnection(); var s = c.createStatement()) {
-            assertEquals(SCHEMA, c.getSchema());
-            for (String resource : List.of(
-                    "V1__init_cloud_database_phase14.sql",
-                    "V2__auth_sessions_phase15.sql",
-                    "V3__realtime_message_identity.sql",
-                    "V4__persistent_chat_phase17.sql",
-                    "V5__file_management_phase18.sql")) {
-                try (var in = FileManagementPostgresTest.class.getResourceAsStream("/db/migration/" + resource)) {
-                    assertNotNull(in, "Migration resource missing: " + resource);
-                    String sql = new String(in.readAllBytes(), StandardCharsets.UTF_8)
-                            .replace("WHERE typname = 'WorkspaceRole'", "WHERE typname = 'WorkspaceRole' AND typnamespace = current_schema()::regnamespace");
-                    s.execute(sql);
-                }
-            }
-        }
-
+        new com.landrop.database.migration.DatabaseMigrator(db).migrate();
         var users = new UserRepository(db);
         var jwt = new JwtService("file-access-key-32-chars-test!", "file-refresh-key-32-chars-test!", 900, 3600);
         var auth = new AuthService(users, new RefreshTokenRepository(db), jwt);

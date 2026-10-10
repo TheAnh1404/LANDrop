@@ -22,14 +22,20 @@ public class RefreshTokenRepository {
     }
 
     public RefreshToken create(RefreshToken token) throws SQLException {
+        try (Connection conn = databaseManager.getConnection()) {
+            return create(conn, token);
+        }
+    }
+
+    public RefreshToken create(Connection conn, RefreshToken token) throws SQLException {
+        if (conn == null) return create(token);
         String sql = """
             INSERT INTO refresh_tokens (id, user_id, token_hash, device_id, expires_at, last_seen_at, revoked_at, revoked, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id, user_id, token_hash, device_id, expires_at, last_seen_at, revoked_at, revoked, created_at, updated_at
         """;
 
-        try (Connection conn = databaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
 
             Instant now = Instant.now();
             UUID id = token.id() != null ? token.id() : UUID.randomUUID();
@@ -108,10 +114,16 @@ public class RefreshTokenRepository {
     }
 
     public boolean revokeByTokenHash(String tokenHash) throws SQLException {
+        try (Connection conn = databaseManager.getConnection()) {
+            return revokeByTokenHash(conn, tokenHash);
+        }
+    }
+
+    public boolean revokeByTokenHash(Connection conn, String tokenHash) throws SQLException {
+        if (conn == null) return revokeByTokenHash(tokenHash);
         String sql = "UPDATE refresh_tokens SET revoked = TRUE, revoked_at = ?, updated_at = ? WHERE token_hash = ? AND revoked = FALSE";
 
-        try (Connection conn = databaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
 
             Timestamp now = Timestamp.from(Instant.now());
             ps.setTimestamp(1, now);
@@ -160,13 +172,19 @@ public class RefreshTokenRepository {
 
     /** Binds a live session once; a session cannot silently move to another device. */
     public boolean bindDevice(UUID sessionId, UUID userId, String deviceId) throws SQLException {
+        try (Connection conn = databaseManager.getConnection()) {
+            return bindDevice(conn, sessionId, userId, deviceId);
+        }
+    }
+
+    public boolean bindDevice(Connection conn, UUID sessionId, UUID userId, String deviceId) throws SQLException {
+        if (conn == null) return bindDevice(sessionId, userId, deviceId);
         String sql = """
             UPDATE refresh_tokens SET device_id = ?, updated_at = ?
             WHERE id = ? AND user_id = ? AND revoked = FALSE AND expires_at > CURRENT_TIMESTAMP
               AND (device_id IS NULL OR device_id = ?)
         """;
-        try (Connection conn = databaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, deviceId);
             ps.setTimestamp(2, Timestamp.from(Instant.now()));
             ps.setObject(3, sessionId);

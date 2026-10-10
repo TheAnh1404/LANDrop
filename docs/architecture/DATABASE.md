@@ -1,6 +1,8 @@
 # LANDrop Database Foundation
 
-> Scope: database foundation and existing Java JDBC services. Runtime schema evolution is applied by DatabaseCli using SQL files V1-V7 in backend/src/main/resources/db/migration/. Prisma is a schema reference in this checkout; no Prisma runtime dependency is configured. Check later migrations and prisma/schema.prisma for current fields.
+> Scope: database foundation and existing Java JDBC services. Runtime schema evolution is applied automatically by the integrated server at startup, or explicitly by DatabaseCli, using SQL files V1-V7 in backend/src/main/resources/db/migration/. Prisma is a schema reference in this checkout; no Prisma runtime dependency is configured. Check later migrations and prisma/schema.prisma for current fields.
+
+See [Database persistence and recovery](../guides/DATABASE_PERSISTENCE.md) for startup requirements, transactional authentication, browser enrollment and dedicated database verification.
 
 This document specifies the architecture, relational schema, data access layer, migration protocol, and development setup for the **LANDrop Cloud Database Foundation** (Phase 14A).
 

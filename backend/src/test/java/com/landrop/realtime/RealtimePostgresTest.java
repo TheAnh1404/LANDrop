@@ -11,7 +11,6 @@ import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 import java.net.*;
 import java.net.http.*;
-import java.nio.charset.StandardCharsets;
 import java.sql.*;
 import java.util.*;
 import java.util.concurrent.*;
@@ -48,20 +47,7 @@ class RealtimePostgresTest {
         }
         db.close();
         db = DatabaseManager.forSchema(url, SCHEMA);
-        try (var conn = db.getConnection(); var stmt = conn.createStatement()) {
-            assertEquals(SCHEMA, conn.getSchema());
-            for (String resource : List.of("V1__init_cloud_database_phase14.sql", "V2__auth_sessions_phase15.sql",
-                    "V3__realtime_message_identity.sql")) {
-                try (var stream = RealtimePostgresTest.class.getResourceAsStream("/db/migration/" + resource)) {
-                    assertNotNull(stream);
-                    String sql = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-                    // V1 predates schema-scoped tests; its enum existence probe is global.
-                    sql = sql.replace("WHERE typname = 'WorkspaceRole'",
-                            "WHERE typname = 'WorkspaceRole' AND typnamespace = current_schema()::regnamespace");
-                    stmt.execute(sql);
-                }
-            }
-        }
+        new com.landrop.database.migration.DatabaseMigrator(db).migrate();
         var users = new UserRepository(db);
         var jwt = new JwtService("integration-access-key-with-32-characters", "integration-refresh-key-with-32-characters", 900, 3600);
         var auth = new AuthService(users, new RefreshTokenRepository(db), jwt);

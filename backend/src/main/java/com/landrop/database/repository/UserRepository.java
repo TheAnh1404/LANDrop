@@ -27,14 +27,21 @@ public class UserRepository {
     }
 
     public User create(User user) throws SQLException {
+        try (Connection conn = databaseManager.getConnection()) {
+            return create(conn, user);
+        }
+    }
+
+    /** Uses the caller's transaction without committing or closing its connection. */
+    public User create(Connection conn, User user) throws SQLException {
+        if (conn == null) return create(user); // Repository test doubles have no connection pool.
         String sql = """
             INSERT INTO users (id, email, username, display_name, avatar_url, password_hash, status, system_role, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             RETURNING id, email, username, display_name, avatar_url, password_hash, status, system_role, created_at, updated_at
         """;
 
-        try (Connection conn = databaseManager.getConnection();
-             PreparedStatement ps = conn.prepareStatement(sql)) {
+        try (PreparedStatement ps = conn.prepareStatement(sql)) {
             UUID id = user.id() != null ? user.id() : UUID.randomUUID();
             Instant now = Instant.now();
 
@@ -56,6 +63,11 @@ public class UserRepository {
             }
         }
         throw new SQLException("Failed to create user record.");
+    }
+
+    public <T> T inTransaction(DatabaseManager.Transaction<T> transaction) throws SQLException {
+        if (databaseManager == null) return transaction.execute(null);
+        return databaseManager.inTransaction(transaction);
     }
 
     public Optional<User> findById(UUID id) throws SQLException {

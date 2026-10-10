@@ -14,6 +14,11 @@ import java.util.Map;
 public class HealthService {
 
     private final Instant startTime;
+    private volatile boolean persistenceAvailable;
+
+    public void setPersistenceAvailable(boolean available) {
+        this.persistenceAvailable = available;
+    }
 
     public HealthService() {
         this.startTime = Instant.now();
@@ -40,7 +45,8 @@ public class HealthService {
         String status,
         String serverVersion,
         int protocolVersion,
-        long uptime
+        long uptime,
+        boolean persistenceAvailable
     ) {}
 
     public HealthReport getHealthReport() {
@@ -48,7 +54,8 @@ public class HealthService {
             "ok",
             ProtocolConstants.SERVER_VERSION,
             ProtocolConstants.PROTOCOL_VERSION,
-            getUptimeSeconds()
+            getUptimeSeconds(),
+            persistenceAvailable
         );
     }
 
@@ -56,6 +63,7 @@ public class HealthService {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("status", "ok");
         map.put("serverStatus", "RUNNING");
+        map.put("persistenceAvailable", persistenceAvailable);
         map.put("serverVersion", ProtocolConstants.SERVER_VERSION);
         map.put("protocolVersion", ProtocolConstants.PROTOCOL_VERSION);
         map.put("host", host);

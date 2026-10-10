@@ -156,8 +156,15 @@ public final class WorkspaceHttpServer {
     }
 
     private void addMember(HttpExchange e, UUID user, UUID id) throws IOException, SQLException {
-        JsonNode body = body(e, Set.of("email"));
-        send(e, 201, Map.of("data", member(service.addMember(user, id, text(body, "email", true)))));
+        JsonNode body = body(e, Set.of("email", "userId", "username"));
+        String email = body.hasNonNull("email") ? text(body, "email", false) : null;
+        String userIdStr = body.hasNonNull("userId") ? text(body, "userId", false) : null;
+        String username = body.hasNonNull("username") ? text(body, "username", false) : null;
+        UUID targetUserId = null;
+        if (userIdStr != null && !userIdStr.isBlank()) {
+            try { targetUserId = UUID.fromString(userIdStr); } catch (Exception ignored) {}
+        }
+        send(e, 201, Map.of("data", member(service.addMember(user, id, email, targetUserId, username))));
     }
 
     private void role(HttpExchange e, UUID user, UUID workspace, UUID target) throws IOException, SQLException {

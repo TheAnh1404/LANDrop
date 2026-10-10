@@ -9,11 +9,19 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.HashMap;
+import java.util.HashSet;
 
 /**
  * Automates execution and verification of SQL schema migrations against Neon PostgreSQL.
@@ -41,123 +49,98 @@ public final class DatabaseMigrator {
         this(DatabaseManager.getInstance());
     }
 
-    /**
-     * Executes database migrations V1–V4 against the connected database.
-     */
+    /** Applies pending migrations atomically, serializing concurrent server startups. */
     public void migrate() throws SQLException, IOException {
-        AppLogger.info(TAG, "Starting cloud database schema migration (V1–V4)...");
-
-        for (String resource : MIGRATION_RESOURCES) {
-            String migrationSql = loadMigrationScript(resource);
-            List<String> statements = parseSqlStatements(migrationSql);
-
-            try (Connection conn = databaseManager.getConnection()) {
-                conn.setAutoCommit(false);
-                try (Statement stmt = conn.createStatement()) {
-                    for (String sql : statements) {
-                        if (!sql.isBlank()) {
-                            stmt.execute(sql);
+        AppLogger.info(TAG, "Checking PostgreSQL schema migrations...");
+        try (Connection conn = databaseManager.getConnection()) {
+            conn.setAutoCommit(false);
+            try (Statement stmt = conn.createStatement()) {
+                stmt.execute("SELECT pg_advisory_xact_lock(hashtext(current_database()), hashtext(current_schema() || ':landrop:migrations'))");
+                stmt.execute("""
+                    CREATE TABLE IF NOT EXISTS landrop_schema_history (
+                        version INTEGER PRIMARY KEY,
+                        resource TEXT NOT NULL,
+                        checksum VARCHAR(64) NOT NULL,
+                        installed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )
+                    """);
+                for (int index = 0; index < MIGRATION_RESOURCES.size(); index++) {
+                    String resource = MIGRATION_RESOURCES.get(index);
+                    String migrationSql = loadMigrationScript(resource);
+                    String checksum = checksum(migrationSql);
+                    try (PreparedStatement existing = conn.prepareStatement("SELECT checksum FROM landrop_schema_history WHERE version = ?")) {
+                        existing.setInt(1, index + 1);
+                        try (ResultSet rs = existing.executeQuery()) {
+                            if (rs.next()) {
+                                if (!checksum.equals(rs.getString(1))) {
+                                    throw new SQLException("Applied migration has changed: " + resource + ". Add a new migration instead.");
+                                }
+                                continue;
+                            }
                         }
                     }
-                    conn.commit();
+                    // V1 predates schema isolation; scope its enum probe without rewriting an applied resource.
+                    String executableSql = migrationSql.replace("WHERE typname = 'WorkspaceRole'",
+                        "WHERE typname = 'WorkspaceRole' AND typnamespace = current_schema()::regnamespace");
+                    List<String> statements = parseSqlStatements(executableSql);
+                    for (String sql : statements) {
+                        if (!sql.isBlank()) stmt.execute(sql);
+                    }
+                    try (PreparedStatement record = conn.prepareStatement("INSERT INTO landrop_schema_history (version, resource, checksum) VALUES (?, ?, ?)")) {
+                        record.setInt(1, index + 1);
+                        record.setString(2, resource);
+                        record.setString(3, checksum);
+                        record.executeUpdate();
+                    }
                     AppLogger.info(TAG, "Applied migration " + resource + " (" + statements.size() + " DDL commands).");
-                } catch (SQLException e) {
-                    conn.rollback();
-                    AppLogger.error(TAG, "Migration " + resource + " failed, transaction rolled back", e);
-                    throw e;
                 }
+                conn.commit();
+            } catch (SQLException | IOException | RuntimeException e) {
+                try { conn.rollback(); } catch (SQLException rollback) { e.addSuppressed(rollback); }
+                throw e;
             }
         }
-
         verifyTablesCreated();
     }
 
-    /**
-     * Verifies that all required Phase 14 & 15 tables exist in PostgreSQL.
-     */
-    public List<String> verifyTablesCreated() throws SQLException {
-        String[] requiredTables = {
-            "users",
-            "workspaces",
-            "workspace_members",
-            "channels",
-            "messages",
-            "folders",
-            "files",
-            "refresh_tokens",
-            "devices",
-            "transfers"
-        };
-
-        List<String> foundTables = new ArrayList<>();
-        try (Connection conn = databaseManager.getConnection();
-             Statement stmt = conn.createStatement()) {
-            for (String table : requiredTables) {
-                String checkSql = "SELECT EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = '" + table + "')";
-                try (ResultSet rs = stmt.executeQuery(checkSql)) {
-                    if (rs.next() && rs.getBoolean(1)) {
-                        foundTables.add(table);
-                    } else {
-                        throw new SQLException("Required table missing in public schema: " + table);
-                    }
-                }
-            }
-
-            // Verify password_hash, status, and system_role columns in users
-            for (String col : List.of("password_hash", "status", "system_role")) {
-                String colCheckSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'users' AND column_name = '" + col + "')";
-                try (ResultSet rs = stmt.executeQuery(colCheckSql)) {
-                    if (!rs.next() || !rs.getBoolean(1)) {
-                        throw new SQLException("Required column " + col + " missing in users table");
-                    }
-                }
-            }
-
-            // Verify edited_at and deleted_at columns in messages
-            for (String col : List.of("edited_at", "deleted_at")) {
-                String msgColSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'messages' AND column_name = '" + col + "')";
-                try (ResultSet rs = stmt.executeQuery(msgColSql)) {
-                    if (!rs.next() || !rs.getBoolean(1)) {
-                        throw new SQLException("Required column " + col + " missing in messages table");
-                    }
-                }
-            }
-
-            // Verify deleted_at column in files and folders
-            String filesDelSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'files' AND column_name = 'deleted_at')";
-            try (ResultSet rs = stmt.executeQuery(filesDelSql)) {
-                if (!rs.next() || !rs.getBoolean(1)) {
-                    throw new SQLException("Required column deleted_at missing in files table");
-                }
-            }
-            String foldersDelSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'folders' AND column_name = 'deleted_at')";
-            try (ResultSet rs = stmt.executeQuery(foldersDelSql)) {
-                if (!rs.next() || !rs.getBoolean(1)) {
-                    throw new SQLException("Required column deleted_at missing in folders table");
-                }
-            }
-
-            // Verify FOUNDATION-04A columns in refresh_tokens
-            for (String col : List.of("last_seen_at", "revoked_at", "device_id")) {
-                String tokenColSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'refresh_tokens' AND column_name = '" + col + "')";
-                try (ResultSet rs = stmt.executeQuery(tokenColSql)) {
-                    if (!rs.next() || !rs.getBoolean(1)) {
-                        throw new SQLException("Required column " + col + " missing in refresh_tokens table");
-                    }
-                }
-            }
-
-            // Verify FOUNDATION-04A columns in devices
-            for (String col : List.of("client_instance_id", "platform", "client_version", "status")) {
-                String devColSql = "SELECT EXISTS (SELECT FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'devices' AND column_name = '" + col + "')";
-                try (ResultSet rs = stmt.executeQuery(devColSql)) {
-                    if (!rs.next() || !rs.getBoolean(1)) {
-                        throw new SQLException("Required column " + col + " missing in devices table");
-                    }
-                }
-            }
+    private static String checksum(String script) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(script.replace("\r\n", "\n").getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
         }
-        AppLogger.info(TAG, "Verified all " + foundTables.size() + " tables in Neon PostgreSQL: " + foundTables);
+    }
+
+    /** Verifies every column used by persistent APIs in the active schema. */
+    public List<String> verifyTablesCreated() throws SQLException {
+        Map<String, List<String>> required = Map.ofEntries(
+            Map.entry("users", List.of("id", "email", "username", "display_name", "avatar_url", "password_hash", "status", "system_role", "created_at", "updated_at")),
+            Map.entry("workspaces", List.of("id", "name", "slug", "description", "owner_id", "created_at", "updated_at")),
+            Map.entry("workspace_members", List.of("id", "workspace_id", "user_id", "role", "joined_at", "updated_at")),
+            Map.entry("channels", List.of("id", "workspace_id", "name", "topic", "is_private", "created_at", "updated_at")),
+            Map.entry("messages", List.of("id", "channel_id", "user_id", "parent_message_id", "client_message_id", "content", "created_at", "updated_at", "edited_at", "deleted_at")),
+            Map.entry("folders", List.of("id", "workspace_id", "name", "parent_folder_id", "created_by_id", "created_at", "updated_at", "deleted_at")),
+            Map.entry("files", List.of("id", "workspace_id", "user_id", "folder_id", "name", "original_name", "size", "mime_type", "sha256", "storage_type", "storage_path", "storage_key", "created_at", "updated_at", "deleted_at")),
+            Map.entry("refresh_tokens", List.of("id", "user_id", "token_hash", "device_id", "expires_at", "last_seen_at", "revoked_at", "revoked", "created_at", "updated_at")),
+            Map.entry("devices", List.of("id", "user_id", "client_instance_id", "device_name", "platform", "client_version", "status", "peer_id", "ip_address", "port", "last_seen_at", "created_at", "updated_at")),
+            Map.entry("transfers", List.of("id", "file_id", "sender_user_id", "receiver_user_id", "sender_device_id", "receiver_device_id", "status", "created_at", "started_at", "completed_at", "failed_at", "error_message"))
+        );
+        Map<String, Set<String>> actual = new HashMap<>();
+        try (Connection conn = databaseManager.getConnection(); Statement stmt = conn.createStatement();
+             ResultSet rs = stmt.executeQuery("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = current_schema()")) {
+            while (rs.next()) actual.computeIfAbsent(rs.getString(1), ignored -> new HashSet<>()).add(rs.getString(2));
+        }
+        List<String> foundTables = new ArrayList<>();
+        for (var entry : required.entrySet()) {
+            Set<String> columns = actual.get(entry.getKey());
+            if (columns == null) throw new SQLException("Required table missing in active schema: " + entry.getKey());
+            for (String column : entry.getValue()) {
+                if (!columns.contains(column)) throw new SQLException("Required column missing: " + entry.getKey() + "." + column);
+            }
+            foundTables.add(entry.getKey());
+        }
+        AppLogger.info(TAG, "Verified all " + foundTables.size() + " persistent API tables and columns.");
         return foundTables;
     }
 

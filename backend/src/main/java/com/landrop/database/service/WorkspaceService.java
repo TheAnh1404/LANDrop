@@ -51,9 +51,21 @@ public class WorkspaceService {
         return new Page<>(rows.stream().limit(limit).map(x->new MemberView(x.member(),x.username(),x.displayName(),x.avatarUrl())).toList(),limit,offset,rows.size()>limit);
     }
     public MemberView addMember(UUID caller,UUID id,String email) throws SQLException {
-        String normalized=email(email); return repository.transaction(tx->{WorkspaceAccess.lockAdmin(tx,id,caller);
-            UUID uid=tx.userByEmail(normalized).orElseThrow(()->new WorkspaceException(404,"USER_NOT_FOUND","User was not found."));
-            if(tx.findMember(id,uid).isPresent())throw new WorkspaceException(409,"MEMBER_EXISTS","User is already a workspace member.");
+        return addMember(caller, id, email, null, null);
+    }
+    public MemberView addMember(UUID caller,UUID id,String email,UUID targetUserId,String username) throws SQLException {
+        return repository.transaction(tx->{
+            WorkspaceAccess.lockAdmin(tx,id,caller);
+            UUID uid=null;
+            if(targetUserId!=null && tx.userExists(targetUserId)) uid=targetUserId;
+            else if(username!=null && !username.isBlank()) uid=tx.userByUsername(username).orElse(null);
+            else if(email!=null && !email.isBlank()) uid=tx.userByEmail(email(email)).orElse(null);
+            if(uid==null) throw new WorkspaceException(404,"USER_NOT_FOUND","User was not found.");
+            var existing = tx.findMember(id,uid);
+            if(existing.isPresent()) {
+                if(targetUserId!=null || username!=null) return view(tx,existing.get());
+                throw new WorkspaceException(409,"MEMBER_EXISTS","User is already a workspace member.");
+            }
             return view(tx,tx.addMember(new WorkspaceMember(id,uid,WorkspaceRole.MEMBER)));
         });
     }
