@@ -17,12 +17,16 @@ import { RealtimeClient } from '../realtime/realtime-client';
 import type { RealtimeEnvelope } from '../realtime/types';
 import { getRtcConfiguration, WebRTCConfigurationOptions } from './config';
 import type {
+  ChatAckMessage,
+  ChatDataMessage,
+  ChatTypingMessage,
   FileCancelMessage,
   FileEndMessage,
   FileStartMessage,
   FileTransferProgress,
   IncomingTransferRequest,
   OnlinePeerItem,
+  P2PChatMessage,
   PeerTestResult,
   QuickTextDataMessage,
   QuickTextMessage,
@@ -41,11 +45,15 @@ export type TransferProgressListener = (progress: FileTransferProgress | null) =
 export type FileReceivedListener = (file: ReceivedFileItem) => void;
 export type QuickTextListener = (msg: QuickTextMessage) => void;
 export type OnlinePeersListener = (peers: OnlinePeerItem[]) => void;
+export type ChatMessageListener = (msg: P2PChatMessage) => void;
+export type ChatTypingListener = (typing: { isTyping: boolean; senderName: string }) => void;
 
 const SIGNALING_TIMEOUT_MS = 30_000;
 const PING_TIMEOUT_MS = 10_000;
-const CHUNK_SIZE = 16_384; // 16 KB binary chunks
-const BUFFERED_AMOUNT_LOW_THRESHOLD = 65_536; // 64 KB
+const PING_INTERVAL_MS = 10_000; // Continuous keep-alive heartbeat interval
+const CHUNK_SIZE = 65_536; // 64 KB optimal binary chunks
+const BUFFER_HIGH_WATER_MARK = 1_048_576; // 1 MB high-water backpressure threshold
+const BUFFERED_AMOUNT_LOW_THRESHOLD = 262_144; // 256 KB low-water drain threshold
 
 export class WebRTCPeerService {
   private pc: RTCPeerConnection | null = null;
@@ -65,6 +73,10 @@ export class WebRTCPeerService {
 
   private signalingTimer: ReturnType<typeof setTimeout> | null = null;
   private pingTimeoutTimer: ReturnType<typeof setTimeout> | null = null;
+  private pingIntervalTimer: ReturnType<typeof setInterval> | null = null;
+  private chatTypingTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly unackedRetries = new Map<string, { packet: ChatDataMessage; retries: number; timer: ReturnType<typeof setTimeout> }>();
+  private pendingChatQueue: { id: string; text: string; replyToId?: string; timestamp: number }[] = [];
 
   private lastError: string | null = null;
   private lastUpdated: number = Date.now();
@@ -78,11 +90,15 @@ export class WebRTCPeerService {
   private readonly fileReceivedListeners = new Set<FileReceivedListener>();
   private readonly quickTextListeners = new Set<QuickTextListener>();
   private readonly onlinePeersListeners = new Set<OnlinePeersListener>();
+  private readonly chatMessageListeners = new Set<ChatMessageListener>();
+  private readonly chatTypingListeners = new Set<ChatTypingListener>();
 
   // Transfer & Presence State
   private currentTransferProgress: FileTransferProgress | null = null;
   private receivedFiles: ReceivedFileItem[] = [];
   private quickMessages: QuickTextMessage[] = [];
+  private chatMessages: P2PChatMessage[] = [];
+  private sendingFile = false;
   private onlinePeers: OnlinePeerItem[] = [];
   private incomingFileState: {
     transferId: string;
@@ -91,9 +107,10 @@ export class WebRTCPeerService {
     fileSize: number;
     mimeType: string;
     totalChunks: number;
-    chunks: ArrayBuffer[];
+    chunks: (ArrayBuffer | Blob)[];
     receivedBytes: number;
     startTime: number;
+    lastProgressEmitTime: number;
   } | null = null;
 
   private unsubscribeEnvelope: (() => void) | null = null;
@@ -131,6 +148,9 @@ export class WebRTCPeerService {
     this.fileReceivedListeners.clear();
     this.quickTextListeners.clear();
     this.onlinePeersListeners.clear();
+    this.chatMessageListeners.clear();
+    this.chatTypingListeners.clear();
+    this.chatMessages = [];
     this.receivedFiles.forEach(f => {
       try { URL.revokeObjectURL(f.blobUrl); } catch { /* ignore */ }
     });
@@ -245,6 +265,12 @@ export class WebRTCPeerService {
     });
   }
 
+  private emitChatMessage(msg: P2PChatMessage) {
+    this.chatMessageListeners.forEach(fn => {
+      try { fn(msg); } catch { /* ignore listener error */ }
+    });
+  }
+
   public onStateChange(listener: WebRTCStateListener): () => void {
     this.stateListeners.add(listener);
     listener(this.state);
@@ -291,6 +317,16 @@ export class WebRTCPeerService {
     return () => this.onlinePeersListeners.delete(listener);
   }
 
+  public onChatMessage(listener: ChatMessageListener): () => void {
+    this.chatMessageListeners.add(listener);
+    return () => this.chatMessageListeners.delete(listener);
+  }
+
+  public onChatTyping(listener: ChatTypingListener): () => void {
+    this.chatTypingListeners.add(listener);
+    return () => this.chatTypingListeners.delete(listener);
+  }
+
   // =========================================================================
   // 2. Offerer (Sender) Flow
   // =========================================================================
@@ -315,6 +351,7 @@ export class WebRTCPeerService {
     this.targetDeviceName = params.targetDeviceName || 'Peer Browser';
     this.lastError = null;
     this.testResult = null;
+    this.loadChatHistory();
 
     this.setState('REQUESTING');
     this.startSignalingTimeout();
@@ -358,6 +395,7 @@ export class WebRTCPeerService {
     this.targetUserId = this.incomingRequest.senderUserId;
     this.targetDeviceName = this.incomingRequest.senderDeviceName || 'Peer Browser';
     this.incomingRequest = null;
+    this.loadChatHistory();
     this.emitIncomingRequest();
 
     this.setState('SIGNALING');
@@ -796,6 +834,8 @@ export class WebRTCPeerService {
       if (this.role === 'offerer') {
         this.sendTechnicalPing();
       }
+      this.startHeartbeat();
+      this.drainPendingChatQueue();
     };
 
     channel.onmessage = event => {
@@ -812,6 +852,8 @@ export class WebRTCPeerService {
     };
 
     channel.onclose = () => {
+      this.stopHeartbeat();
+      this.handleChatTyping({ type: 'CHAT_TYPING', isTyping: false });
       this.emitDiagnostics();
       if (this.state === 'CONNECTED' || this.state === 'CONNECTING') {
         this.setState('DISCONNECTED', 'Data Channel đã đóng.');
@@ -819,6 +861,8 @@ export class WebRTCPeerService {
     };
 
     channel.onerror = () => {
+      this.stopHeartbeat();
+      this.handleChatTyping({ type: 'CHAT_TYPING', isTyping: false });
       this.emitDiagnostics();
       this.setState('FAILED', 'Data Channel gặp lỗi truyền dữ liệu.');
     };
@@ -883,12 +927,20 @@ export class WebRTCPeerService {
       this.handleFileEnd(msg);
     } else if (msg.type === 'FILE_CANCEL') {
       this.handleFileCancel(msg);
+    } else if (msg.type === 'CHAT_MESSAGE') {
+      this.handleChatMessage(msg);
+    } else if (msg.type === 'CHAT_TYPING') {
+      this.handleChatTyping(msg);
+    } else if (msg.type === 'CHAT_ACK') {
+      this.handleChatAck(msg);
     } else if (msg.type === 'TEXT_MESSAGE') {
       this.handleQuickTextMessage(msg);
     }
   }
 
   private handleFileStart(msg: FileStartMessage) {
+    if (this.incomingFileState || typeof msg.fileId !== 'string' || !msg.fileId || typeof msg.fileName !== 'string'
+        || !Number.isSafeInteger(msg.fileSize) || msg.fileSize < 0) return;
     this.incomingFileState = {
       transferId: msg.transferId,
       fileId: msg.fileId,
@@ -899,6 +951,7 @@ export class WebRTCPeerService {
       chunks: [],
       receivedBytes: 0,
       startTime: Date.now(),
+      lastProgressEmitTime: 0,
     };
 
     this.currentTransferProgress = {
@@ -921,31 +974,50 @@ export class WebRTCPeerService {
 
     this.incomingFileState.chunks.push(chunk);
     this.incomingFileState.receivedBytes += chunk.byteLength;
+    if (this.incomingFileState.receivedBytes > this.incomingFileState.fileSize) {
+      this.failIncomingFile();
+      return;
+    }
+
+    // Coalesce intermediate chunks into Blobs to keep RAM footprint bounded during large transfers
+    if (this.incomingFileState.chunks.length > 256) {
+      const intermediateBlob = new Blob(this.incomingFileState.chunks);
+      this.incomingFileState.chunks = [intermediateBlob];
+    }
 
     const now = Date.now();
-    const elapsedSec = Math.max(0.1, (now - this.incomingFileState.startTime) / 1000);
-    const speed = this.incomingFileState.receivedBytes / elapsedSec;
-    const remainingBytes = Math.max(0, this.incomingFileState.fileSize - this.incomingFileState.receivedBytes);
-    const eta = speed > 0 ? Math.ceil(remainingBytes / speed) : 0;
-    const percent = Math.min(100, Math.round((this.incomingFileState.receivedBytes / Math.max(1, this.incomingFileState.fileSize)) * 100));
+    // Throttle progress updates to at most 10 Hz or on final byte
+    if (now - this.incomingFileState.lastProgressEmitTime >= 100 || this.incomingFileState.receivedBytes >= this.incomingFileState.fileSize) {
+      this.incomingFileState.lastProgressEmitTime = now;
+      const elapsedSec = Math.max(0.05, (now - this.incomingFileState.startTime) / 1000);
+      const speed = this.incomingFileState.receivedBytes / elapsedSec;
+      const remainingBytes = Math.max(0, this.incomingFileState.fileSize - this.incomingFileState.receivedBytes);
+      const eta = speed > 0 ? Math.ceil(remainingBytes / speed) : 0;
+      const percent = Math.min(100, Math.round((this.incomingFileState.receivedBytes / Math.max(1, this.incomingFileState.fileSize)) * 100));
 
-    this.currentTransferProgress = {
-      transferId: this.incomingFileState.transferId,
-      fileId: this.incomingFileState.fileId,
-      fileName: this.incomingFileState.fileName,
-      fileSize: this.incomingFileState.fileSize,
-      bytesTransferred: this.incomingFileState.receivedBytes,
-      percent,
-      speedBytesPerSec: Math.round(speed),
-      etaSeconds: eta,
-      direction: 'receiving',
-      status: 'transferring',
-    };
-    this.emitProgress();
+      this.currentTransferProgress = {
+        transferId: this.incomingFileState.transferId,
+        fileId: this.incomingFileState.fileId,
+        fileName: this.incomingFileState.fileName,
+        fileSize: this.incomingFileState.fileSize,
+        bytesTransferred: this.incomingFileState.receivedBytes,
+        percent,
+        speedBytesPerSec: Math.round(speed),
+        etaSeconds: eta,
+        direction: 'receiving',
+        status: 'transferring',
+      };
+      this.emitProgress();
+    }
   }
 
   private handleFileEnd(msg: FileEndMessage) {
     if (!this.incomingFileState) return;
+    if (msg.fileId !== this.incomingFileState.fileId || msg.transferId !== this.incomingFileState.transferId) return;
+    if (this.incomingFileState.receivedBytes !== this.incomingFileState.fileSize) {
+      this.failIncomingFile();
+      return;
+    }
 
     const blob = new Blob(this.incomingFileState.chunks, {
       type: this.incomingFileState.mimeType || 'application/octet-stream',
@@ -978,6 +1050,23 @@ export class WebRTCPeerService {
       status: 'completed',
     };
     this.emitProgress();
+
+    const fileChatMessage: P2PChatMessage = {
+      id: receivedItem.id,
+      text: `Đã nhận tệp: ${receivedItem.fileName}`,
+      senderName: receivedItem.senderName,
+      timestamp: receivedItem.receivedAt,
+      direction: 'received',
+      type: 'file',
+      fileMeta: {
+        name: receivedItem.fileName,
+        size: receivedItem.fileSize,
+        blobUrl: receivedItem.blobUrl,
+      },
+      ack: true,
+    };
+    this.chatMessages = [...this.chatMessages, fileChatMessage];
+    this.emitChatMessage(fileChatMessage);
 
     if (typeof document !== 'undefined' && document.createElement) {
       try {
@@ -1018,111 +1107,268 @@ export class WebRTCPeerService {
     this.emitQuickText(item);
   }
 
+  private handleChatMessage(msg: ChatDataMessage) {
+    if (typeof msg.id !== 'string' || !msg.id || typeof msg.text !== 'string' || !msg.text.trim()) return;
+    if (this.dataChannel && this.dataChannel.readyState === 'open') {
+      try {
+        const ack: ChatAckMessage = {
+          type: 'CHAT_ACK',
+          messageId: msg.id,
+          status: 'delivered',
+        };
+        this.dataChannel.send(JSON.stringify(ack));
+      } catch { /* ignore */ }
+    }
+
+    if (this.chatMessages.some(item => item.id === msg.id && item.direction === 'received')) return;
+    this.handleChatTyping({ type: 'CHAT_TYPING', isTyping: false });
+    const item: P2PChatMessage = {
+      id: msg.id,
+      text: msg.text,
+      senderName: msg.senderName && msg.senderName !== 'Me' ? msg.senderName : this.targetDeviceName || 'Peer',
+      timestamp: Number.isFinite(msg.timestamp) ? msg.timestamp : Date.now(),
+      replyToId: typeof msg.replyToId === 'string' ? msg.replyToId : undefined,
+      direction: 'received',
+      type: 'text',
+    };
+    this.chatMessages = [...this.chatMessages, item];
+    this.emitChatMessage(item);
+  }
+
+  private handleChatTyping(msg: ChatTypingMessage) {
+    if (typeof msg.isTyping !== 'boolean') return;
+    if (this.chatTypingTimer) clearTimeout(this.chatTypingTimer);
+    this.chatTypingTimer = null;
+    this.chatTypingListeners.forEach(fn => {
+      try { fn({ isTyping: msg.isTyping, senderName: msg.senderName || this.targetDeviceName || 'Peer' }); } catch { /* ignore */ }
+    });
+    if (msg.isTyping) {
+      this.chatTypingTimer = setTimeout(() => {
+        this.handleChatTyping({ type: 'CHAT_TYPING', isTyping: false });
+      }, 3000);
+    }
+  }
+
+  private handleChatAck(msg: ChatAckMessage) {
+    if (msg.status !== 'delivered') return;
+    const entry = this.unackedRetries.get(msg.messageId);
+    if (entry) {
+      clearTimeout(entry.timer);
+      this.unackedRetries.delete(msg.messageId);
+    }
+    const index = this.chatMessages.findIndex(item => item.id === msg.messageId && item.direction === 'sent');
+    if (index === -1 || this.chatMessages[index].ack) return;
+    const item = { ...this.chatMessages[index], ack: true, pending: false };
+    this.chatMessages = this.chatMessages.map((message, i) => i === index ? item : message);
+    this.saveChatHistory();
+    this.emitChatMessage(item);
+  }
+
+  private failIncomingFile() {
+    this.incomingFileState = null;
+    if (this.currentTransferProgress?.direction === 'receiving') {
+      this.currentTransferProgress = { ...this.currentTransferProgress, status: 'failed' };
+      this.emitProgress();
+    }
+  }
+
+  private async waitForChannelBuffer(channel: RTCDataChannel): Promise<void> {
+    if (!channel.bufferedAmount || channel.bufferedAmount <= BUFFER_HIGH_WATER_MARK) {
+      if (this.dataChannel !== channel || channel.readyState !== 'open') {
+        throw new Error('Kênh dữ liệu bị ngắt trong quá trình truyền.');
+      }
+      return;
+    }
+
+    const deadline = Date.now() + 30_000;
+    await new Promise<void>((resolve, reject) => {
+      let timer: any = null;
+      const onLow = () => {
+        cleanup();
+        resolve();
+      };
+      const cleanup = () => {
+        if (timer) clearTimeout(timer);
+        if (typeof channel.removeEventListener === 'function') {
+          channel.removeEventListener('bufferedamountlow', onLow);
+        }
+      };
+      if (typeof channel.addEventListener === 'function') {
+        channel.addEventListener('bufferedamountlow', onLow, { once: true });
+      } else {
+        const check = () => {
+          if (this.dataChannel !== channel || channel.readyState !== 'open') {
+            cleanup();
+            reject(new Error('Kênh dữ liệu bị ngắt trong quá trình truyền.'));
+          } else if (!channel.bufferedAmount || channel.bufferedAmount <= BUFFER_HIGH_WATER_MARK) {
+            cleanup();
+            resolve();
+          } else if (Date.now() >= deadline) {
+            cleanup();
+            reject(new Error('Thiết bị nhận không phản hồi. Hãy gửi lại tệp.'));
+          } else {
+            timer = setTimeout(check, 10);
+          }
+        };
+        timer = setTimeout(check, 10);
+        return;
+      }
+      timer = setTimeout(() => {
+        cleanup();
+        if (this.dataChannel !== channel || channel.readyState !== 'open') {
+          reject(new Error('Kênh dữ liệu bị ngắt trong quá trình truyền.'));
+        } else if (channel.bufferedAmount > BUFFER_HIGH_WATER_MARK) {
+          reject(new Error('Thiết bị nhận không phản hồi. Hãy gửi lại tệp.'));
+        } else {
+          resolve();
+        }
+      }, 30_000);
+    });
+
+    if (this.dataChannel !== channel || channel.readyState !== 'open') {
+      throw new Error('Kênh dữ liệu bị ngắt trong quá trình truyền.');
+    }
+  }
+
   public async sendFile(file: File): Promise<void> {
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
       throw new Error('Kênh dữ liệu WebRTC chưa mở. Vui lòng kết nối với thiết bị trước.');
     }
+    if (this.sendingFile) throw new Error('Đang gửi một tệp. Vui lòng chờ tệp này hoàn tất.');
+    this.sendingFile = true;
+    const channel = this.dataChannel;
+    try {
+      const transferId = this.transferId || `tx-${Date.now()}`;
+      const fileId = `file-${Date.now()}`;
+      const totalChunks = file.size === 0 ? 0 : Math.ceil(file.size / CHUNK_SIZE);
 
-    const transferId = this.transferId || `tx-${Date.now()}`;
-    const fileId = `file-${Date.now()}`;
-    const totalChunks = Math.ceil(file.size / CHUNK_SIZE) || 1;
+      const startMsg: FileStartMessage = {
+        type: 'FILE_START',
+        transferId,
+        fileId,
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type || 'application/octet-stream',
+        chunkSize: CHUNK_SIZE,
+        totalChunks,
+      };
 
-    const startMsg: FileStartMessage = {
-      type: 'FILE_START',
-      transferId,
-      fileId,
-      fileName: file.name,
-      fileSize: file.size,
-      mimeType: file.type || 'application/octet-stream',
-      chunkSize: CHUNK_SIZE,
-      totalChunks,
-    };
-
-    this.dataChannel.send(JSON.stringify(startMsg));
-
-    this.currentTransferProgress = {
-      transferId,
-      fileId,
-      fileName: file.name,
-      fileSize: file.size,
-      bytesTransferred: 0,
-      percent: 0,
-      speedBytesPerSec: 0,
-      etaSeconds: 0,
-      direction: 'sending',
-      status: 'transferring',
-    };
-    this.emitProgress();
-
-    const startTime = Date.now();
-    let bytesSent = 0;
-
-    for (let offset = 0; offset < file.size; offset += CHUNK_SIZE) {
-      if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
-        throw new Error('Kênh dữ liệu bị ngắt trong quá trình truyền.');
-      }
-
-      const slice = file.slice(offset, Math.min(file.size, offset + CHUNK_SIZE));
-      const buffer = await slice.arrayBuffer();
-
-      // Backpressure: pause if buffer is full (> 64KB)
-      if (this.dataChannel.bufferedAmount > BUFFERED_AMOUNT_LOW_THRESHOLD) {
-        await new Promise<void>(resolve => {
-          if (!this.dataChannel) return resolve();
-          const onLow = () => {
-            if (this.dataChannel) this.dataChannel.onbufferedamountlow = null;
-            resolve();
-          };
-          this.dataChannel.onbufferedamountlow = onLow;
-          setTimeout(resolve, 200);
-        });
-      }
-
-      this.dataChannel.send(buffer);
-      bytesSent += buffer.byteLength;
-
-      const now = Date.now();
-      const elapsedSec = Math.max(0.1, (now - startTime) / 1000);
-      const speed = bytesSent / elapsedSec;
-      const remainingBytes = Math.max(0, file.size - bytesSent);
-      const eta = speed > 0 ? Math.ceil(remainingBytes / speed) : 0;
-      const percent = Math.min(100, Math.round((bytesSent / Math.max(1, file.size)) * 100));
+      channel.send(JSON.stringify(startMsg));
 
       this.currentTransferProgress = {
         transferId,
         fileId,
         fileName: file.name,
         fileSize: file.size,
-        bytesTransferred: bytesSent,
-        percent,
-        speedBytesPerSec: Math.round(speed),
-        etaSeconds: eta,
+        bytesTransferred: 0,
+        percent: 0,
+        speedBytesPerSec: 0,
+        etaSeconds: 0,
         direction: 'sending',
         status: 'transferring',
       };
       this.emitProgress();
+
+      const startTime = Date.now();
+      let bytesSent = 0;
+      let lastProgressEmit = 0;
+      const BLOCK_SIZE = 1024 * 1024; // 1 MB chunk reading batch
+
+      for (let blockOffset = 0; blockOffset < file.size; blockOffset += BLOCK_SIZE) {
+        if (this.dataChannel !== channel || channel.readyState !== 'open') {
+          throw new Error('Kênh dữ liệu bị ngắt trong quá trình truyền.');
+        }
+
+        const blockSlice = file.slice(blockOffset, Math.min(file.size, blockOffset + BLOCK_SIZE));
+        const blockBuffer = await blockSlice.arrayBuffer();
+
+        for (let chunkOffset = 0; chunkOffset < blockBuffer.byteLength; chunkOffset += CHUNK_SIZE) {
+          if (this.dataChannel !== channel || channel.readyState !== 'open') {
+            throw new Error('Kênh dữ liệu bị ngắt trong quá trình truyền.');
+          }
+
+          const chunk = blockBuffer.slice(chunkOffset, Math.min(blockBuffer.byteLength, chunkOffset + CHUNK_SIZE));
+
+          await this.waitForChannelBuffer(channel);
+          channel.send(chunk);
+          bytesSent += chunk.byteLength;
+
+          const now = Date.now();
+          if (now - lastProgressEmit >= 100 || bytesSent >= file.size) {
+            lastProgressEmit = now;
+            const elapsedSec = Math.max(0.05, (now - startTime) / 1000);
+            const speed = bytesSent / elapsedSec;
+            const remainingBytes = Math.max(0, file.size - bytesSent);
+            const eta = speed > 0 ? Math.ceil(remainingBytes / speed) : 0;
+            const percent = Math.min(100, Math.round((bytesSent / Math.max(1, file.size)) * 100));
+
+            this.currentTransferProgress = {
+              transferId,
+              fileId,
+              fileName: file.name,
+              fileSize: file.size,
+              bytesTransferred: bytesSent,
+              percent,
+              speedBytesPerSec: Math.round(speed),
+              etaSeconds: eta,
+              direction: 'sending',
+              status: 'transferring',
+            };
+            this.emitProgress();
+          }
+        }
+      }
+
+      const endMsg: FileEndMessage = {
+        type: 'FILE_END',
+        transferId,
+        fileId,
+      };
+      await this.waitForChannelBuffer(channel);
+      channel.send(JSON.stringify(endMsg));
+
+      this.currentTransferProgress = {
+        transferId,
+        fileId,
+        fileName: file.name,
+        fileSize: file.size,
+        bytesTransferred: file.size,
+        percent: 100,
+        speedBytesPerSec: 0,
+        etaSeconds: 0,
+        direction: 'sending',
+        status: 'completed',
+      };
+      this.emitProgress();
+
+      const sentFileChat: P2PChatMessage = {
+        id: fileId,
+        text: `Đã gửi tệp: ${file.name}`,
+        senderName: 'Me',
+        timestamp: Date.now(),
+        direction: 'sent',
+        type: 'file',
+        fileMeta: {
+          name: file.name,
+          size: file.size,
+        },
+        ack: false,
+      };
+      this.chatMessages = [...this.chatMessages, sentFileChat];
+      this.saveChatHistory();
+      this.emitChatMessage(sentFileChat);
+    } catch (error) {
+      if (this.currentTransferProgress?.direction === 'sending' && this.currentTransferProgress.status === 'transferring') {
+        this.currentTransferProgress = { ...this.currentTransferProgress, status: 'failed' };
+        this.emitProgress();
+      }
+      if (channel.readyState === 'open') {
+        try { channel.send(JSON.stringify({ type: 'FILE_CANCEL', transferId: this.transferId || '', reason: 'Transfer interrupted' })); } catch { /* channel closed */ }
+      }
+      throw error;
+    } finally {
+      this.sendingFile = false;
     }
-
-    const endMsg: FileEndMessage = {
-      type: 'FILE_END',
-      transferId,
-      fileId,
-    };
-    this.dataChannel.send(JSON.stringify(endMsg));
-
-    this.currentTransferProgress = {
-      transferId,
-      fileId,
-      fileName: file.name,
-      fileSize: file.size,
-      bytesTransferred: file.size,
-      percent: 100,
-      speedBytesPerSec: 0,
-      etaSeconds: 0,
-      direction: 'sending',
-      status: 'completed',
-    };
-    this.emitProgress();
   }
 
   public sendQuickText(text: string): void {
@@ -1149,6 +1395,178 @@ export class WebRTCPeerService {
     };
     this.quickMessages = [item, ...this.quickMessages];
     this.emitQuickText(item);
+  }
+
+  public sendChatMessage(text: string, replyToId?: string): P2PChatMessage {
+    if (this.dataChannel && this.dataChannel.readyState === 'closed') {
+      throw new Error('Kênh dữ liệu WebRTC đã đóng.');
+    }
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
+      throw new Error('Kênh dữ liệu WebRTC chưa mở.');
+    }
+    text = text.trim();
+    if (!text) throw new Error('Tin nhắn không được để trống.');
+
+    const id = `msg-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`;
+    const timestamp = Date.now();
+    const packet: ChatDataMessage = {
+      type: 'CHAT_MESSAGE',
+      id,
+      text,
+      senderName: 'Me',
+      timestamp,
+      replyToId,
+    };
+    this.dataChannel.send(JSON.stringify(packet));
+    this.scheduleAckRetry(packet);
+
+    const item: P2PChatMessage = {
+      id,
+      text,
+      senderName: 'Me',
+      timestamp,
+      replyToId,
+      direction: 'sent',
+      type: 'text',
+      ack: false,
+    };
+    this.chatMessages = [...this.chatMessages, item];
+    this.saveChatHistory();
+    this.emitChatMessage(item);
+    return item;
+  }
+
+  private scheduleAckRetry(packet: ChatDataMessage) {
+    if (this.unackedRetries.has(packet.id)) return;
+    const attempt = (retries: number) => {
+      const timer = setTimeout(() => {
+        if (!this.unackedRetries.has(packet.id)) return;
+        if (this.dataChannel && this.dataChannel.readyState === 'open' && retries < 3) {
+          try {
+            this.dataChannel.send(JSON.stringify(packet));
+            attempt(retries + 1);
+          } catch {
+            this.unackedRetries.delete(packet.id);
+          }
+        } else {
+          this.unackedRetries.delete(packet.id);
+        }
+      }, 2500);
+      this.unackedRetries.set(packet.id, { packet, retries, timer });
+    };
+    attempt(0);
+  }
+
+  private clearPendingAckRetries() {
+    for (const entry of this.unackedRetries.values()) {
+      clearTimeout(entry.timer);
+    }
+    this.unackedRetries.clear();
+  }
+
+  private startHeartbeat() {
+    this.stopHeartbeat();
+    this.pingIntervalTimer = setInterval(() => {
+      if (this.dataChannel && this.dataChannel.readyState === 'open') {
+        this.sendTechnicalPing();
+      }
+    }, PING_INTERVAL_MS);
+  }
+
+  private stopHeartbeat() {
+    if (this.pingIntervalTimer) {
+      clearInterval(this.pingIntervalTimer);
+      this.pingIntervalTimer = null;
+    }
+  }
+
+  private drainPendingChatQueue() {
+    if (!this.dataChannel || this.dataChannel.readyState !== 'open') return;
+    const queue = [...this.pendingChatQueue];
+    this.pendingChatQueue = [];
+    for (const item of queue) {
+      const packet: ChatDataMessage = {
+        type: 'CHAT_MESSAGE',
+        id: item.id,
+        text: item.text,
+        senderName: 'Me',
+        timestamp: item.timestamp,
+        replyToId: item.replyToId,
+      };
+      try {
+        this.dataChannel.send(JSON.stringify(packet));
+        this.scheduleAckRetry(packet);
+        const idx = this.chatMessages.findIndex(m => m.id === item.id);
+        if (idx !== -1) {
+          this.chatMessages[idx] = { ...this.chatMessages[idx], pending: false };
+        }
+      } catch (err) {
+        this.pendingChatQueue.push(item);
+        break;
+      }
+    }
+    this.saveChatHistory();
+  }
+
+  private getStorageKey(): string {
+    const ws = this.workspaceId || 'default';
+    const peer = this.targetConnectionId || this.targetUserId || 'peer';
+    return `landrop_p2p_chat_${ws}_${peer}`;
+  }
+
+  private saveChatHistory() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const key = this.getStorageKey();
+      const toSave = this.chatMessages.slice(-100).map(m => {
+        if (m.type === 'file' && m.fileMeta?.blobUrl) {
+          return { ...m, fileMeta: { name: m.fileMeta.name, size: m.fileMeta.size } };
+        }
+        return m;
+      });
+      localStorage.setItem(key, JSON.stringify(toSave));
+    } catch { /* storage quota or error */ }
+  }
+
+  public loadChatHistory(): void {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const key = this.getStorageKey();
+      const raw = localStorage.getItem(key);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          this.chatMessages = parsed;
+          parsed.forEach(m => this.emitChatMessage(m));
+        }
+      }
+    } catch { /* parse error */ }
+  }
+
+  public sendChatTyping(isTyping: boolean): void {
+    if (this.dataChannel && this.dataChannel.readyState === 'open') {
+      try {
+        const packet: ChatTypingMessage = {
+          type: 'CHAT_TYPING',
+          isTyping,
+          senderName: 'Me',
+        };
+        this.dataChannel.send(JSON.stringify(packet));
+      } catch { /* ignore */ }
+    }
+  }
+
+  public getChatMessages(): P2PChatMessage[] {
+    return this.chatMessages;
+  }
+
+  public clearChatMessages(): void {
+    this.chatMessages = [];
+    if (typeof localStorage !== 'undefined') {
+      try {
+        localStorage.removeItem(this.getStorageKey());
+      } catch { /* ignore */ }
+    }
   }
 
   private notifyConnectionStatus(status: 'connecting' | 'connected' | 'disconnected' | 'failed' | 'closed') {
@@ -1203,6 +1621,13 @@ export class WebRTCPeerService {
   private cleanupPeerResources() {
     this.clearSignalingTimeout();
     this.clearPingTimeout();
+    this.stopHeartbeat();
+    this.clearPendingAckRetries();
+    this.handleChatTyping({ type: 'CHAT_TYPING', isTyping: false });
+    if (this.currentTransferProgress?.status === 'transferring') {
+      this.currentTransferProgress = { ...this.currentTransferProgress, status: this.state === 'CANCELLED' ? 'cancelled' : 'failed' };
+      this.emitProgress();
+    }
 
     if (this.dataChannel) {
       this.dataChannel.onopen = null;

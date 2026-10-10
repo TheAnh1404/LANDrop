@@ -13,6 +13,7 @@ import type {
   ReceivedFileItem,
   QuickTextMessage,
   OnlinePeerItem,
+  P2PChatMessage,
 } from './types';
 
 interface WebRTCContextValue {
@@ -26,6 +27,8 @@ interface WebRTCContextValue {
   transferProgress: FileTransferProgress | null;
   receivedFiles: ReceivedFileItem[];
   quickMessages: QuickTextMessage[];
+  chatMessages: P2PChatMessage[];
+  peerTyping: { isTyping: boolean; senderName: string } | null;
   onlinePeers: OnlinePeerItem[];
   requestP2P: (params: {
     workspaceId: string;
@@ -41,6 +44,9 @@ interface WebRTCContextValue {
   resetToIdle: () => void;
   sendFile: (file: File) => Promise<void>;
   sendQuickText: (text: string) => void;
+  sendChatMessage: (text: string, replyToId?: string) => P2PChatMessage;
+  sendChatTyping: (isTyping: boolean) => void;
+  clearChatMessages: () => void;
   fetchOnlinePeers: () => void;
   clearReceivedFiles: () => void;
   clearQuickMessages: () => void;
@@ -76,6 +82,8 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
   const [transferProgress, setTransferProgress] = useState<FileTransferProgress | null>(null);
   const [receivedFiles, setReceivedFiles] = useState<ReceivedFileItem[]>([]);
   const [quickMessages, setQuickMessages] = useState<QuickTextMessage[]>([]);
+  const [chatMessages, setChatMessages] = useState<P2PChatMessage[]>([]);
+  const [peerTyping, setPeerTyping] = useState<{ isTyping: boolean; senderName: string } | null>(null);
   const [onlinePeers, setOnlinePeers] = useState<OnlinePeerItem[]>([]);
 
   // Instantiate or update WebRTCPeerService bound to the single RealtimeClient
@@ -83,6 +91,10 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
     const service = new WebRTCPeerService(client);
     serviceRef.current = service;
 
+    setChatMessages([]);
+    setPeerTyping(null);
+    setReceivedFiles([]);
+    setQuickMessages([]);
     const unsubState = service.onStateChange(st => setPeerState(st));
     const unsubDiag = service.onDiagnostics(dg => setDiagnostics(dg));
     const unsubReq = service.onIncomingRequest(req => setIncomingRequest(req));
@@ -95,6 +107,12 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
       setQuickMessages(prev => [msg, ...prev]);
     });
     const unsubPeers = service.onOnlinePeers(peers => setOnlinePeers([...peers]));
+    const unsubChat = service.onChatMessage(() => {
+      setChatMessages([...service.getChatMessages()]);
+    });
+    const unsubTyping = service.onChatTyping(typing => {
+      setPeerTyping(typing.isTyping ? typing : null);
+    });
 
     return () => {
       unsubState();
@@ -105,6 +123,8 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
       unsubFile();
       unsubQuick();
       unsubPeers();
+      unsubChat();
+      unsubTyping();
       service.destroy();
       serviceRef.current = null;
     };
@@ -161,6 +181,20 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
     serviceRef.current.sendQuickText(text);
   };
 
+  const sendChatMessage = (text: string, replyToId?: string): P2PChatMessage => {
+    if (!serviceRef.current) throw new Error('WebRTC service not initialized');
+    return serviceRef.current.sendChatMessage(text, replyToId);
+  };
+
+  const sendChatTyping = (isTyping: boolean) => {
+    serviceRef.current?.sendChatTyping(isTyping);
+  };
+
+  const clearChatMessages = () => {
+    serviceRef.current?.clearChatMessages();
+    setChatMessages([]);
+  };
+
   const fetchOnlinePeers = () => {
     serviceRef.current?.fetchOnlinePeers();
   };
@@ -189,6 +223,8 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
     transferProgress,
     receivedFiles,
     quickMessages,
+    chatMessages,
+    peerTyping,
     onlinePeers,
     requestP2P,
     acceptIncomingRequest,
@@ -197,10 +233,13 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
     resetToIdle,
     sendFile,
     sendQuickText,
+    sendChatMessage,
+    sendChatTyping,
+    clearChatMessages,
     fetchOnlinePeers,
     clearReceivedFiles,
     clearQuickMessages,
-  }), [peerState, diagnostics, incomingRequest, testResult, localConnectionId, transferProgress, receivedFiles, quickMessages, onlinePeers]);
+  }), [peerState, diagnostics, incomingRequest, testResult, localConnectionId, transferProgress, receivedFiles, quickMessages, chatMessages, peerTyping, onlinePeers]);
 
   return <WebRTCContext.Provider value={value}>{children}</WebRTCContext.Provider>;
 }

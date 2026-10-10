@@ -3,963 +3,1542 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
-  <title>LANDrop - Giao Diện Người Dùng & Truyền Tệp P2P</title>
+  <title>LANDrop - P2P Web App & Realtime Chat</title>
   <style>
     :root {
-      --bg-main: #070b14;
+      --bg-body: #070b14;
+      --bg-sidebar: #0b1120;
+      --bg-chat: #090e1a;
       --bg-card: rgba(15, 23, 42, 0.75);
-      --bg-card-hover: rgba(30, 41, 59, 0.85);
+      --bg-bubble-self: linear-gradient(135deg, #0284c7, #0369a1);
+      --bg-bubble-peer: #131d31;
       --border: rgba(255, 255, 255, 0.08);
-      --border-focus: #38bdf8;
+      --border-active: rgba(56, 189, 248, 0.4);
       --text-main: #f8fafc;
       --text-muted: #94a3b8;
-      --accent-primary: #0284c7;
-      --accent-hover: #0369a1;
+      --text-dim: #64748b;
+      --accent-cyan: #06b6d4;
       --accent-sky: #38bdf8;
-      --accent-success: #10b981;
-      --accent-danger: #ef4444;
-      --accent-warning: #f59e0b;
-      --accent-violet: #8b5cf6;
+      --accent-emerald: #10b981;
+      --accent-rose: #f43f5e;
+      --accent-amber: #f59e0b;
       --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
+
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
     body {
-      background-color: var(--bg-main);
-      background-image: 
-        radial-gradient(ellipse at 50% -20%, rgba(56, 189, 248, 0.15), transparent 70%),
-        radial-gradient(ellipse at 80% 100%, rgba(139, 92, 246, 0.1), transparent 60%);
-      background-attachment: fixed;
+      background-color: var(--bg-body);
       color: var(--text-main);
       font-family: var(--font-family);
       line-height: 1.5;
-      min-height: 100vh;
+      height: 100vh;
+      height: 100dvh;
+      overflow: hidden;
       display: flex;
       flex-direction: column;
+      user-select: none;
     }
-    header {
-      background-color: rgba(11, 17, 32, 0.85);
+
+    /* ========================================================================= */
+    /* 1. APP TOP BAR / HEADER                                                   */
+    /* ========================================================================= */
+    header.app-header {
+      height: 56px;
+      min-height: 56px;
+      background: rgba(11, 17, 32, 0.95);
       backdrop-filter: blur(16px);
       -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--border);
-      padding: 0.85rem 1.25rem;
+      padding: 0 1rem;
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      position: sticky;
-      top: 0;
+      justify-content: space-between;
       z-index: 50;
     }
-    .logo-container {
+
+    .brand-section {
       display: flex;
       align-items: center;
       gap: 0.75rem;
-      text-decoration: none;
-      color: inherit;
     }
-    .brand-mark {
-      width: 36px;
-      height: 36px;
-      background: linear-gradient(135deg, #0284c7, #38bdf8);
-      color: white;
-      font-weight: 800;
-      font-size: 1.25rem;
+
+    .brand-logo {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #0284c7, #06b6d4);
       display: flex;
       align-items: center;
       justify-content: center;
-      border-radius: 10px;
-      box-shadow: 0 0 15px rgba(56, 189, 248, 0.35);
+      font-weight: 900;
+      font-size: 1.15rem;
+      color: white;
+      box-shadow: 0 0 16px rgba(6, 182, 212, 0.35);
     }
+
     .brand-title {
-      font-size: 1.25rem;
-      font-weight: 700;
+      font-size: 1.15rem;
+      font-weight: 800;
       letter-spacing: -0.02em;
-    }
-    .brand-period { color: var(--accent-sky); }
-    .header-actions {
       display: flex;
       align-items: center;
-      gap: 0.75rem;
+      gap: 0.4rem;
     }
-    .status-pill {
-      display: inline-flex;
+
+    .brand-title span.badge {
+      font-size: 0.65rem;
+      font-weight: 700;
+      padding: 0.15rem 0.45rem;
+      border-radius: 9999px;
+      background: rgba(6, 182, 212, 0.15);
+      color: var(--accent-cyan);
+      border: 1px solid rgba(6, 182, 212, 0.3);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .header-user-status {
+      display: flex;
+      align-items: center;
+      gap: 0.6rem;
+    }
+
+    .device-pill {
+      display: flex;
       align-items: center;
       gap: 0.45rem;
       padding: 0.3rem 0.75rem;
       border-radius: 9999px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--border);
       font-size: 0.8rem;
-      font-weight: 600;
-      background: rgba(16, 185, 129, 0.12);
-      color: var(--accent-success);
-      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.15s;
     }
+
+    .device-pill:hover {
+      border-color: var(--border-active);
+      color: var(--text-main);
+    }
+
     .status-dot {
       width: 8px;
       height: 8px;
       border-radius: 50%;
-      background: var(--accent-success);
-      box-shadow: 0 0 8px var(--accent-success);
+      background: var(--accent-emerald);
+      box-shadow: 0 0 8px var(--accent-emerald);
     }
+
     .status-dot.connecting {
-      background: var(--accent-warning);
-      box-shadow: 0 0 8px var(--accent-warning);
+      background: var(--accent-amber);
+      box-shadow: 0 0 8px var(--accent-amber);
     }
+
     .status-dot.offline {
-      background: var(--accent-danger);
-      box-shadow: 0 0 8px var(--accent-danger);
+      background: var(--accent-rose);
+      box-shadow: 0 0 8px var(--accent-rose);
     }
-    .main-container {
+
+    /* ========================================================================= */
+    /* 2. MAIN WEB APP WORKSPACE (DUAL-PANE)                                     */
+    /* ========================================================================= */
+    .app-workspace {
       flex: 1;
-      max-width: 960px;
-      width: 100%;
-      margin: 0 auto;
-      padding: 1.25rem 1rem 3rem 1rem;
       display: flex;
-      flex-direction: column;
-      gap: 1.5rem;
-    }
-    .card {
-      background: var(--bg-card);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border: 1px solid var(--border);
-      border-radius: 16px;
-      padding: 1.25rem;
-      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
-      position: relative;
+      height: calc(100vh - 56px);
+      height: calc(100dvh - 56px);
       overflow: hidden;
-    }
-    .card-glow {
-      border-color: rgba(56, 189, 248, 0.3);
-      background: linear-gradient(135deg, rgba(2, 132, 199, 0.1), rgba(15, 23, 42, 0.85));
-    }
-    .btn {
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-      padding: 0.65rem 1.25rem;
-      font-size: 0.95rem;
-      font-weight: 600;
-      border-radius: 10px;
-      border: none;
-      cursor: pointer;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-      user-select: none;
-      text-decoration: none;
-    }
-    .btn:active { transform: scale(0.97); }
-    .btn-primary {
-      background: linear-gradient(135deg, #0284c7, #0284c7 50%, #38bdf8);
-      color: white;
-      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
-    }
-    .btn-primary:hover {
-      background: linear-gradient(135deg, #0369a1, #0284c7 50%, #0ea5e9);
-      box-shadow: 0 6px 20px rgba(2, 132, 199, 0.5);
-    }
-    .btn-secondary {
-      background: rgba(30, 41, 59, 0.7);
-      color: var(--text-main);
-      border: 1px solid var(--border);
-    }
-    .btn-secondary:hover {
-      background: rgba(51, 65, 85, 0.9);
-      border-color: rgba(255, 255, 255, 0.15);
-    }
-    .btn-success {
-      background: linear-gradient(135deg, #059669, #10b981);
-      color: white;
-      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
-    }
-    .btn-danger {
-      background: linear-gradient(135deg, #dc2626, #ef4444);
-      color: white;
-    }
-    .btn-sm {
-      padding: 0.4rem 0.8rem;
-      font-size: 0.825rem;
-      border-radius: 8px;
-    }
-    .btn-lg {
-      padding: 0.85rem 1.5rem;
-      font-size: 1.05rem;
-      border-radius: 12px;
-      width: 100%;
-    }
-    .form-group {
-      margin-bottom: 1.1rem;
-    }
-    .form-group label {
-      display: block;
-      font-size: 0.85rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      margin-bottom: 0.45rem;
-    }
-    .form-input {
-      width: 100%;
-      padding: 0.75rem 1rem;
-      background: rgba(11, 17, 32, 0.8);
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      color: var(--text-main);
-      font-size: 0.95rem;
-      font-family: inherit;
-      outline: none;
-      transition: border-color 0.15s, box-shadow 0.15s;
-    }
-    .form-input:focus {
-      border-color: var(--border-focus);
-      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
-    }
-    .tabs-nav {
-      display: flex;
-      background: rgba(11, 17, 32, 0.9);
-      padding: 0.3rem;
-      border-radius: 12px;
-      border: 1px solid var(--border);
-      gap: 0.25rem;
-      overflow-x: auto;
-      scrollbar-width: none;
-    }
-    .tabs-nav::-webkit-scrollbar { display: none; }
-    .tab-btn {
-      flex: 1;
-      min-width: 110px;
-      background: none;
-      border: none;
-      color: var(--text-muted);
-      font-size: 0.9rem;
-      font-weight: 600;
-      padding: 0.6rem 0.85rem;
-      cursor: pointer;
-      border-radius: 9px;
-      transition: all 0.15s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.4rem;
-      white-space: nowrap;
-    }
-    .tab-btn.active {
-      color: var(--text-main);
-      background: rgba(30, 41, 59, 0.9);
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    }
-    .tab-pane { display: none; animation: fadeIn 0.2s ease-in-out; }
-    .tab-pane.active { display: block; }
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(4px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .radar-box {
-      position: relative;
-      background: radial-gradient(circle at center, rgba(56, 189, 248, 0.08) 0%, rgba(15, 23, 42, 0.6) 70%);
-      border: 1px dashed rgba(56, 189, 248, 0.25);
-      border-radius: 16px;
-      padding: 1.5rem;
-      text-align: center;
-      min-height: 220px;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      align-items: center;
-      overflow: hidden;
-    }
-    .radar-pulse {
-      position: absolute;
-      width: 140px;
-      height: 140px;
-      border-radius: 50%;
-      border: 2px solid rgba(56, 189, 248, 0.4);
-      animation: pulse 2.5s infinite;
-      pointer-events: none;
-    }
-    @keyframes pulse {
-      0% { transform: scale(0.6); opacity: 0.9; }
-      100% { transform: scale(2.8); opacity: 0; }
-    }
-    .peers-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-      gap: 1rem;
-      width: 100%;
-      margin-top: 1rem;
-      z-index: 2;
-    }
-    .peer-card {
-      background: rgba(17, 24, 39, 0.85);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1rem;
-      text-align: left;
-      cursor: pointer;
-      transition: all 0.2s;
       position: relative;
     }
-    .peer-card:hover {
-      border-color: var(--accent-sky);
-      transform: translateY(-2px);
-      box-shadow: 0 6px 16px rgba(56, 189, 248, 0.15);
-    }
-    .peer-card.selected {
-      border-color: var(--accent-sky);
-      background: rgba(2, 132, 199, 0.15);
-      box-shadow: 0 0 0 2px var(--accent-sky);
-    }
-    .dropzone {
-      border: 2px dashed rgba(56, 189, 248, 0.35);
-      border-radius: 16px;
-      padding: 2.5rem 1.5rem;
-      text-align: center;
-      background: rgba(11, 17, 32, 0.4);
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    .dropzone.dragover {
-      border-color: var(--accent-sky);
-      background: rgba(2, 132, 199, 0.15);
-      transform: scale(1.01);
-    }
-    .progress-bar-container {
-      width: 100%;
-      height: 12px;
-      background: rgba(30, 41, 59, 0.8);
-      border-radius: 9999px;
-      overflow: hidden;
-      margin: 1rem 0;
-      border: 1px solid var(--border);
-    }
-    .progress-bar-fill {
-      height: 100%;
-      width: 0%;
-      background: linear-gradient(90deg, #0284c7, #38bdf8, #10b981);
-      transition: width 0.1s linear;
-      border-radius: 9999px;
-    }
-    .metrics-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 0.75rem;
-      margin-top: 1rem;
-      text-align: center;
-    }
-    .metric-cell {
-      background: rgba(11, 17, 32, 0.6);
-      padding: 0.65rem 0.5rem;
-      border-radius: 10px;
-      border: 1px solid var(--border);
-    }
-    .metric-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; }
-    .metric-value { font-size: 1.05rem; font-weight: 700; color: var(--text-main); font-variant-numeric: tabular-nums; }
-    .received-list {
+
+    /* --- LEFT SIDEBAR (DEVICE & CONVERSATIONS LIST) --- */
+    aside.sidebar {
+      width: 340px;
+      min-width: 320px;
+      max-width: 380px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border);
       display: flex;
       flex-direction: column;
-      gap: 0.75rem;
-      margin-top: 1rem;
+      z-index: 20;
+      transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
     }
-    .received-item {
+
+    .sidebar-header {
+      padding: 0.85rem 1rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+    }
+
+    .sidebar-title-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 0.85rem 1rem;
-      background: rgba(11, 17, 32, 0.7);
+    }
+
+    .sidebar-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      gap: 0.4rem;
+    }
+
+    .btn-icon {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 0.35rem;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.15s;
+    }
+
+    .btn-icon:hover {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+    }
+
+    .search-box {
+      position: relative;
+      width: 100%;
+    }
+
+    .search-box input {
+      width: 100%;
+      background: rgba(15, 23, 42, 0.6);
       border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 0.5rem 0.75rem 0.5rem 2rem;
+      font-size: 0.85rem;
+      color: var(--text-main);
+      outline: none;
+      transition: border-color 0.15s;
+    }
+
+    .search-box input:focus {
+      border-color: var(--accent-sky);
+    }
+
+    .search-box svg {
+      position: absolute;
+      left: 0.65rem;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 14px;
+      height: 14px;
+      color: var(--text-dim);
+    }
+
+    .peer-list-container {
+      flex: 1;
+      overflow-y: auto;
+      padding: 0.5rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+    }
+
+    .peer-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      padding: 0.65rem 0.85rem;
       border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      position: relative;
+      border: 1px solid transparent;
+    }
+
+    .peer-item:hover {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .peer-item.active {
+      background: rgba(6, 182, 212, 0.12);
+      border-color: rgba(6, 182, 212, 0.3);
+    }
+
+    .peer-avatar {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: #1e293b;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.25rem;
+      position: relative;
+      shrink: 0;
+    }
+
+    .peer-avatar .online-badge {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--accent-emerald);
+      position: absolute;
+      bottom: -1px;
+      right: -1px;
+      border: 2px solid var(--bg-sidebar);
+    }
+
+    .peer-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .peer-name-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 0.5rem;
+    }
+
+    .peer-name {
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: var(--text-main);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .peer-time {
+      font-size: 0.72rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+
+    .peer-snippet {
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      margin-top: 0.15rem;
+    }
+
+    .unread-counter {
+      padding: 0.1rem 0.45rem;
+      border-radius: 9999px;
+      background: var(--accent-cyan);
+      color: #082f49;
+      font-weight: 800;
+      font-size: 0.7rem;
+    }
+
+    .empty-peers {
+      text-align: center;
+      padding: 3rem 1.5rem;
+      color: var(--text-muted);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
       gap: 0.75rem;
     }
-    .modal-overlay {
+
+    .empty-peers .radar-ring {
+      width: 56px;
+      height: 56px;
+      border-radius: 50%;
+      border: 2px solid var(--border-active);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      animation: pulseRadar 2s infinite;
+    }
+
+    @keyframes pulseRadar {
+      0% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0.4); }
+      70% { box-shadow: 0 0 0 16px rgba(6, 182, 212, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(6, 182, 212, 0); }
+    }
+
+    /* --- CENTER MAIN CONVERSATION PANE --- */
+    main.chat-pane {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-chat);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .chat-header {
+      height: 56px;
+      min-height: 56px;
+      background: rgba(11, 17, 32, 0.85);
+      backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 0 1.25rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 10;
+    }
+
+    .chat-header-info {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      min-width: 0;
+    }
+
+    .back-btn-mobile {
+      display: none;
+      background: none;
+      border: none;
+      color: var(--text-main);
+      cursor: pointer;
+      padding: 0.4rem;
+      border-radius: 8px;
+    }
+
+    .chat-peer-title {
+      font-size: 0.95rem;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .chat-peer-status {
+      font-size: 0.75rem;
+      color: var(--accent-emerald);
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+    }
+
+    .chat-header-actions {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    /* --- CHAT TIMELINE STREAM --- */
+    .chat-timeline {
+      flex: 1;
+      overflow-y: auto;
+      padding: 1.25rem 1.25rem 0.5rem 1.25rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.85rem;
+    }
+
+    .date-divider {
+      text-align: center;
+      margin: 0.75rem 0;
+      position: relative;
+    }
+
+    .date-divider span {
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--border);
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.72rem;
+      color: var(--text-dim);
+    }
+
+    .msg-group {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      max-width: 78%;
+      animation: msgPop 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+
+    @keyframes msgPop {
+      0% { opacity: 0; transform: translateY(6px); }
+      100% { opacity: 1; transform: translateY(0); }
+    }
+
+    .msg-group.self {
+      align-self: flex-end;
+      align-items: flex-end;
+    }
+
+    .msg-group.peer {
+      align-self: flex-start;
+      align-items: flex-start;
+    }
+
+    .msg-bubble {
+      padding: 0.65rem 0.95rem;
+      border-radius: 16px;
+      font-size: 0.9rem;
+      line-height: 1.45;
+      word-break: break-word;
+      user-select: text;
+      position: relative;
+    }
+
+    .msg-group.self .msg-bubble {
+      background: var(--bg-bubble-self);
+      color: #ffffff;
+      border-bottom-right-radius: 4px;
+      box-shadow: 0 2px 8px rgba(2, 132, 199, 0.25);
+    }
+
+    .msg-group.peer .msg-bubble {
+      background: var(--bg-bubble-peer);
+      color: var(--text-main);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+
+    .msg-meta {
+      display: flex;
+      align-items: center;
+      gap: 0.35rem;
+      font-size: 0.68rem;
+      color: rgba(255, 255, 255, 0.6);
+      margin-top: 0.25rem;
+      float: right;
+      margin-left: 0.5rem;
+    }
+
+    .msg-group.peer .msg-meta {
+      color: var(--text-dim);
+    }
+
+    .ack-tick {
+      font-size: 0.75rem;
+      color: rgba(255, 255, 255, 0.85);
+    }
+
+    /* INLINE FILE TRANSFER CARD */
+    .inline-file-card {
+      display: flex;
+      flex-direction: column;
+      gap: 0.65rem;
+      background: rgba(11, 17, 32, 0.6);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 0.75rem 0.9rem;
+      min-width: 240px;
+      max-width: 320px;
+    }
+
+    .inline-file-header {
+      display: flex;
+      align-items: center;
+      gap: 0.65rem;
+    }
+
+    .inline-file-icon {
+      font-size: 1.8rem;
+      shrink: 0;
+    }
+
+    .inline-file-details {
+      min-width: 0;
+      flex: 1;
+    }
+
+    .inline-file-name {
+      font-weight: 700;
+      font-size: 0.85rem;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      color: var(--text-main);
+    }
+
+    .inline-file-size {
+      font-size: 0.72rem;
+      color: var(--text-muted);
+    }
+
+    .file-progress-track {
+      height: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 9999px;
+      overflow: hidden;
+    }
+
+    .file-progress-bar {
+      height: 100%;
+      background: linear-gradient(90deg, var(--accent-cyan), var(--accent-emerald));
+      width: 0%;
+      transition: width 0.15s ease;
+    }
+
+    .file-metrics-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.7rem;
+      color: var(--text-muted);
+    }
+
+    .btn-download-file {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.35rem;
+      background: linear-gradient(135deg, var(--accent-emerald), #059669);
+      color: #ffffff;
+      padding: 0.4rem 0.75rem;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 0.8rem;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    /* TYPING INDICATOR */
+    .typing-bubble {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.3rem;
+      background: var(--bg-bubble-peer);
+      padding: 0.5rem 0.85rem;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+
+    .typing-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent-cyan);
+      animation: bounceDot 1.4s infinite ease-in-out both;
+    }
+
+    .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+    .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+
+    @keyframes bounceDot {
+      0%, 80%, 100% { transform: scale(0); opacity: 0.4; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+
+    /* --- CHAT COMPOSER (INPUT ROW) --- */
+    .chat-composer-container {
+      padding: 0.75rem 1.25rem 1rem 1.25rem;
+      background: rgba(11, 17, 32, 0.95);
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: flex-end;
+      gap: 0.65rem;
+      position: relative;
+    }
+
+    .composer-input-wrapper {
+      flex: 1;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      display: flex;
+      align-items: flex-end;
+      padding: 0.45rem 0.85rem;
+      gap: 0.5rem;
+      transition: border-color 0.15s;
+    }
+
+    .composer-input-wrapper:focus-within {
+      border-color: var(--accent-sky);
+      box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.15);
+    }
+
+    .composer-input-wrapper textarea {
+      flex: 1;
+      background: none;
+      border: none;
+      outline: none;
+      color: var(--text-main);
+      font-family: inherit;
+      font-size: 0.92rem;
+      line-height: 1.4;
+      resize: none;
+      max-height: 120px;
+      min-height: 24px;
+      padding: 0.2rem 0;
+    }
+
+    .btn-composer-action {
+      background: none;
+      border: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      padding: 0.4rem;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: color 0.15s;
+    }
+
+    .btn-composer-action:hover {
+      color: var(--accent-sky);
+    }
+
+    .btn-send {
+      width: 40px;
+      height: 40px;
+      border-radius: 12px;
+      background: linear-gradient(135deg, #0284c7, #06b6d4);
+      color: #ffffff;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(6, 182, 212, 0.35);
+      transition: transform 0.15s, opacity 0.15s;
+      shrink: 0;
+    }
+
+    .btn-send:active {
+      transform: scale(0.94);
+    }
+
+    .btn-send:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      box-shadow: none;
+    }
+
+    /* EMPTY CONVERSATION STATE */
+    .empty-conversation {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      text-align: center;
+      color: var(--text-muted);
+      gap: 1rem;
+    }
+
+    .empty-conversation .hero-icon {
+      width: 72px;
+      height: 72px;
+      border-radius: 20px;
+      background: rgba(6, 182, 212, 0.1);
+      border: 1px solid rgba(6, 182, 212, 0.25);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 2.2rem;
+    }
+
+    /* DRAG OVERLAY */
+    .drop-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(6, 182, 212, 0.15);
+      backdrop-filter: blur(8px);
+      border: 3px dashed var(--accent-cyan);
+      z-index: 100;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-main);
+      font-weight: 700;
+      font-size: 1.1rem;
+      pointer-events: none;
+    }
+
+    /* ========================================================================= */
+    /* 3. MODALS (AUTH & INCOMING REQUEST)                                       */
+    /* ========================================================================= */
+    .modal-backdrop {
       position: fixed;
       top: 0; left: 0; right: 0; bottom: 0;
       background: rgba(0, 0, 0, 0.75);
       backdrop-filter: blur(8px);
-      -webkit-backdrop-filter: blur(8px);
-      display: none;
+      display: flex;
       align-items: center;
       justify-content: center;
-      z-index: 100;
+      z-index: 200;
       padding: 1rem;
     }
-    .modal-content {
+
+    .modal-window {
       background: #0f172a;
-      border: 1px solid rgba(56, 189, 248, 0.3);
-      border-radius: 20px;
-      max-width: 440px;
+      border: 1px solid var(--border-active);
+      border-radius: 18px;
+      padding: 1.5rem;
       width: 100%;
-      padding: 1.75rem;
-      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
-      animation: modalSlide 0.25s ease-out;
+      max-width: 400px;
+      box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
+      animation: modalScale 0.2s cubic-bezier(0.16, 1, 0.3, 1);
     }
-    @keyframes modalSlide {
-      from { transform: scale(0.95) translateY(10px); opacity: 0; }
-      to { transform: scale(1) translateY(0); opacity: 1; }
+
+    @keyframes modalScale {
+      0% { opacity: 0; transform: scale(0.95); }
+      100% { opacity: 1; transform: scale(1); }
     }
-    .alert {
-      padding: 0.75rem 1rem;
-      border-radius: 10px;
-      font-size: 0.9rem;
-      margin-bottom: 1rem;
-      display: none;
-    }
-    .alert-success { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
-    .alert-error { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
-    @media (max-width: 640px) {
-      .header-actions .conn-id-badge { display: none; }
-      .metrics-grid { grid-template-columns: 1fr 1fr; }
-      .metrics-grid .metric-cell:last-child { grid-column: span 2; }
+
+    /* ========================================================================= */
+    /* 4. RESPONSIVE MOBILE WEB ADAPTATIONS                                      */
+    /* ========================================================================= */
+    @media (max-width: 768px) {
+      aside.sidebar {
+        width: 100%;
+        max-width: 100%;
+        position: absolute;
+        top: 0; left: 0; bottom: 0;
+        transform: translateX(0);
+      }
+
+      aside.sidebar.hidden-mobile {
+        transform: translateX(-100%);
+      }
+
+      main.chat-pane {
+        width: 100%;
+        position: absolute;
+        top: 0; left: 0; bottom: 0;
+        transform: translateX(100%);
+        transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      }
+
+      main.chat-pane.visible-mobile {
+        transform: translateX(0);
+      }
+
+      .back-btn-mobile {
+        display: flex;
+      }
     }
   </style>
 </head>
 <body>
 
-  <!-- HEADER -->
-  <header>
-    <a href="/" class="logo-container">
-      <div class="brand-mark">L</div>
-      <div class="brand-title">LANDrop<span class="brand-period">.</span></div>
-    </a>
-    <div class="header-actions">
-      <div class="status-pill" id="header-status">
-        <span class="status-dot" id="status-dot"></span>
-        <span id="header-status-text">Đang kết nối...</span>
+  <!-- ========================================================================= -->
+  <!-- 1. TOP BAR                                                                -->
+  <!-- ========================================================================= -->
+  <header class="app-header">
+    <div class="brand-section">
+      <div class="brand-logo">L</div>
+      <div class="brand-title">
+        LANDrop
+        <span class="badge">P2P Realtime</span>
       </div>
-      <div id="user-pill" style="display: none; align-items: center; gap: 0.65rem;">
-        <span id="user-display-name" style="font-weight: 600; font-size: 0.85rem; color: var(--accent-sky);"></span>
-        <button class="btn btn-secondary btn-sm" onclick="handleLogout()">Đăng xuất</button>
+    </div>
+
+    <div class="header-user-status">
+      <div id="device-pill" class="device-pill" onclick="showConnectionInfoModal()" title="Nhấn để xem thông tin kết nối">
+        <span id="header-status-dot" class="status-dot connecting"></span>
+        <span id="header-device-name">Đang nhận diện...</span>
       </div>
+
+      <button id="btn-scan-radar" class="btn-icon" onclick="refreshPeers()" title="Quét thiết bị LAN">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/>
+        </svg>
+      </button>
+
+      <button class="btn-icon" onclick="showQrModal()" title="Thông tin chia sẻ">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <rect x="3" y="3" width="7" height="7"/>
+          <rect x="14" y="3" width="7" height="7"/>
+          <rect x="14" y="14" width="7" height="7"/>
+          <rect x="3" y="14" width="7" height="7"/>
+        </svg>
+      </button>
     </div>
   </header>
 
-  <div class="main-container">
-
-    <!-- PHẦN 1: ĐĂNG NHẬP / ĐĂNG KÝ (HIỆN KHI CHƯA AUTH) -->
-    <div id="auth-section" class="card" style="max-width: 440px; margin: 1.5rem auto; width: 100%;">
-      <div class="tabs-nav" style="margin-bottom: 1.25rem;">
-        <button class="tab-btn active" id="tab-login-btn" onclick="switchAuthTab('login')">Đăng Nhập</button>
-        <button class="tab-btn" id="tab-register-btn" onclick="switchAuthTab('register')">Tạo Tài Khoản</button>
+  <!-- WORKSPACE MEMBERS MODAL -->
+  <div id="workspace-members-modal" class="modal-backdrop" style="display: none;">
+    <div class="modal-window" style="max-width: 460px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+        <h3 style="font-size: 1.1rem; font-weight: 800;" id="workspace-modal-title">Thành Viên Nhóm</h3>
+        <button class="btn-icon" onclick="closeWorkspaceMembersModal()">✕</button>
       </div>
 
-      <div id="auth-alert" class="alert"></div>
+      <div style="margin-bottom: 0.85rem;">
+        <span style="color: var(--text-dim); font-size: 0.72rem; text-transform: uppercase;">Nhóm hiện tại:</span>
+        <div id="workspace-modal-name" style="font-weight: 700; color: var(--accent-cyan); font-size: 0.95rem;"></div>
+      </div>
 
-      <!-- Form Login -->
-      <form id="form-login" class="tab-pane active" onsubmit="submitLogin(event)">
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
-          Đăng nhập vào không gian làm việc LANDrop trên máy chủ nội bộ.
-        </p>
-        <div class="form-group">
-          <label>Tên đăng nhập hoặc Email</label>
-          <input type="text" id="login-identifier" class="form-input" placeholder="ví dụ: theanh" required autocomplete="username">
+      <!-- Current Members Section -->
+      <div style="margin-bottom: 1rem;">
+        <span style="color: var(--text-dim); font-size: 0.72rem; text-transform: uppercase; display: block; margin-bottom: 0.35rem;">Thành viên trong nhóm:</span>
+        <div id="workspace-members-list" style="max-height: 120px; overflow-y: auto; background: rgba(11, 17, 32, 0.6); border: 1px solid var(--border); border-radius: 10px; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem;">
+          <div style="color: var(--text-muted); font-size: 0.8rem;">Đang tải danh sách...</div>
         </div>
-        <div class="form-group">
-          <label>Mật khẩu</label>
-          <input type="password" id="login-password" class="form-input" placeholder="••••••••" required autocomplete="current-password">
-        </div>
-        <button type="submit" class="btn btn-primary btn-lg" id="btn-login-submit">
-          Đăng Nhập Vào Hệ Thống &rarr;
-        </button>
-      </form>
+      </div>
 
-      <!-- Form Register -->
-      <form id="form-register" class="tab-pane" onsubmit="submitRegister(event)">
-        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
-          Tạo tài khoản để gửi tệp tin và cộng tác với các thiết bị khác trong mạng LAN.
-        </p>
-        <div class="form-group">
-          <label>Họ và tên</label>
-          <input type="text" id="reg-name" class="form-input" placeholder="ví dụ: Nguyễn Thế Anh" required autocomplete="name">
+      <!-- Add LAN Peers to Workspace -->
+      <div style="margin-bottom: 1rem;">
+        <span style="color: var(--text-dim); font-size: 0.72rem; text-transform: uppercase; display: block; margin-bottom: 0.35rem;">Thiết bị LAN chưa trong nhóm:</span>
+        <div id="workspace-available-peers-list" style="max-height: 120px; overflow-y: auto; background: rgba(11, 17, 32, 0.6); border: 1px solid var(--border); border-radius: 10px; padding: 0.5rem; display: flex; flex-direction: column; gap: 0.4rem;">
+          <div style="color: var(--text-muted); font-size: 0.8rem;">Chưa có thiết bị ngoài nhóm.</div>
         </div>
-        <div class="form-group">
-          <label>Tên đăng nhập (viết liền không dấu)</label>
-          <input type="text" id="reg-username" class="form-input" placeholder="ví dụ: theanh" pattern="[A-Za-z0-9_-]{3,30}" required autocomplete="username">
-        </div>
-        <div class="form-group">
-          <label>Email</label>
-          <input type="email" id="reg-email" class="form-input" placeholder="theanh@lan.local" required autocomplete="email">
-        </div>
-        <div class="form-group">
-          <label>Mật khẩu (ít nhất 8 ký tự)</label>
-          <input type="password" id="reg-password" class="form-input" placeholder="••••••••" minlength="8" required autocomplete="new-password">
-        </div>
-        <button type="submit" class="btn btn-primary btn-lg" id="btn-reg-submit">
-          Tạo Tài Khoản & Bắt Đầu &rarr;
-        </button>
-      </form>
+      </div>
+
+      <!-- Manual Invite by Email / Username -->
+      <div>
+        <span style="color: var(--text-dim); font-size: 0.72rem; text-transform: uppercase; display: block; margin-bottom: 0.35rem;">Thêm bằng Email hoặc Username:</span>
+        <form onsubmit="handleInviteMemberForm(event)" style="display: flex; gap: 0.5rem;">
+          <input id="workspace-invite-input" placeholder="user@company.vn hoặc username" style="flex: 1; padding: 0.45rem 0.65rem; border-radius: 8px; background: rgba(15, 23, 42, 0.8); border: 1px solid var(--border); color: white; font-size: 0.82rem;">
+          <button type="submit" class="btn-download-file" style="padding: 0.45rem 0.8rem;">Thêm</button>
+        </form>
+        <p id="workspace-invite-feedback" style="font-size: 0.75rem; color: var(--accent-rose); margin-top: 0.35rem;"></p>
+      </div>
+
+      <button onclick="closeWorkspaceMembersModal()" style="width: 100%; margin-top: 1rem; padding: 0.6rem; border-radius: 10px; background: rgba(255, 255, 255, 0.08); color: white; border: none; font-weight: 600; cursor: pointer;">
+        Đóng
+      </button>
     </div>
+  </div>
 
-    <!-- PHẦN 2: GIAO DIỆN CHÍNH (KHI ĐÃ ĐĂNG NHẬP) -->
-    <div id="app-section" style="display: none; flex-direction: column; gap: 1.25rem;">
+  <div id="auth-modal" class="modal-backdrop" style="display: none;">
+    <form class="modal-window" onsubmit="submitAuthentication(event)">
+      <h2 id="auth-title">Đăng nhập LANDrop</h2>
+      <p style="color: var(--text-muted); margin: 0.75rem 0;">Đăng nhập để chia sẻ với các thành viên trong nhóm của bạn.</p>
+      <label for="login-identifier">Tên tài khoản hoặc email</label>
+      <input id="login-identifier" autocomplete="username" required style="width: 100%; padding: 0.65rem; margin: 0.4rem 0 0.8rem;">
+      <div id="register-fields" hidden>
+        <label for="register-email">Email</label>
+        <input id="register-email" type="email" autocomplete="email" style="width: 100%; padding: 0.65rem; margin: 0.4rem 0 0.8rem;">
+        <label for="register-name">Tên hiển thị</label>
+        <input id="register-name" autocomplete="name" style="width: 100%; padding: 0.65rem; margin: 0.4rem 0 0.8rem;">
+      </div>
+      <label for="login-password">Mật khẩu</label>
+      <input id="login-password" type="password" autocomplete="current-password" required style="width: 100%; padding: 0.65rem; margin: 0.4rem 0 0.8rem;">
+      <p id="auth-error" role="alert" style="color: var(--accent-rose);"></p>
+      <button id="auth-submit" class="btn-download-file" type="submit" style="width: 100%; margin-top: 0.8rem;">Đăng nhập</button>
+      <button id="auth-switch" class="btn-download-file" type="button" onclick="toggleRegistration()" style="width: 100%; margin-top: 0.5rem;">Tạo tài khoản mới</button>
+    </form>
+  </div>
 
-      <!-- BANNER THÔNG TIN THIẾT BỊ CỦA BẠN -->
-      <div class="card card-glow">
-        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
-          <div>
-            <div style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent-sky); font-weight: 700; margin-bottom: 0.2rem;">
-              THIẾT BỊ HIỆN TẠI CỦA BẠN
-            </div>
-            <h2 style="font-size: 1.25rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem;">
-              <span id="my-device-icon">💻</span>
-              <span id="my-device-name">Đang nhận diện...</span>
-            </h2>
-            <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.2rem;">
-              Tài khoản: <strong id="welcome-username" style="color: var(--text-main);"></strong>
-            </div>
+  <!-- ========================================================================= -->
+  <!-- 2. MAIN DUAL-PANE WORKSPACE                                              -->
+  <!-- ========================================================================= -->
+  <div class="app-workspace">
+
+    <!-- --- LEFT SIDEBAR (DEVICE & CONVERSATION LIST) --- -->
+    <aside id="sidebar-pane" class="sidebar">
+      <div style="padding: 0.8rem 1rem; border-bottom: 1px solid var(--border);">
+        <label for="workspace-select" style="font-size: 0.8rem;">Nhóm làm việc</label>
+        <select id="workspace-select" onchange="changeWorkspace()" style="width: 100%; padding: 0.5rem; margin-top: 0.4rem;"></select>
+        <div style="display: flex; gap: 0.75rem; margin-top: 0.5rem;">
+          <button class="btn-download-file" onclick="createWorkspace()">Tạo nhóm</button>
+          <button class="btn-download-file" id="btn-workspace-members" onclick="openWorkspaceMembersModal()" title="Xem và quản lý thành viên nhóm">👥 Thành viên</button>
+          <button class="btn-download-file" onclick="logoutClient()">Đăng xuất</button>
+        </div>
+        <p id="client-feedback" role="status" style="font-size: 0.75rem; color: var(--text-muted); margin-top: 0.5rem;"></p>
+      </div>
+      <div class="sidebar-header">
+        <div class="sidebar-title-row">
+          <div class="sidebar-title">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M5 12.55a11 11 0 0 1 14.08 0M1.42 9a16 16 0 0 1 21.16 0M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01"/>
+            </svg>
+            <span>Thiết Bị LAN (<span id="sidebar-peer-count">0</span>)</span>
           </div>
-          <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem;">
-            <div style="font-size: 0.75rem; color: var(--text-muted);">MÃ KẾT NỐI (CONNECTION ID):</div>
-            <div style="display: flex; align-items: center; gap: 0.5rem;">
-              <code id="my-conn-badge" style="background: rgba(0,0,0,0.4); padding: 0.35rem 0.75rem; border-radius: 8px; font-family: monospace; font-size: 0.85rem; border: 1px solid var(--border); color: #38bdf8;">
-                Đang cấp mã...
-              </code>
-              <button class="btn btn-secondary btn-sm" onclick="copyMyConnId()" title="Sao chép ID">📋</button>
-            </div>
-          </div>
+          <button class="btn-icon" onclick="refreshPeers()" title="Quét lại mạng">
+            <svg id="radar-spin-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M23 4v6h-6M1 20v-6h6"/>
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+            </svg>
+          </button>
+        </div>
+
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="11" cy="11" r="8"/>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+          </svg>
+          <input type="text" id="peer-search-input" placeholder="Tìm thiết bị hoặc người dùng..." oninput="handlePeerSearch(this.value)">
         </div>
       </div>
 
-      <!-- MAIN APP TABS -->
-      <div class="tabs-nav">
-        <button class="tab-btn active" id="btn-tab-radar" onclick="switchAppTab('radar')">
-          <span>📡</span> Thiết Bị Lân Cận
-        </button>
-        <button class="tab-btn" id="btn-tab-transfer" onclick="switchAppTab('transfer')">
-          <span>📁</span> Truyền Tệp P2P
-        </button>
-        <button class="tab-btn" id="btn-tab-text" onclick="switchAppTab('text')">
-          <span>💬</span> Văn Bản Nhanh
-        </button>
-        <button class="tab-btn" id="btn-tab-workspaces" onclick="switchAppTab('workspaces')">
-          <span>🏢</span> Nhóm Làm Việc
-        </button>
-      </div>
-
-      <!-- TAB 1: RADAR DISCOVERY -->
-      <div id="pane-radar" class="tab-pane active">
-        <div class="card">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-            <div>
-              <h3 style="font-size: 1.15rem; font-weight: 700;">📡 Quét Thiết Bị Trong Mạng LAN</h3>
-              <p style="color: var(--text-muted); font-size: 0.85rem;">
-                Tự động nhận diện điện thoại, máy tính và trình duyệt đang kết nối máy chủ LANDrop.
-              </p>
-            </div>
-            <button class="btn btn-secondary btn-sm" onclick="refreshPeers()">🔄 Làm mới</button>
+      <div id="peer-list-container" class="peer-list-container">
+        <!-- Rendered Peer Cards dynamically -->
+        <div class="empty-peers" id="empty-peers-notice">
+          <div class="radar-ring">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="color: var(--accent-cyan);">
+              <path d="M12 2a10 10 0 1 0 10 10M12 12l7-7"/>
+            </svg>
           </div>
-
-          <div class="radar-box">
-            <div class="radar-pulse"></div>
-            <div id="peers-empty-hint" style="z-index: 2; color: var(--text-muted); font-size: 0.9rem;">
-              <div style="font-size: 2rem; margin-bottom: 0.5rem;">📡</div>
-              Đang quét các thiết bị trong mạng LAN...<br>
-              <span style="font-size: 0.8rem; color: #64748b;">(Mở thêm một tab hoặc dùng điện thoại quét mã QR từ máy chủ để kết nối cùng mạng)</span>
-            </div>
-            <div id="peers-grid" class="peers-grid"></div>
-          </div>
-
-          <div style="margin-top: 1rem; padding: 0.75rem 1rem; background: rgba(11, 17, 32, 0.6); border-radius: 12px; font-size: 0.85rem; border: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;">
-            <span style="color: var(--text-muted);">
-              💡 <strong>Mẹo 1-Chạm:</strong> Bấm vào thẻ thiết bị bên trên để chọn nhanh máy nhận tệp!
-            </span>
-            <span id="peers-count-badge" style="color: var(--accent-sky); font-weight: 600;">0 thiết bị online</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- TAB 2: TRUYỀN TỆP P2P -->
-      <div id="pane-transfer" class="tab-pane">
-        <div class="card" style="margin-bottom: 1.25rem;">
-          <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 0.25rem;">
-            🚀 Truyền Tệp Ngang Hàng P2P (WebRTC DataChannel)
-          </h3>
-          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.25rem;">
-            Gửi trực tiếp qua mạng WiFi/LAN không qua trung gian máy chủ. Tốc độ tối đa, bảo mật tuyệt đối.
+          <strong style="font-size: 0.95rem; color: var(--text-main);">Đang dò tìm thiết bị LAN...</strong>
+          <p style="font-size: 0.78rem; line-height: 1.4;">
+            Mở LANDrop trên một điện thoại hoặc máy tính khác cùng mạng Wi-Fi để kết nối và chat P2P ngay.
           </p>
+        </div>
+      </div>
+    </aside>
 
-          <!-- TARGET SELECTION -->
-          <div class="form-group">
-            <label>Thiết bị đích nhận tệp:</label>
-            <div style="display: flex; gap: 0.5rem;">
-              <input type="text" id="target-conn-id" class="form-input" placeholder="Chọn thiết bị từ tab 'Thiết Bị Lân Cận' hoặc dán Connection ID..." style="font-family: monospace;">
-              <button class="btn btn-secondary" onclick="switchAppTab('radar')" style="white-space: nowrap;">📡 Chọn máy</button>
-            </div>
+    <!-- --- RIGHT MAIN CONVERSATION PANE --- -->
+    <main id="chat-pane" class="chat-pane">
+
+      <!-- Drag & drop overlay -->
+      <div id="chat-drop-overlay" class="drop-overlay">
+        <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-bottom: 0.5rem;">
+          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+          <polyline points="17 8 12 3 7 8"/>
+          <line x1="12" y1="3" x2="12" y2="15"/>
+        </svg>
+        <span>Thả tệp vào đây để gửi trực tiếp qua WebRTC</span>
+      </div>
+
+      <!-- Chat Header -->
+      <div class="chat-header" id="chat-header" style="display: none;">
+        <div class="chat-header-info">
+          <button class="back-btn-mobile" onclick="navigateMobileToSidebar()" title="Quay lại danh sách">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="15 18 9 12 15 6"/>
+            </svg>
+          </button>
+
+          <div class="peer-avatar" id="chat-active-avatar" style="width: 36px; height: 36px; font-size: 1rem;">
+            📱
           </div>
 
-          <!-- DROPZONE -->
-          <div id="dropzone" class="dropzone" onclick="triggerFileInput()">
-            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">📁</div>
-            <div style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.25rem;">
-              Kéo thả tệp vào đây hoặc Bấm để chọn
-            </div>
-            <p style="color: var(--text-muted); font-size: 0.85rem;">
-              Hỗ trợ mọi định dạng: Ảnh, Video, Tài liệu, File Zip... Không giới hạn kích thước trên mạng LAN.
-            </p>
-            <input type="file" id="file-input" style="display: none;" onchange="handleFileSelected(event)">
-          </div>
-
-          <!-- MOBILE FILE BUTTONS -->
-          <div style="display: flex; gap: 0.75rem; margin-top: 1rem;">
-            <button class="btn btn-secondary" style="flex: 1;" onclick="triggerFileInput('image/*,video/*')">
-              📷 Thư viện ảnh / Video
-            </button>
-            <button class="btn btn-secondary" style="flex: 1;" onclick="triggerFileInput('*/*')">
-              📂 Chọn tài liệu từ máy
-            </button>
-          </div>
-
-          <!-- SELECTED FILE PREVIEW -->
-          <div id="file-preview-card" style="display: none; margin-top: 1rem; padding: 1rem; background: rgba(11, 17, 32, 0.8); border-radius: 12px; border: 1px solid rgba(56, 189, 248, 0.3);">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <div style="display: flex; align-items: center; gap: 0.75rem; overflow: hidden;">
-                <div style="font-size: 1.75rem;">📄</div>
-                <div style="overflow: hidden;">
-                  <strong id="selected-file-name" style="display: block; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></strong>
-                  <span id="selected-file-size" style="font-size: 0.8rem; color: var(--text-muted);"></span>
-                </div>
-              </div>
-              <button class="btn btn-danger btn-sm" onclick="clearSelectedFile()">✕ Xóa</button>
-            </div>
-            <button class="btn btn-primary btn-lg" style="margin-top: 1rem;" onclick="startFileTransfer()" id="btn-start-transfer">
-              🚀 Bắt Đầu Gửi Tệp Ngay
-            </button>
-          </div>
-
-          <!-- PROGRESS CARD -->
-          <div id="transfer-progress-box" style="display: none; margin-top: 1.25rem; padding: 1.25rem; background: #0c1322; border-radius: 14px; border: 1px solid rgba(56, 189, 248, 0.4);">
-            <div style="display: flex; justify-content: space-between; align-items: center;">
-              <strong id="progress-title" style="color: var(--accent-sky); font-size: 0.95rem;">Đang truyền tệp P2P...</strong>
-              <span id="progress-percent" style="font-weight: 700; font-size: 1.1rem; color: var(--accent-success);">0%</span>
-            </div>
-
-            <div class="progress-bar-container">
-              <div id="progress-bar-fill" class="progress-bar-fill"></div>
-            </div>
-
-            <div class="metrics-grid">
-              <div class="metric-cell">
-                <div class="metric-label">Tốc độ</div>
-                <div class="metric-value" id="metric-speed">0 MB/s</div>
-              </div>
-              <div class="metric-cell">
-                <div class="metric-label">Đã truyền</div>
-                <div class="metric-value" id="metric-transferred">0 / 0 MB</div>
-              </div>
-              <div class="metric-cell">
-                <div class="metric-label">Thời gian còn lại</div>
-                <div class="metric-value" id="metric-eta">—</div>
-              </div>
-            </div>
-
-            <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
-              <button class="btn btn-danger btn-sm" onclick="cancelCurrentTransfer()">Hủy truyền</button>
+          <div style="min-width: 0;">
+            <div class="chat-peer-title" id="chat-active-name">Tên thiết bị</div>
+            <div class="chat-peer-status" id="chat-active-status">
+              <span class="status-dot"></span>
+              <span id="chat-active-status-text">Đang kiểm tra kết nối...</span>
             </div>
           </div>
-
         </div>
 
-        <!-- RECEIVED FILES TRAY -->
-        <div class="card">
-          <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.25rem;">
-            📥 Khay Tệp Đã Nhận
-          </h3>
-          <p style="color: var(--text-muted); font-size: 0.85rem;">
-            Các tệp tin được truyền ngang hàng thành công vào thiết bị này.
-          </p>
+        <div class="chat-header-actions">
+          <button class="btn-icon" onclick="triggerFileUpload()" title="Gửi tệp tin">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+            </svg>
+          </button>
+          <button class="btn-icon" onclick="sendPingTest()" title="Kiểm tra độ trễ (Ping Test)">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+            </svg>
+          </button>
+        </div>
+      </div>
 
-          <div id="received-list" class="received-list">
-            <div id="received-empty" style="text-align: center; padding: 2rem 1rem; color: var(--text-muted); font-size: 0.85rem;">
-              Chưa nhận tệp nào. Khi có máy khác gửi tệp, tệp sẽ xuất hiện tại đây.
-            </div>
+      <!-- Timeline & Messages Stream -->
+      <div class="chat-timeline" id="chat-timeline" style="display: none;">
+        <div class="date-divider">
+          <span>Tin nhắn và tệp được chia sẻ trực tiếp giữa hai thiết bị</span>
+        </div>
+        <!-- Messages appended dynamically -->
+        <div id="chat-workspace-banner" style="display:none; background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: 10px; padding: 0.65rem 0.85rem; margin-bottom: 0.75rem; font-size: 0.82rem; color: #fde68a; align-items: center; justify-content: space-between; gap: 0.5rem;">
+          <span id="chat-workspace-banner-text">⚠️ Thiết bị chưa thuộc nhóm làm việc hiện tại.</span>
+          <button id="btn-chat-add-to-workspace" class="btn-download-file" onclick="addCurrentPeerToActiveWorkspace()" style="font-size: 0.78rem; padding: 0.35rem 0.7rem; background: var(--accent-cyan); color: #020617; font-weight: 700; border: none;">➕ Thêm vào nhóm</button>
+        </div>
+        <div id="messages-stream"></div>
+
+        <!-- Typing Indicator Bubble -->
+        <div id="typing-indicator" style="display: none; align-self: flex-start; margin-top: 0.25rem;">
+          <div class="typing-bubble">
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span class="typing-dot"></span>
+            <span id="typing-peer-name" style="font-size: 0.75rem; color: var(--text-muted); margin-left: 0.25rem;">đang soạn tin...</span>
           </div>
         </div>
       </div>
 
-      <!-- TAB 3: QUICK TEXT / CLIPBOARD DROP -->
-      <div id="pane-text" class="tab-pane">
-        <div class="card">
-          <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 0.25rem;">
-            💬 Chia Sẻ Văn Bản & Clipboard Nhanh
-          </h3>
-          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.25rem;">
-            Bắn nhanh đường link, ghi chú, mã OTP hoặc đoạn code sang máy khác mà không cần tạo tệp.
-          </p>
-
-          <div class="form-group">
-            <label>Nội dung văn bản / Đường dẫn liên kết:</label>
-            <textarea id="quick-text-input" class="form-input" rows="4" placeholder="Nhập hoặc dán nội dung văn bản muốn gửi..."></textarea>
-          </div>
-
-          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: gap; gap: 0.75rem;">
-            <div style="font-size: 0.85rem; color: var(--text-muted);">
-              Gửi tới: <span id="quick-text-target-label" style="color: var(--accent-sky); font-weight: 600;">Chưa chọn thiết bị</span>
-            </div>
-            <button class="btn btn-primary" onclick="sendQuickTextAction()">
-              🚀 Bắn Văn Bản Ngay &rarr;
-            </button>
-          </div>
-
-          <hr style="border: none; border-top: 1px solid var(--border); margin: 1.5rem 0;">
-
-          <h4 style="font-size: 0.95rem; font-weight: 700; margin-bottom: 0.75rem;">
-            📋 Lịch sử văn bản vừa nhận:
-          </h4>
-          <div id="quick-text-history" style="display: flex; flex-direction: column; gap: 0.75rem;">
-            <div id="quick-text-empty" style="text-align: center; padding: 1.5rem; color: var(--text-muted); font-size: 0.85rem;">
-              Chưa nhận được tin nhắn hoặc văn bản nào.
-            </div>
-          </div>
-        </div>
+      <!-- Empty State View (When no peer is selected) -->
+      <div class="empty-conversation" id="empty-chat-welcome">
+        <div class="hero-icon">💬</div>
+        <h2 style="font-size: 1.25rem; font-weight: 800; color: var(--text-main);">LANDrop P2P Web App</h2>
+        <p style="max-width: 360px; font-size: 0.88rem; line-height: 1.5; color: var(--text-muted);">
+          Chọn một thiết bị từ danh sách bên trái để bắt đầu nhắn tin P2P tốc độ cao và truyền tệp trực tiếp qua WebRTC DataChannel.
+        </p>
       </div>
 
-      <!-- TAB 4: WORKSPACES -->
-      <div id="pane-workspaces" class="tab-pane">
-        <div class="card">
-          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
-            <h3 style="font-size: 1.15rem; font-weight: 700;">🏢 Không Gian Làm Việc</h3>
-            <button class="btn btn-secondary btn-sm" onclick="loadWorkspaces()">🔄 Làm mới</button>
-          </div>
-          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
-            Các nhóm làm việc nội bộ bạn đang tham gia trên máy chủ LANDrop.
-          </p>
+      <!-- Composer Input Row -->
+      <div class="chat-composer-container" id="chat-composer" style="display: none;">
+        <input type="file" id="composer-file-input" style="display: none;" onchange="handleFilePicked(event)">
 
-          <div id="workspaces-list" style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 250px; overflow-y: auto;">
-            <div style="text-align: center; padding: 1.5rem; color: var(--text-muted); font-size: 0.85rem;">Đang tải...</div>
-          </div>
+        <button class="btn-composer-action" onclick="triggerFileUpload()" title="Đính kèm tệp hoặc ảnh">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"/>
+          </svg>
+        </button>
 
-          <div style="margin-top: 1.25rem; display: flex; gap: 0.5rem;">
-            <input type="text" id="new-ws-name" class="form-input" placeholder="Tên nhóm làm việc mới...">
-            <button class="btn btn-primary" onclick="createWorkspace()" style="white-space: nowrap;">+ Tạo nhóm</button>
-          </div>
+        <div class="composer-input-wrapper">
+          <textarea
+            id="composer-textarea"
+            placeholder="Nhập tin nhắn... (Enter để gửi, Shift+Enter xuống dòng)"
+            rows="1"
+            oninput="handleComposerInput(this)"
+            onkeydown="handleComposerKey(event)"
+          ></textarea>
         </div>
+
+        <button id="btn-composer-send" class="btn-send" onclick="sendCurrentMessage()" title="Gửi tin nhắn">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <line x1="22" y1="2" x2="11" y2="13"/>
+            <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+          </svg>
+        </button>
       </div>
 
-    </div>
+    </main>
 
   </div>
 
-  <!-- INCOMING TRANSFER MODAL -->
-  <div id="incoming-modal" class="modal-overlay">
-    <div class="modal-content">
-      <div style="font-size: 2.25rem; margin-bottom: 0.5rem; text-align: center;">📥</div>
-      <h3 style="font-size: 1.2rem; font-weight: 700; text-align: center; margin-bottom: 0.25rem;">
-        Yêu Cầu Truyền Tệp P2P Mới!
+  <!-- ========================================================================= -->
+  <!-- 3. INCOMING TRANSFER REQUEST MODAL                                        -->
+  <!-- ========================================================================= -->
+  <div id="incoming-modal" class="modal-backdrop" style="display: none;">
+    <div class="modal-window">
+      <div style="font-size: 2.2rem; text-align: center; margin-bottom: 0.5rem;">📥</div>
+      <h3 style="font-size: 1.15rem; font-weight: 800; text-align: center; margin-bottom: 0.25rem;">
+        Yêu Cầu Nhận Tệp P2P
       </h3>
-      <p style="color: var(--text-muted); font-size: 0.85rem; text-align: center; margin-bottom: 1.25rem;">
-        Một thiết bị trong mạng LAN muốn gửi tệp trực tiếp cho bạn.
+      <p style="color: var(--text-muted); font-size: 0.82rem; text-align: center; margin-bottom: 1rem;">
+        Một thiết bị đang muốn gửi tệp trực tiếp cho bạn qua WebRTC.
       </p>
 
-      <div style="background: rgba(11, 17, 32, 0.8); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; margin-bottom: 1.25rem;">
-        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">NGƯỜI GỬI:</div>
-        <div id="modal-sender-name" style="font-weight: 700; color: var(--accent-sky); margin-bottom: 0.75rem;"></div>
+      <div style="background: rgba(11, 17, 32, 0.8); border: 1px solid var(--border); border-radius: 12px; padding: 0.85rem; margin-bottom: 1.25rem;">
+        <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Người gửi:</div>
+        <div id="modal-sender-name" style="font-weight: 700; color: var(--accent-cyan); margin-bottom: 0.5rem;"></div>
 
-        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">TỆP TIN:</div>
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-          <strong id="modal-file-name" style="font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></strong>
-          <span id="modal-file-size" style="font-size: 0.85rem; color: var(--text-muted); white-space: nowrap;"></span>
+        <div style="font-size: 0.75rem; color: var(--text-dim); text-transform: uppercase;">Tệp tin:</div>
+        <div style="display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem;">
+          <strong id="modal-file-name" style="font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></strong>
+          <span id="modal-file-size" style="font-size: 0.78rem; color: var(--text-muted); white-space: nowrap;"></span>
         </div>
       </div>
 
       <div style="display: flex; gap: 0.75rem;">
-        <button class="btn btn-success" style="flex: 1;" onclick="acceptIncomingTransfer()">
-          ✅ Chấp Nhận & Tải
+        <button onclick="acceptIncomingTransfer()" style="flex: 1; padding: 0.65rem; border-radius: 10px; background: linear-gradient(135deg, var(--accent-emerald), #059669); color: white; border: none; font-weight: 700; font-size: 0.88rem; cursor: pointer;">
+          ✅ Chấp nhận
         </button>
-        <button class="btn btn-danger" style="flex: 1;" onclick="rejectIncomingTransfer()">
-          ❌ Từ Chối
+        <button onclick="rejectIncomingTransfer()" style="flex: 1; padding: 0.65rem; border-radius: 10px; background: rgba(244, 63, 94, 0.15); color: var(--accent-rose); border: 1px solid rgba(244, 63, 94, 0.3); font-weight: 700; font-size: 0.88rem; cursor: pointer;">
+          ❌ Từ chối
         </button>
       </div>
     </div>
   </div>
 
-  <script>
-    let authToken = localStorage.getItem('landrop_access_token') || '';
-    let currentUser = null;
-    let ws = null;
-    let myConnectionId = '';
-    let wsHeartbeatTimer = null;
+  <!-- QR & CONNECTION INFO MODAL -->
+  <div id="qr-modal" class="modal-backdrop" style="display: none;">
+    <div class="modal-window">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1rem;">
+        <h3 style="font-size: 1.1rem; font-weight: 800;">Thông Tin Kết Nối LAN</h3>
+        <button class="btn-icon" onclick="closeQrModal()">✕</button>
+      </div>
 
-    // WebRTC State
+      <div style="display: flex; flex-direction: column; gap: 0.85rem; font-size: 0.85rem;">
+        <div>
+          <span style="color: var(--text-dim); font-size: 0.75rem; display: block;">ID PHIÊN CỦA BẠN:</span>
+          <div style="display: flex; gap: 0.5rem; margin-top: 0.25rem;">
+            <code id="info-my-conn-id" style="flex: 1; background: rgba(11, 17, 32, 0.9); padding: 0.45rem 0.65rem; border-radius: 8px; font-family: monospace; font-size: 0.8rem; color: var(--accent-cyan); border: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis;">Đang lấy...</code>
+            <button onclick="copyMyConnId()" style="background: var(--bg-card); border: 1px solid var(--border); color: white; border-radius: 8px; padding: 0 0.75rem; cursor: pointer; font-size: 0.78rem;">Chép</button>
+          </div>
+        </div>
+
+        <div>
+          <span style="color: var(--text-dim); font-size: 0.75rem; display: block;">THIẾT BỊ NÀY:</span>
+          <span id="info-my-device-label" style="font-weight: 600; color: var(--text-main);">Browser</span>
+        </div>
+
+        <div>
+          <span style="color: var(--text-dim); font-size: 0.75rem; display: block;">ĐỊA CHỈ TRUY CẬP LAN:</span>
+          <code id="info-lan-url" style="color: var(--accent-sky); font-size: 0.8rem;">http://...</code>
+        </div>
+      </div>
+
+      <button onclick="closeQrModal()" style="width: 100%; margin-top: 1.25rem; padding: 0.65rem; border-radius: 10px; background: rgba(255, 255, 255, 0.08); color: white; border: none; font-weight: 600; cursor: pointer;">
+        Đóng
+      </button>
+    </div>
+  </div>
+
+  <!-- ========================================================================= -->
+  <!-- 4. CORE JAVASCRIPT: WEBSOCKET GATEWAY, WEBRTC ENGINE & CHAT STATE         -->
+  <!-- ========================================================================= -->
+  <script>
+    // --- STATE MANAGEMENT ---
+    let myConnectionId = '';
+    let ws = null;
+    let wsHeartbeatTimer = null;
+    let peersList = [];
+    let selectedPeer = null; // OnlinePeerItem currently in chat view
+    let authToken = '';
+    let refreshToken = '';
+    let currentUser = null;
+    let workspaces = [];
+    let workspaceId = '';
+    let registrationMode = false;
+    let authenticated = false;
+    let reconnectTimer = null;
+    let activePeerConnectionId = null;
+    let earlyCandidates = [];
+    let sendingFile = false;
+    let pendingOutgoingMessages = [];
+    let pendingOutgoingFile = null;
+    let currentWorkspaceMembers = [];
+    let incomingBytes = 0;
+    let peerTypingTimer = null;
+
+    // WebRTC connection state with current active peer
     let rtcPeer = null;
     let rtcDataChannel = null;
     let activeTransferId = null;
-    let targetConnId = '';
     let activeRole = null; // 'offerer' | 'answerer'
+    let currentTransferProgress = null;
 
-    // File Transfer State
-    let selectedFile = null;
-    let currentSendingFile = null;
-    let currentIncomingFile = null;
-    let receivedFilesList = [];
-    let quickTextList = [];
-    let peersList = [];
+    // Chat conversations dictionary: peerId -> Message[]
+    // Message: { id, text, senderName, timestamp, isSelf, type: 'text' | 'file', fileMeta? }
+    let conversations = {};
+    let typingTimer = null;
 
-    // Khởi tạo trang
+    // AUDIO CHIME (SYNTHESIZED WEB AUDIO API)
+    function playNotificationChime() {
+      try {
+        const AudioContext = window.AudioContext || window.webkitAudioContext;
+        if (!AudioContext) return;
+        const ctx = new AudioContext();
+        const osc = ctx.createOscillator();
+        osc.onended = () => { ctx.close().catch(() => {}); };
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(659.25, ctx.currentTime); // E5
+        osc.frequency.exponentialRampToValueAtTime(880.0, ctx.currentTime + 0.15); // A5
+        gain.gain.setValueAtTime(0.12, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.3);
+        osc.start(ctx.currentTime);
+        osc.stop(ctx.currentTime + 0.3);
+      } catch (e) { /* ignore audio permission restrictions */ }
+    }
+
+    // --- INITIALIZATION ---
     window.addEventListener('DOMContentLoaded', () => {
-      setupDropzone();
       detectMyDevice();
-      if (authToken) {
-        verifySession();
-      } else {
-        showAuth();
-      }
+      document.getElementById('auth-modal').style.display = 'flex';
+      setupDragAndDrop();
     });
 
     function detectMyDevice() {
       const ua = navigator.userAgent;
-      let devName = 'Trình duyệt Web';
+      let devName = 'Web Browser';
       let icon = '💻';
-      if (/iPhone/.test(ua)) { devName = 'Apple iPhone'; icon = '📱'; }
-      else if (/iPad/.test(ua)) { devName = 'Apple iPad'; icon = '📱'; }
+      let platform = 'browser';
+      if (/iPhone/.test(ua)) { devName = 'Apple iPhone'; icon = '📱'; platform = 'ios'; }
+      else if (/iPad/.test(ua)) { devName = 'Apple iPad'; icon = '📱'; platform = 'ios'; }
       else if (/Android/.test(ua)) {
         const m = ua.match(/Android[^;]+; ([^;)]+)/);
         devName = m && m[1] ? m[1].replace(/Build\/.*/, '').trim() : 'Android Phone';
-        icon = '📱';
+        icon = '📱'; platform = 'android';
       }
-      else if (/Macintosh/.test(ua)) { devName = 'macOS Browser'; icon = '💻'; }
-      else if (/Windows/.test(ua)) { devName = 'Windows PC Browser'; icon = '🖥️'; }
-      else if (/Linux/.test(ua)) { devName = 'Linux Browser'; icon = '💻'; }
+      else if (/Macintosh/.test(ua)) { devName = 'macOS Client'; icon = '💻'; platform = 'mac'; }
+      else if (/Windows/.test(ua)) { devName = 'Windows PC'; icon = '🖥️'; platform = 'windows'; }
+      else if (/Linux/.test(ua)) { devName = 'Linux Client'; icon = '💻'; platform = 'linux'; }
 
-      document.getElementById('my-device-name').textContent = devName;
-      document.getElementById('my-device-icon').textContent = icon;
-      return { devName, icon, isMobile: icon === '📱' };
+      document.getElementById('header-device-name').textContent = `${icon} ${devName}`;
+      document.getElementById('info-my-device-label').textContent = `${devName} (${platform})`;
+      document.getElementById('info-lan-url').textContent = window.location.href;
+      return { devName, platform, icon };
     }
 
-    function switchAuthTab(tab) {
-      hideAlert();
-      document.getElementById('tab-login-btn').classList.toggle('active', tab === 'login');
-      document.getElementById('tab-register-btn').classList.toggle('active', tab === 'register');
-      document.getElementById('form-login').classList.toggle('active', tab === 'login');
-      document.getElementById('form-register').classList.toggle('active', tab === 'register');
-    }
-
-    function switchAppTab(tab) {
-      const tabs = ['radar', 'transfer', 'text', 'workspaces'];
-      tabs.forEach(t => {
-        document.getElementById(`btn-tab-${t}`).classList.toggle('active', t === tab);
-        document.getElementById(`pane-${t}`).classList.toggle('active', t === tab);
-      });
-      if (tab === 'radar') refreshPeers();
-    }
-
-    function showAlert(msg, isSuccess = false) {
-      const box = document.getElementById('auth-alert');
-      box.textContent = msg;
-      box.className = 'alert ' + (isSuccess ? 'alert-success' : 'alert-error');
-      box.style.display = 'block';
-    }
-
-    function hideAlert() {
-      document.getElementById('auth-alert').style.display = 'none';
-    }
-
-    function showAuth() {
-      document.getElementById('auth-section').style.display = 'block';
-      document.getElementById('app-section').style.display = 'none';
-      document.getElementById('user-pill').style.display = 'none';
-      if (ws) { ws.close(); ws = null; }
-    }
-
-    function showApp() {
-      document.getElementById('auth-section').style.display = 'none';
-      document.getElementById('app-section').style.display = 'flex';
-      document.getElementById('user-pill').style.display = 'flex';
-      const name = currentUser.displayName || currentUser.username;
-      document.getElementById('user-display-name').textContent = name;
-      document.getElementById('welcome-username').textContent = name;
-      loadWorkspaces();
-      connectRealtime();
-    }
-
-    async function verifySession() {
+    // STORAGE FOR CHATS
+    function loadConversationsFromStorage() {
       try {
-        const res = await fetch('/api/auth/me', {
-          headers: { 'Authorization': 'Bearer ' + authToken }
-        });
-        if (res.ok) {
-          currentUser = await res.json();
-          showApp();
-        } else {
-          localStorage.removeItem('landrop_access_token');
-          authToken = '';
-          showAuth();
+        const saved = localStorage.getItem('landrop_p2p_conversations:' + currentUser.id);
+        if (saved) {
+          conversations = JSON.parse(saved);
+          Object.values(conversations).forEach(messages => messages.forEach(message => {
+            delete message.blobUrl;
+            if (message.type === 'file') message.transferStatus = 'unavailable';
+          }));
         }
+      } catch (e) { conversations = {}; }
+    }
+
+    function saveConversationsToStorage() {
+      try {
+        if (currentUser) localStorage.setItem('landrop_p2p_conversations:' + currentUser.id, JSON.stringify(conversations, (key, value) => key === 'blobUrl' ? undefined : value));
+      } catch (e) {}
+    }
+
+    async function apiRequest(path, init = {}) {
+      const response = await fetch(path, {
+        ...init, cache: 'no-store',
+        headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: 'Bearer ' + authToken } : {}), ...init.headers }
+      });
+      const data = response.status === 204 ? null : await response.json();
+      if (!response.ok) throw new Error(data?.error?.message || data?.message || 'Không thể hoàn tất yêu cầu.');
+      return data;
+    }
+
+    function toggleRegistration() {
+      registrationMode = !registrationMode;
+      document.getElementById('register-fields').hidden = !registrationMode;
+      document.getElementById('register-email').required = registrationMode;
+      document.getElementById('register-name').required = registrationMode;
+      document.getElementById('auth-title').textContent = registrationMode ? 'Tạo tài khoản LANDrop' : 'Đăng nhập LANDrop';
+      document.getElementById('auth-submit').textContent = registrationMode ? 'Tạo tài khoản' : 'Đăng nhập';
+      document.getElementById('auth-switch').textContent = registrationMode ? 'Đã có tài khoản? Đăng nhập' : 'Tạo tài khoản mới';
+      document.getElementById('login-password').autocomplete = registrationMode ? 'new-password' : 'current-password';
+    }
+
+    async function submitAuthentication(event) {
+      event.preventDefault();
+      const button = document.getElementById('auth-submit');
+      button.disabled = true;
+      document.getElementById('auth-error').textContent = '';
+      try {
+        const identifier = document.getElementById('login-identifier').value.trim();
+        const password = document.getElementById('login-password').value;
+        const body = registrationMode
+          ? { username: identifier, password, email: document.getElementById('register-email').value.trim(), displayName: document.getElementById('register-name').value.trim() }
+          : { identifier, password };
+        const data = await apiRequest(registrationMode ? '/api/auth/register' : '/api/auth/login', { method: 'POST', body: JSON.stringify(body) });
+        authToken = data.accessToken;
+        refreshToken = data.refreshToken;
+        currentUser = data.user;
+        const device = detectMyDevice();
+        await apiRequest('/api/devices/enroll', {
+          method: 'POST', body: JSON.stringify({
+            clientInstanceId: getClientInstanceId(), deviceName: device.devName,
+            platform: device.platform, clientVersion: '1.0.0'
+          })
+        }).catch(error => {
+          document.getElementById('client-feedback').textContent = 'Đã đăng nhập nhưng chưa lưu được thiết bị: ' + error.message;
+        });
+        conversations = {};
+        loadConversationsFromStorage();
+        await loadWorkspaces();
+        document.getElementById('login-password').value = '';
+        document.getElementById('auth-modal').style.display = 'none';
+        await connectRealtime();
+      } catch (error) {
+        document.getElementById('auth-error').textContent = error.message;
+      } finally { button.disabled = false; }
+    }
+
+    async function loadWorkspaces() {
+      workspaces = [];
+      for (let offset = 0; ; ) {
+        const page = await apiRequest('/api/workspaces?limit=100&offset=' + offset);
+        const items = Array.isArray(page) ? page : page.items || page.data || [];
+        workspaces.push(...items);
+        if (Array.isArray(page) || items.length < 100) break;
+        offset += items.length;
+      }
+      const select = document.getElementById('workspace-select');
+      select.innerHTML = '';
+      workspaces.filter(item => item.role !== 'GUEST').forEach(item => {
+        const option = document.createElement('option');
+        option.value = item.id; option.textContent = item.name; select.appendChild(option);
+      });
+      if (!workspaces.length) {
+        try {
+          await apiRequest('/api/workspaces', { method: 'POST', body: JSON.stringify({ name: 'Nhóm LAN Chung' }) });
+          const page = await apiRequest('/api/workspaces?limit=100&offset=0');
+          workspaces = Array.isArray(page) ? page : page.items || page.data || [];
+          workspaces.filter(item => item.role !== 'GUEST').forEach(item => {
+            const option = document.createElement('option');
+            option.value = item.id; option.textContent = item.name; select.appendChild(option);
+          });
+        } catch (e) {}
+      }
+      if (!select.options.length) {
+        const option = document.createElement('option');
+        option.value = ''; option.textContent = 'Chưa có nhóm — hãy tạo nhóm'; select.appendChild(option);
+      }
+      workspaceId = select.value;
+    }
+
+    function changeWorkspace() {
+      closePeerConnection(true);
+      workspaceId = document.getElementById('workspace-select').value;
+      updateChatHeaderStatus(false, 'Chọn thiết bị để kết nối trong nhóm này.');
+    }
+
+    async function openWorkspaceMembersModal() {
+      if (!workspaceId) {
+        alert('Vui lòng chọn hoặc tạo nhóm làm việc trước.');
+        return;
+      }
+      const modal = document.getElementById('workspace-members-modal');
+      const curWs = workspaces.find(w => w.id === workspaceId);
+      document.getElementById('workspace-modal-name').textContent = curWs ? curWs.name : 'Nhóm hiện tại';
+      document.getElementById('workspace-invite-feedback').textContent = '';
+      document.getElementById('workspace-invite-input').value = '';
+      modal.style.display = 'flex';
+      await refreshWorkspaceMembersList();
+    }
+
+    function closeWorkspaceMembersModal() {
+      document.getElementById('workspace-members-modal').style.display = 'none';
+    }
+
+    async function refreshWorkspaceMembersList() {
+      const container = document.getElementById('workspace-members-list');
+      const peersContainer = document.getElementById('workspace-available-peers-list');
+      container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.8rem;">Đang tải danh sách...</div>';
+
+      try {
+        const res = await apiRequest('/api/workspaces/' + workspaceId + '/members');
+        currentWorkspaceMembers = res?.data || (Array.isArray(res) ? res : []);
       } catch (e) {
-        showAuth();
+        currentWorkspaceMembers = [];
       }
-    }
 
-    async function submitLogin(e) {
-      e.preventDefault();
-      hideAlert();
-      const identifier = document.getElementById('login-identifier').value.trim();
-      const password = document.getElementById('login-password').value;
-      const btn = document.getElementById('btn-login-submit');
-
-      btn.disabled = true;
-      btn.textContent = 'Đang đăng nhập...';
-      try {
-        const res = await fetch('/api/auth/login', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ identifier, password })
+      container.innerHTML = '';
+      if (!currentWorkspaceMembers.length) {
+        container.innerHTML = '<div style="color: var(--text-muted); font-size: 0.8rem;">Chưa có thành viên nào.</div>';
+      } else {
+        currentWorkspaceMembers.forEach(m => {
+          const u = m.user || {};
+          const isMe = currentUser && (m.userId === currentUser.id || u.id === currentUser.id);
+          const div = document.createElement('div');
+          div.style.cssText = 'display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem; padding: 0.25rem 0; border-bottom: 1px solid rgba(255,255,255,0.05);';
+          div.innerHTML = '<div><strong style="color: var(--text-main);">' + escapeHtml(u.displayName || u.username || 'Thành viên') + '</strong>' +
+            (isMe ? '<span style="font-size: 0.72rem; color: var(--accent-cyan); margin-left: 0.35rem;">(Bạn)</span>' : '') +
+            '<span style="font-size: 0.72rem; color: var(--text-dim); display: block;">' + escapeHtml(u.username || '') + '</span></div>' +
+            '<span style="font-size: 0.72rem; padding: 0.15rem 0.45rem; border-radius: 4px; background: rgba(6,182,212,0.15); color: var(--accent-cyan); font-weight: 600;">' + (m.role || 'MEMBER') + '</span>';
+          container.appendChild(div);
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message || 'Đăng nhập không thành công');
-
-        authToken = data.accessToken;
-        currentUser = data.user;
-        localStorage.setItem('landrop_access_token', authToken);
-        showApp();
-      } catch (err) {
-        showAlert(err.message, false);
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Đăng Nhập Vào Hệ Thống \u2192';
       }
-    }
 
-    async function submitRegister(e) {
-      e.preventDefault();
-      hideAlert();
-      const name = document.getElementById('reg-name').value.trim();
-      const username = document.getElementById('reg-username').value.trim();
-      const email = document.getElementById('reg-email').value.trim();
-      const password = document.getElementById('reg-password').value;
-      const btn = document.getElementById('btn-reg-submit');
+      peersContainer.innerHTML = '';
+      const existingUserIds = new Set(currentWorkspaceMembers.map(m => m.userId || m.user?.id));
+      const outsidePeers = peersList.filter(p => !existingUserIds.has(p.userId));
 
-      btn.disabled = true;
-      btn.textContent = 'Đang tạo tài khoản...';
-      try {
-        const res = await fetch('/api/auth/register', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name, username, email, password })
+      if (!outsidePeers.length) {
+        peersContainer.innerHTML = '<div style="color: var(--text-muted); font-size: 0.8rem;">Tất cả thiết bị LAN online đã tham gia nhóm.</div>';
+      } else {
+        outsidePeers.forEach(p => {
+          const div = document.createElement('div');
+          div.style.cssText = 'display: flex; justify-content: space-between; align-items: center; font-size: 0.82rem; padding: 0.25rem 0; border-bottom: 1px solid rgba(255,255,255,0.05);';
+          div.innerHTML = '<div><strong style="color: var(--text-main);">' + escapeHtml(p.displayName || p.deviceName || 'Thiết bị LAN') + '</strong>' +
+            '<span style="font-size: 0.72rem; color: var(--text-dim); display: block;">' + (p.platform || 'browser') + ' · ' + p.connectionId.substring(0, 8) + '...</span></div>' +
+            '<button class="btn-download-file" style="padding: 0.25rem 0.6rem; font-size: 0.75rem;" onclick="addPeerToWorkspace(\'' + (p.userId || '') + '\', \'' + escapeHtml(p.username || p.displayName || '') + '\')">➕ Thêm</button>';
+          peersContainer.appendChild(div);
         });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data.message || 'Đăng ký không thành công');
-
-        authToken = data.accessToken;
-        currentUser = data.user;
-        localStorage.setItem('landrop_access_token', authToken);
-        showApp();
-      } catch (err) {
-        showAlert(err.message, false);
-      } finally {
-        btn.disabled = false;
-        btn.textContent = 'Tạo Tài Khoản & Bắt Đầu \u2192';
       }
     }
 
-    function handleLogout() {
-      localStorage.removeItem('landrop_access_token');
-      authToken = '';
-      currentUser = null;
-      showAuth();
+    async function addPeerToWorkspace(targetUserId, targetUsername) {
+      if (!workspaceId) return;
+      try {
+        const body = targetUserId ? { userId: targetUserId } : { username: targetUsername };
+        await apiRequest('/api/workspaces/' + workspaceId + '/members', {
+          method: 'POST',
+          body: JSON.stringify(body)
+        });
+        await refreshWorkspaceMembersList();
+        hideWorkspaceMemberRequiredBanner();
+        if (selectedPeer && (selectedPeer.userId === targetUserId || selectedPeer.displayName === targetUsername)) {
+          updateChatHeaderStatus(false, 'Đã thêm vào nhóm! Đang kết nối P2P...');
+          initiateP2PConnectionToPeer(selectedPeer.connectionId);
+        }
+      } catch (err) {
+        alert('Không thể thêm thành viên: ' + err.message);
+      }
     }
 
-    function copyMyConnId() {
-      if (!myConnectionId) return;
-      navigator.clipboard.writeText(myConnectionId);
-      alert('Đã sao chép Mã kết nối: ' + myConnectionId);
+    async function handleInviteMemberForm(e) {
+      e.preventDefault();
+      const input = document.getElementById('workspace-invite-input');
+      const val = input.value.trim();
+      const fb = document.getElementById('workspace-invite-feedback');
+      if (!val || !workspaceId) return;
+      fb.textContent = '';
+      try {
+        const isEmail = val.includes('@');
+        const body = isEmail ? { email: val } : { username: val };
+        await apiRequest('/api/workspaces/' + workspaceId + '/members', {
+          method: 'POST',
+          body: JSON.stringify(body)
+        });
+        input.value = '';
+        fb.style.color = 'var(--accent-emerald)';
+        fb.textContent = '✓ Đã thêm thành viên thành công!';
+        await refreshWorkspaceMembersList();
+        setTimeout(() => { if (fb) fb.textContent = ''; }, 3000);
+      } catch (err) {
+        fb.style.color = 'var(--accent-rose)';
+        fb.textContent = err.message;
+      }
     }
 
+    function showWorkspaceMemberRequiredBanner(peer) {
+      const banner = document.getElementById('chat-workspace-banner');
+      const text = document.getElementById('chat-workspace-banner-text');
+      const btn = document.getElementById('btn-chat-add-to-workspace');
+      if (banner && text) {
+        banner.style.display = 'flex';
+        text.textContent = '⚠️ "' + (peer ? (peer.displayName || peer.deviceName) : 'Thiết bị') + '" chưa thuộc nhóm làm việc hiện tại.';
+        if (btn) btn.style.display = 'inline-block';
+      }
+    }
+
+    function hideWorkspaceMemberRequiredBanner() {
+      const banner = document.getElementById('chat-workspace-banner');
+      if (banner) banner.style.display = 'none';
+    }
+
+    async function addCurrentPeerToActiveWorkspace() {
+      if (!selectedPeer || !workspaceId) return;
+      try {
+        const body = selectedPeer.userId ? { userId: selectedPeer.userId } : { username: selectedPeer.username || selectedPeer.displayName };
+        await apiRequest('/api/workspaces/' + workspaceId + '/members', {
+          method: 'POST',
+          body: JSON.stringify(body)
+        });
+        hideWorkspaceMemberRequiredBanner();
+        updateChatHeaderStatus(false, 'Đã thêm vào nhóm! Đang kết nối P2P...');
+        initiateP2PConnectionToPeer(selectedPeer.connectionId);
+      } catch (err) {
+        alert('Không thể thêm vào nhóm: ' + err.message);
+      }
+    }
+
+    async function createWorkspace() {
+      const name = prompt('Tên nhóm làm việc:');
+      if (!name || !name.trim()) return;
+      try {
+        await apiRequest('/api/workspaces', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+        await loadWorkspaces();
+        changeWorkspace();
+      } catch (error) { document.getElementById('client-feedback').textContent = error.message; }
+    }
+
+    async function logoutClient() {
+      const token = refreshToken;
+      closePeerConnection(true);
+      authenticated = false;
+      clearTimeout(reconnectTimer);
+      clearInterval(wsHeartbeatTimer);
+      if (ws) { ws.onclose = null; ws.close(); ws = null; }
+      if (token) {
+        try { await apiRequest('/api/auth/logout', { method: 'POST', body: JSON.stringify({ refreshToken: token }) }); } catch { /* local session still closes */ }
+      }
+      authToken = ''; refreshToken = ''; currentUser = null;
+      conversations = {}; peersList = []; selectedPeer = null;
+      renderSidebarPeers([]); renderChatTimeline();
+      document.getElementById('chat-header').style.display = 'none';
+      document.getElementById('chat-timeline').style.display = 'none';
+      document.getElementById('chat-composer').style.display = 'none';
+      document.getElementById('empty-chat-welcome').style.display = 'flex';
+      document.getElementById('auth-modal').style.display = 'flex';
+    }
+
+    // --- WEBSOCKET GATEWAY ---
     async function resolveWsPort() {
       const urlParams = new URLSearchParams(window.location.search);
       const paramPort = urlParams.get('wsPort');
@@ -981,16 +1560,17 @@
     }
 
     function getClientInstanceId() {
-      let id = localStorage.getItem('landrop_client_instance_id');
+      const key = currentUser ? 'landrop_instance_id:' + currentUser.id : 'landrop_instance_id';
+      let id = localStorage.getItem(key);
       if (!id) {
-        id = 'browser-' + Math.random().toString(36).substring(2, 10);
-        localStorage.setItem('landrop_client_instance_id', id);
+        id = 'dev-' + (globalThis.crypto?.randomUUID ? globalThis.crypto.randomUUID() : Math.random().toString(36).substring(2, 14));
+        localStorage.setItem(key, id);
       }
       return id;
     }
 
-    // WEBSOCKET REALTIME GATEWAY
     async function connectRealtime() {
+      if (!authToken) return;
       if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
       if (wsHeartbeatTimer) { clearInterval(wsHeartbeatTimer); wsHeartbeatTimer = null; }
 
@@ -998,10 +1578,8 @@
       const wsPort = await resolveWsPort();
       const wsUrl = protocol + '//' + window.location.hostname + ':' + wsPort;
 
-      const dot = document.getElementById('status-dot');
-      const stText = document.getElementById('header-status-text');
+      const dot = document.getElementById('header-status-dot');
       dot.className = 'status-dot connecting';
-      stText.textContent = 'Đang kết nối Realtime...';
 
       try {
         ws = new WebSocket(wsUrl);
@@ -1013,14 +1591,14 @@
             protocolVersion: 1,
             clientInstanceId: getClientInstanceId(),
             deviceName: dev.devName,
-            platform: dev.isMobile ? 'mobile' : 'browser'
+            platform: dev.platform
           }));
 
           wsHeartbeatTimer = setInterval(() => {
             if (ws && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'heartbeat' }));
             }
-          }, 10000);
+          }, 8000);
         };
 
         ws.onmessage = (event) => {
@@ -1031,235 +1609,458 @@
         };
 
         ws.onclose = () => {
+          authenticated = false;
+          closePeerConnection(false);
           dot.className = 'status-dot offline';
-          stText.textContent = 'Mất kết nối (Thử lại...)';
           if (wsHeartbeatTimer) { clearInterval(wsHeartbeatTimer); wsHeartbeatTimer = null; }
-          if (authToken) setTimeout(connectRealtime, 3000);
+          if (authToken) reconnectTimer = setTimeout(connectRealtime, 3000);
         };
 
         ws.onerror = () => {
           dot.className = 'status-dot offline';
-          stText.textContent = 'Lỗi kết nối';
         };
       } catch (e) {
         dot.className = 'status-dot offline';
-        stText.textContent = 'Không thể mở WebSocket';
       }
     }
 
     function handleGatewayMessage(data) {
-      const dot = document.getElementById('status-dot');
-      const stText = document.getElementById('header-status-text');
+      const dot = document.getElementById('header-status-dot');
 
       if (data.type === 'welcome') {
         myConnectionId = data.connectionId;
-        document.getElementById('my-conn-badge').textContent = myConnectionId;
-        if (authToken) {
-          ws.send(JSON.stringify({
-            type: 'auth',
-            payload: { accessToken: authToken }
-          }));
-        }
-      } else if (data.type === 'auth.ack' || data.type === 'auth.success') {
-        dot.className = 'status-dot';
-        stText.textContent = 'LAN Realtime Sẵn Sàng';
-        refreshPeers();
-      } else if (data.type === 'peer.list') {
-        renderPeersList(data.payload?.peers || []);
+        document.getElementById('info-my-conn-id').textContent = myConnectionId;
+        ws.send(JSON.stringify({ type: 'auth', payload: { accessToken: authToken } }));
+      } else if (data.type === 'auth_ack') {
+        authenticated = data.payload?.authenticated === true;
+        if (authenticated) { dot.className = 'status-dot'; refreshPeers(); }
+      } else if (data.type === 'peer.list' || data.type === 'peers.list') {
+        handlePeerListReceived(data.payload?.peers || []);
       } else if (data.type === 'transfer.request') {
         handleIncomingTransferRequest(data.payload);
       } else if (data.type === 'transfer.accept') {
-        // Bên nhận đã chấp nhận -> Khởi tạo WebRTC Offer
-        startWebRTCOffer();
+        if (activeRole === 'offerer' && activePeerConnectionId === data.payload?.receiverConnectionId) {
+          if (activeTransferId && activeTransferId !== data.payload.transferId) return;
+          activeTransferId = data.payload.transferId;
+          startWebRTCOffer().catch(showConnectionError);
+        }
       } else if (data.type === 'transfer.reject') {
-        alert('Yêu cầu truyền tệp đã bị đối phương từ chối: ' + (data.payload?.reason || ''));
-        resetTransferUI();
+        alert('Yêu cầu kết nối bị từ chối: ' + (data.payload?.reason || ''));
+        if (data.payload?.transferId === activeTransferId) closePeerConnection(false);
       } else if (data.type === 'transfer.cancel') {
-        alert('Phiên truyền tệp đã bị hủy: ' + (data.payload?.reason || ''));
-        resetTransferUI();
+        if (data.payload?.transferId === activeTransferId) closePeerConnection(false);
+      } else if (data.type === 'transfer.status') {
+        const payload = data.payload || {};
+        if (payload.status === 'REQUESTED' && activeRole === 'offerer' && payload.receiverConnectionId === activePeerConnectionId) activeTransferId = payload.transferId;
+        if (payload.transferId === activeTransferId && ['FAILED', 'EXPIRED', 'REJECTED', 'CANCELLED'].includes(payload.status)) closePeerConnection(false);
       } else if (data.type === 'webrtc.offer') {
-        handleIncomingWebRTCOffer(data);
+        handleIncomingWebRTCOffer(data).catch(showConnectionError);
       } else if (data.type === 'webrtc.answer') {
-        handleIncomingWebRTCAnswer(data);
+        handleIncomingWebRTCAnswer(data).catch(showConnectionError);
       } else if (data.type === 'webrtc.candidate' || data.type === 'webrtc.ice_candidate') {
-        handleIncomingIceCandidate(data);
+        handleIncomingIceCandidate(data).catch(showConnectionError);
+      } else if (data.type === 'error') {
+        const errMsg = data.error?.message || data.message || 'Kết nối không thành công.';
+        const errCode = data.error?.code || data.code;
+        document.getElementById('client-feedback').textContent = errMsg;
+        if (errCode === 'FORBIDDEN' || errMsg.includes('workspace member')) {
+          updateChatHeaderStatus(false, 'Chưa cùng nhóm làm việc.');
+          if (selectedPeer) showWorkspaceMemberRequiredBanner(selectedPeer);
+        }
+        if (['AUTH_REQUIRED', 'UNAUTHORIZED', 'SESSION_EXPIRED', 'SESSION_REVOKED', 'ACCOUNT_DISABLED'].includes(errCode)) {
+          logoutClient();
+        } else if (data.requestId?.startsWith('p2p-')) closePeerConnection(false);
       }
     }
 
-    // PEER DISCOVERY
     function refreshPeers() {
-      if (ws && ws.readyState === WebSocket.OPEN) {
+      const spin = document.getElementById('radar-spin-icon');
+      if (spin) spin.style.animation = 'spin 0.8s linear';
+      setTimeout(() => { if (spin) spin.style.animation = ''; }, 800);
+
+      if (authenticated && ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'peer.list' }));
       }
     }
 
-    function renderPeersList(peers) {
+    function handlePeerListReceived(peers) {
       peersList = peers.filter(p => p.connectionId !== myConnectionId);
-      const grid = document.getElementById('peers-grid');
-      const empty = document.getElementById('peers-empty-hint');
-      const count = document.getElementById('peers-count-badge');
+      document.getElementById('sidebar-peer-count').textContent = peersList.length;
+      renderSidebarPeers(peersList);
+    }
 
-      count.textContent = `${peersList.length} thiết bị online`;
+    function renderSidebarPeers(peers) {
+      const container = document.getElementById('peer-list-container');
+      const empty = document.getElementById('empty-peers-notice');
 
-      if (peersList.length === 0) {
-        empty.style.display = 'block';
-        grid.innerHTML = '';
+      if (!peers || peers.length === 0) {
+        empty.style.display = 'flex';
+        container.querySelectorAll('.peer-item').forEach(el => el.remove());
+        return;
+      }
+      empty.style.display = 'none';
+
+      const existingElements = container.querySelectorAll('.peer-item');
+      existingElements.forEach(el => el.remove());
+
+      peers.forEach(peer => {
+        const isSelected = selectedPeer && selectedPeer.connectionId === peer.connectionId;
+        const icon = getPlatformIconString(peer.platform);
+        const lastMsg = getLastMessageForPeer(peer.connectionId);
+
+        const item = document.createElement('div');
+        item.className = `peer-item ${isSelected ? 'active' : ''}`;
+        item.onclick = () => selectPeerConversation(peer);
+
+        item.innerHTML = `
+          <div class="peer-avatar">
+            ${icon}
+            <span class="online-badge"></span>
+          </div>
+          <div class="peer-info">
+            <div class="peer-name-row">
+              <span class="peer-name">${escapeHtml(peer.displayName || peer.deviceName || 'Thiết bị LAN')}</span>
+              <span class="peer-time">${lastMsg ? lastMsg.timeStr : ''}</span>
+            </div>
+            <div class="peer-snippet">${lastMsg ? escapeHtml(lastMsg.snippet) : 'Nhấn để trò chuyện P2P & gửi tệp'}</div>
+          </div>
+        `;
+        container.appendChild(item);
+      });
+    }
+
+    function getPlatformIconString(platform) {
+      const p = (platform || '').toLowerCase();
+      if (p.includes('win')) return '🖥️';
+      if (p.includes('mac') || p.includes('ios') || p.includes('apple') || p.includes('mobile')) return '📱';
+      if (p.includes('android')) return '📱';
+      return '💻';
+    }
+
+    function getLastMessageForPeer(peerConnId) {
+      const list = conversations[peerConnId];
+      if (!list || list.length === 0) return null;
+      const last = list[list.length - 1];
+      return {
+        snippet: last.type === 'file' ? `📄 ${last.fileMeta?.name}` : last.text,
+        timeStr: new Date(last.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+      };
+    }
+
+    function handlePeerSearch(query) {
+      const q = query.trim().toLowerCase();
+      if (!q) {
+        renderSidebarPeers(peersList);
+        return;
+      }
+      const filtered = peersList.filter(p =>
+        (p.displayName && p.displayName.toLowerCase().includes(q)) ||
+        (p.deviceName && p.deviceName.toLowerCase().includes(q)) ||
+        (p.connectionId && p.connectionId.toLowerCase().includes(q))
+      );
+      renderSidebarPeers(filtered);
+    }
+
+    // --- CONVERSATION SELECTION & MOBILE NAVIGATION ---
+    function selectPeerConversation(peer) {
+      if (activePeerConnectionId && activePeerConnectionId !== peer.connectionId) closePeerConnection(true);
+      selectedPeer = peer;
+      renderSidebarPeers(peersList);
+
+      // Mobile slide to chat view
+      document.getElementById('sidebar-pane').classList.add('hidden-mobile');
+      document.getElementById('chat-pane').classList.add('visible-mobile');
+
+      // Setup Chat Header
+      document.getElementById('empty-chat-welcome').style.display = 'none';
+      document.getElementById('chat-header').style.display = 'flex';
+      document.getElementById('chat-timeline').style.display = 'flex';
+      document.getElementById('chat-composer').style.display = 'flex';
+
+      document.getElementById('chat-active-name').textContent = peer.displayName || peer.deviceName;
+      document.getElementById('chat-active-avatar').textContent = getPlatformIconString(peer.platform);
+
+      // Render Messages
+      renderChatTimeline();
+
+      hideWorkspaceMemberRequiredBanner();
+      // Check / Initiate P2P Connection
+      if (!rtcDataChannel || rtcDataChannel.readyState !== 'open') {
+        updateChatHeaderStatus(false, 'Đang kết nối P2P...');
+        initiateP2PConnectionToPeer(peer.connectionId);
+      } else {
+        updateChatHeaderStatus(true, 'P2P Đã kết nối · RTCDataChannel Open');
+      }
+    }
+
+    function navigateMobileToSidebar() {
+      document.getElementById('sidebar-pane').classList.remove('hidden-mobile');
+      document.getElementById('chat-pane').classList.remove('visible-mobile');
+    }
+
+    function updateChatHeaderStatus(connected, customText) {
+      const statusDot = document.querySelector('#chat-active-status .status-dot');
+      const statusText = document.getElementById('chat-active-status-text');
+      if (statusDot && statusText) {
+        statusDot.className = connected ? 'status-dot' : 'status-dot connecting';
+        statusText.textContent = customText || (connected ? 'P2P Đã kết nối · RTCDataChannel Open' : 'Đang kết nối WebRTC...');
+      }
+    }
+
+    // --- CHAT TIMELINE RENDERING ---
+    function renderChatTimeline() {
+      const stream = document.getElementById('messages-stream');
+      stream.innerHTML = '';
+      if (!selectedPeer) return;
+
+      const msgs = conversations[selectedPeer.connectionId] || [];
+      msgs.forEach(msg => {
+        stream.appendChild(createMessageElement(msg));
+      });
+      scrollChatToBottom();
+    }
+
+    function createMessageElement(msg) {
+      const group = document.createElement('div');
+      group.className = `msg-group ${msg.isSelf ? 'self' : 'peer'}`;
+      group.style.userSelect = 'text';
+      group.id = `msg-${msg.id}`;
+
+      const timeStr = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+      if (msg.type === 'file') {
+        const isTransferring = msg.transferStatus === 'transferring';
+        const percent = msg.percent ?? (isTransferring ? 0 : 100);
+
+        group.innerHTML = `
+          <div class="inline-file-card">
+            <div class="inline-file-header">
+              <span class="inline-file-icon">📄</span>
+              <div class="inline-file-details">
+                <div class="inline-file-name" title="${escapeHtml(msg.fileMeta.name)}">${escapeHtml(msg.fileMeta.name)}</div>
+                <div class="inline-file-size">${formatBytes(msg.fileMeta.size)}</div>
+              </div>
+            </div>
+            ${isTransferring ? `
+              <div class="file-progress-track">
+                <div class="file-progress-bar" style="width: ${percent}%;"></div>
+              </div>
+              <div class="file-metrics-row">
+                <span>${percent}% · ${msg.speed || 'Đang truyền...'}</span>
+              </div>
+            ` : `
+              ${!msg.isSelf && msg.blobUrl ? `
+                <a href="${msg.blobUrl}" download="${escapeHtml(msg.fileMeta.name)}" class="btn-download-file">
+                  💾 Tải tệp về máy
+                </a>
+              ` : `
+                <span style="font-size: 0.72rem; color: var(--text-muted);">${msg.transferStatus === 'completed' ? (msg.isSelf ? '✓ Đã gửi qua kết nối P2P' : '✓ Đã nhận tệp') : msg.transferStatus === 'unavailable' ? 'Tệp không còn trong bộ nhớ. Hãy gửi lại.' : 'Truyền tệp bị gián đoạn. Hãy gửi lại.'}</span>
+              `}
+            `}
+          </div>
+          <div class="msg-meta">
+            <span>${timeStr}</span>
+            ${msg.isSelf ? `<span class="ack-tick">${msg.pending ? '⏳' : msg.ack ? '✓✓' : '✓'}</span>` : ''}
+          </div>
+        `;
+      } else {
+        group.innerHTML = `
+          <div class="msg-bubble">
+            ${escapeHtml(msg.text)}
+            <div class="msg-meta">
+              <span>${timeStr}</span>
+              ${msg.isSelf ? `<span class="ack-tick">${msg.pending ? '⏳' : msg.ack ? '✓✓' : '✓'}</span>` : ''}
+            </div>
+          </div>
+        `;
+      }
+      return group;
+    }
+
+    function scrollChatToBottom() {
+      const timeline = document.getElementById('chat-timeline');
+      if (timeline) {
+        timeline.scrollTop = timeline.scrollHeight;
+      }
+    }
+
+    // --- P2P CHAT COMPOSER & EVENTS ---
+    function handleComposerInput(textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = Math.min(120, textarea.scrollHeight) + 'px';
+
+      // Send Typing Event to Peer
+      if (rtcDataChannel && rtcDataChannel.readyState === 'open') {
+        rtcDataChannel.send(JSON.stringify({
+          type: 'CHAT_TYPING',
+          isTyping: true,
+          senderName: 'Me'
+        }));
+
+        if (typingTimer) clearTimeout(typingTimer);
+        typingTimer = setTimeout(() => {
+          if (rtcDataChannel && rtcDataChannel.readyState === 'open') {
+            rtcDataChannel.send(JSON.stringify({
+              type: 'CHAT_TYPING',
+              isTyping: false
+            }));
+          }
+        }, 2000);
+      }
+    }
+
+    function handleComposerKey(e) {
+      if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendCurrentMessage();
+      }
+    }
+
+    function sendCurrentMessage() {
+      const textarea = document.getElementById('composer-textarea');
+      const text = textarea.value.trim();
+      if (!text || !selectedPeer) return;
+
+      const isReady = rtcDataChannel && rtcDataChannel.readyState === 'open';
+
+      const msgId = 'msg-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6);
+      const packet = {
+        type: 'CHAT_MESSAGE',
+        id: msgId,
+        text,
+        senderName: 'Me',
+        timestamp: Date.now()
+      };
+
+      const msgObj = {
+        id: msgId,
+        text,
+        senderName: 'Me',
+        timestamp: Date.now(),
+        isSelf: true,
+        type: 'text',
+        ack: false,
+        pending: !isReady
+      };
+
+      if (!conversations[selectedPeer.connectionId]) conversations[selectedPeer.connectionId] = [];
+      conversations[selectedPeer.connectionId].push(msgObj);
+      saveConversationsToStorage();
+
+      textarea.value = '';
+      textarea.style.height = 'auto';
+
+      document.getElementById('messages-stream').appendChild(createMessageElement(msgObj));
+      scrollChatToBottom();
+      renderSidebarPeers(peersList);
+
+      if (isReady) {
+        try {
+          rtcDataChannel.send(JSON.stringify(packet));
+        } catch (err) {
+          msgObj.pending = true;
+          pendingOutgoingMessages.push({ peerConnId: selectedPeer.connectionId, msgObj, packet });
+        }
+      } else {
+        pendingOutgoingMessages.push({ peerConnId: selectedPeer.connectionId, msgObj, packet });
+        updateChatHeaderStatus(false, 'Đang mở kết nối P2P để gửi tin...');
+        initiateP2PConnectionToPeer(selectedPeer.connectionId);
+      }
+      return;
+
+      if (!conversations[selectedPeer.connectionId]) conversations[selectedPeer.connectionId] = [];
+      conversations[selectedPeer.connectionId].push(msgObj);
+      saveConversationsToStorage();
+
+      textarea.value = '';
+      textarea.style.height = 'auto';
+
+      document.getElementById('messages-stream').appendChild(createMessageElement(msgObj));
+      scrollChatToBottom();
+      renderSidebarPeers(peersList);
+    }
+
+    // --- WEBRTC SIGNALING & DIRECT DATA CHANNEL ENGINE ---
+    function initiateP2PConnectionToPeer(targetConnId) {
+      if (!ws || ws.readyState !== WebSocket.OPEN || !authenticated || !workspaceId) {
+        updateChatHeaderStatus(false, 'Đăng nhập và chọn nhóm làm việc trước khi kết nối.');
+        return;
+      }
+      // Selecting an incoming conversation or sending while negotiation is
+      // pending must preserve the server-issued session and its role.
+      if (activePeerConnectionId === targetConnId && activeRole) return;
+      activeRole = 'offerer';
+      activeTransferId = null;
+      activePeerConnectionId = targetConnId;
+
+      ws.send(JSON.stringify({
+        type: 'transfer.request',
+        requestId: 'p2p-' + Date.now(),
+        payload: {
+          receiverConnectionId: targetConnId,
+          fileName: 'p2p-chat-session',
+          fileSize: 0,
+          workspaceId
+        }
+      }));
+    }
+
+    function handleIncomingTransferRequest(payload) {
+      if (!payload || !payload.transferId || !payload.senderConnectionId) return;
+      if (activePeerConnectionId && (activePeerConnectionId !== payload.senderConnectionId || rtcDataChannel?.readyState === 'open'
+          || activeRole === 'answerer' || myConnectionId < payload.senderConnectionId)) {
+        ws.send(JSON.stringify({ type: 'transfer.reject', payload: { transferId: payload.transferId, reason: 'Đang kết nối với thiết bị khác.' } }));
+        return;
+      }
+      if (activePeerConnectionId) closePeerConnection(true);
+      // If it's an automatic chat request, auto-accept immediately!
+      if (payload.fileName === 'p2p-chat-session') {
+        activeTransferId = payload.transferId;
+        activeRole = 'answerer';
+        activePeerConnectionId = payload.senderConnectionId;
+        const peer = peersList.find(item => item.connectionId === activePeerConnectionId) || { connectionId: activePeerConnectionId, displayName: 'Thiết bị LAN', platform: 'browser' };
+        selectPeerConversation(peer);
+        initPeerConnection();
+        ws.send(JSON.stringify({
+          type: 'transfer.accept',
+          payload: { transferId: activeTransferId }
+        }));
         return;
       }
 
-      empty.style.display = 'none';
-      grid.innerHTML = peersList.map(p => {
-        const isSelected = p.connectionId === targetConnId;
-        const icon = p.platform === 'mobile' ? '📱' : '💻';
-        return `
-          <div class="peer-card ${isSelected ? 'selected' : ''}" onclick="selectPeer('${escapeHtml(p.connectionId)}', '${escapeHtml(p.displayName || p.deviceName)}')">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
-              <span style="font-size:1.5rem;">${icon}</span>
-              <span class="status-pill" style="font-size:0.7rem; padding:0.15rem 0.5rem;">🟢 Online</span>
-            </div>
-            <strong style="display:block; font-size:0.95rem; color:var(--text-main); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
-              ${escapeHtml(p.displayName || 'Thiết bị LAN')}
-            </strong>
-            <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem;">
-              ${escapeHtml(p.deviceName || 'Trình duyệt')}
-            </div>
-            <button class="btn btn-primary btn-sm" style="margin-top:0.75rem; width:100%;" onclick="event.stopPropagation(); selectAndGoTransfer('${escapeHtml(p.connectionId)}', '${escapeHtml(p.displayName || p.deviceName)}')">
-              🚀 Gửi tệp ngay
-            </button>
-          </div>
-        `;
-      }).join('');
-    }
-
-    function selectPeer(connId, name) {
-      targetConnId = connId;
-      document.getElementById('target-conn-id').value = connId;
-      document.getElementById('quick-text-target-label').textContent = name + ' (' + connId.substring(0, 8) + '...)';
-      renderPeersList(peersList);
-    }
-
-    function selectAndGoTransfer(connId, name) {
-      selectPeer(connId, name);
-      switchAppTab('transfer');
-      triggerFileInput();
-    }
-
-    // DROPZONE & FILE PICKER
-    function setupDropzone() {
-      const dropzone = document.getElementById('dropzone');
-      ['dragenter', 'dragover'].forEach(name => {
-        dropzone.addEventListener(name, (e) => {
-          e.preventDefault();
-          dropzone.classList.add('dragover');
-        });
-      });
-      ['dragleave', 'drop'].forEach(name => {
-        dropzone.addEventListener(name, (e) => {
-          e.preventDefault();
-          dropzone.classList.remove('dragover');
-        });
-      });
-      dropzone.addEventListener('drop', (e) => {
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-          setChosenFile(e.dataTransfer.files[0]);
-        }
-      });
-    }
-
-    function triggerFileInput(accept = '') {
-      const input = document.getElementById('file-input');
-      input.accept = accept;
-      input.click();
-    }
-
-    function handleFileSelected(e) {
-      if (e.target.files && e.target.files[0]) {
-        setChosenFile(e.target.files[0]);
-      }
-    }
-
-    function setChosenFile(file) {
-      selectedFile = file;
-      document.getElementById('selected-file-name').textContent = file.name;
-      document.getElementById('selected-file-size').textContent = formatBytes(file.size);
-      document.getElementById('file-preview-card').style.display = 'block';
-    }
-
-    function clearSelectedFile() {
-      selectedFile = null;
-      document.getElementById('file-input').value = '';
-      document.getElementById('file-preview-card').style.display = 'none';
-    }
-
-    // INCOMING REQUEST MODAL
-    let pendingIncomingTransfer = null;
-    function handleIncomingTransferRequest(payload) {
-      pendingIncomingTransfer = payload;
-      document.getElementById('modal-sender-name').textContent = payload.senderDeviceName || payload.senderUserId || 'Thiết bị đối diện';
+      // Normal File Transfer request modal
+      document.getElementById('modal-sender-name').textContent = payload.senderDeviceName || payload.senderUserId || 'Thiết bị LAN';
       document.getElementById('modal-file-name').textContent = payload.fileName;
       document.getElementById('modal-file-size').textContent = formatBytes(payload.fileSize);
       document.getElementById('incoming-modal').style.display = 'flex';
+      window.pendingIncomingPayload = payload;
     }
 
     function acceptIncomingTransfer() {
-      if (!pendingIncomingTransfer || !ws) return;
+      if (!window.pendingIncomingPayload || !ws) return;
       document.getElementById('incoming-modal').style.display = 'none';
 
-      activeTransferId = pendingIncomingTransfer.transferId;
-      targetConnId = pendingIncomingTransfer.senderConnectionId;
+      activeTransferId = window.pendingIncomingPayload.transferId;
       activeRole = 'answerer';
-
-      // Setup RTCPeerConnection receiver
+      activePeerConnectionId = window.pendingIncomingPayload.senderConnectionId;
+      selectPeerConversation(peersList.find(item => item.connectionId === activePeerConnectionId) || { connectionId: activePeerConnectionId, displayName: 'Thiết bị LAN', platform: 'browser' });
       initPeerConnection();
 
       ws.send(JSON.stringify({
         type: 'transfer.accept',
         payload: { transferId: activeTransferId }
       }));
-
-      // Switch to transfer tab to see progress
-      switchAppTab('transfer');
-      showProgressUI('Đang chờ đối phương gửi dữ liệu...');
+      window.pendingIncomingPayload = null;
     }
 
     function rejectIncomingTransfer() {
-      if (!pendingIncomingTransfer || !ws) return;
+      if (!window.pendingIncomingPayload || !ws) return;
       document.getElementById('incoming-modal').style.display = 'none';
-
       ws.send(JSON.stringify({
         type: 'transfer.reject',
-        payload: { transferId: pendingIncomingTransfer.transferId, reason: 'Từ chối bởi người nhận' }
+        payload: { transferId: window.pendingIncomingPayload.transferId, reason: 'Từ chối bởi người nhận' }
       }));
-      pendingIncomingTransfer = null;
-    }
-
-    // WEBRTC DATA CHANNEL & FILE TRANSFER ENGINE
-    async function startFileTransfer() {
-      targetConnId = document.getElementById('target-conn-id').value.trim();
-      if (!targetConnId) {
-        alert('Vui lòng chọn thiết bị đích nhận tệp!');
-        switchAppTab('radar');
-        return;
-      }
-      if (!selectedFile) {
-        alert('Vui lòng chọn tệp tin cần gửi!');
-        return;
-      }
-
-      currentSendingFile = selectedFile;
-      activeRole = 'offerer';
-
-      // 1. Send transfer.request to signaling relay
-      showProgressUI('Đang gửi yêu cầu xác nhận tới người nhận...');
-      ws.send(JSON.stringify({
-        type: 'transfer.request',
-        payload: {
-          receiverConnectionId: targetConnId,
-          fileName: currentSendingFile.name,
-          fileSize: currentSendingFile.size,
-          workspaceId: '00000000-0000-0000-0000-000000000000'
-        }
-      }));
+      window.pendingIncomingPayload = null;
     }
 
     function initPeerConnection() {
@@ -1272,11 +2073,11 @@
       });
 
       rtcPeer.onicecandidate = (event) => {
-        if (event.candidate && ws) {
+        if (event.candidate && ws && ws.readyState === WebSocket.OPEN && activePeerConnectionId) {
           ws.send(JSON.stringify({
             type: 'webrtc.candidate',
             payload: {
-              targetConnectionId: targetConnId,
+              toConnectionId: activePeerConnectionId,
               transferId: activeTransferId,
               candidate: event.candidate.toJSON()
             }
@@ -1291,30 +2092,30 @@
 
     async function startWebRTCOffer() {
       initPeerConnection();
-
       rtcDataChannel = rtcPeer.createDataChannel('landrop-p2p', { ordered: true });
       setupDataChannel(rtcDataChannel);
 
       const offer = await rtcPeer.createOffer();
       await rtcPeer.setLocalDescription(offer);
 
-      ws.send(JSON.stringify({
-        type: 'webrtc.offer',
-        payload: {
-          targetConnectionId: targetConnId,
-          transferId: activeTransferId,
-          sdp: offer.sdp
-        }
-      }));
+      if (selectedPeer && ws) {
+        ws.send(JSON.stringify({
+          type: 'webrtc.offer',
+          payload: {
+            targetConnectionId: selectedPeer.connectionId,
+            transferId: activeTransferId,
+            sdp: { type: offer.type, sdp: offer.sdp }
+          }
+        }));
+      }
     }
 
     async function handleIncomingWebRTCOffer(data) {
+      if (data.payload?.transferId !== activeTransferId || activeRole !== 'answerer') return;
       if (!rtcPeer) initPeerConnection();
 
-      await rtcPeer.setRemoteDescription(new RTCSessionDescription({
-        type: 'offer',
-        sdp: data.payload.sdp
-      }));
+      await rtcPeer.setRemoteDescription(new RTCSessionDescription(data.payload.sdp));
+      await drainEarlyCandidates();
 
       const answer = await rtcPeer.createAnswer();
       await rtcPeer.setLocalDescription(answer);
@@ -1322,340 +2123,488 @@
       ws.send(JSON.stringify({
         type: 'webrtc.answer',
         payload: {
-          targetConnectionId: data.senderConnectionId || targetConnId,
+          toConnectionId: activePeerConnectionId,
           transferId: activeTransferId,
-          sdp: answer.sdp
+          sdp: { type: answer.type, sdp: answer.sdp }
         }
       }));
     }
 
     async function handleIncomingWebRTCAnswer(data) {
+      if (data.payload?.transferId !== activeTransferId || activeRole !== 'offerer') return;
       if (rtcPeer) {
-        await rtcPeer.setRemoteDescription(new RTCSessionDescription({
-          type: 'answer',
-          sdp: data.payload.sdp
-        }));
+        await rtcPeer.setRemoteDescription(new RTCSessionDescription(data.payload.sdp));
+        await drainEarlyCandidates();
       }
     }
 
     async function handleIncomingIceCandidate(data) {
-      if (rtcPeer && data.payload?.candidate) {
-        try {
-          await rtcPeer.addIceCandidate(new RTCIceCandidate(data.payload.candidate));
-        } catch (e) {}
+      if (data.payload?.transferId !== activeTransferId || !Object.prototype.hasOwnProperty.call(data.payload, 'candidate')) return;
+      earlyCandidates.push(data.payload.candidate);
+      await drainEarlyCandidates();
+    }
+
+    async function drainEarlyCandidates() {
+      while (rtcPeer?.remoteDescription && earlyCandidates.length) {
+        const candidate = earlyCandidates.shift();
+        await rtcPeer.addIceCandidate(candidate === null ? null : new RTCIceCandidate(candidate));
       }
+    }
+
+    function showConnectionError(error) {
+      document.getElementById('client-feedback').textContent = error.message || 'Không thể thiết lập kết nối P2P.';
+      closePeerConnection(true);
+    }
+
+    function closePeerConnection(notify) {
+      if (notify && activeTransferId && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'transfer.cancel', payload: { transferId: activeTransferId } }));
+      if (rtcDataChannel) { rtcDataChannel.onclose = null; rtcDataChannel.onmessage = null; rtcDataChannel.close(); rtcDataChannel = null; }
+      if (rtcPeer) { rtcPeer.onicecandidate = null; rtcPeer.ondatachannel = null; rtcPeer.close(); rtcPeer = null; }
+      activeTransferId = null; activePeerConnectionId = null; activeRole = null; earlyCandidates = [];
+      currentIncomingMeta = null; currentIncomingChunks = [];
+      Object.values(conversations).forEach(messages => messages.forEach(message => {
+        if (message.transferStatus === 'transferring') message.transferStatus = 'failed';
+      }));
+      saveConversationsToStorage(); renderChatTimeline();
+      clearTimeout(typingTimer);
+      clearTimeout(peerTypingTimer);
+      document.getElementById('typing-indicator').style.display = 'none';
+      updateChatHeaderStatus(false, 'Đã ngắt kết nối P2P');
+    }
+
+        function flushPendingOutgoingMessages(channel) {
+      if (!channel || channel.readyState !== 'open' || !activePeerConnectionId) return;
+      const targetList = pendingOutgoingMessages.filter(item => item.peerConnId === activePeerConnectionId);
+      pendingOutgoingMessages = pendingOutgoingMessages.filter(item => item.peerConnId !== activePeerConnectionId);
+      targetList.forEach(item => {
+        try {
+          channel.send(JSON.stringify(item.packet));
+          item.msgObj.pending = false;
+          const bubble = document.getElementById('msg-' + item.msgObj.id);
+          const tick = bubble?.querySelector('.ack-tick');
+          if (tick) tick.textContent = '✓';
+        } catch (e) {
+          pendingOutgoingMessages.push(item);
+        }
+      });
+      saveConversationsToStorage();
     }
 
     function setupDataChannel(channel) {
       rtcDataChannel = channel;
       channel.binaryType = 'arraybuffer';
-      channel.bufferedAmountLowThreshold = 65536;
+      channel.bufferedAmountLowThreshold = 262144;
 
       channel.onopen = () => {
-        if (activeRole === 'offerer' && currentSendingFile) {
-          executeSendFileBinary(currentSendingFile);
+        updateChatHeaderStatus(true, 'P2P Đã kết nối · RTCDataChannel Open');
+        hideWorkspaceMemberRequiredBanner();
+        if (ws?.readyState === WebSocket.OPEN && activeTransferId) ws.send(JSON.stringify({ type: 'webrtc.connection-status', payload: { transferId: activeTransferId, status: 'connected' } }));
+        flushPendingOutgoingMessages(channel);
+        if (pendingOutgoingFile && selectedPeer?.connectionId === activePeerConnectionId) {
+          const f = pendingOutgoingFile;
+          pendingOutgoingFile = null;
+          sendFileOverDataChannel(f);
         }
+      };
+
+      channel.onclose = () => {
+        if (rtcDataChannel === channel) closePeerConnection(true);
       };
 
       channel.onmessage = (event) => {
         if (typeof event.data === 'string') {
           try {
-            const msg = JSON.parse(event.data);
-            handleDataChannelJsonMessage(msg);
+            const packet = JSON.parse(event.data);
+            handleDataChannelJsonPacket(packet);
           } catch(e){}
         } else if (event.data instanceof ArrayBuffer) {
-          handleDataChannelBinaryChunk(event.data);
+          handleIncomingBinaryChunk(event.data);
         }
-      };
-
-      channel.onclose = () => {
-        // DataChannel closed
       };
     }
 
-    async function executeSendFileBinary(file) {
-      showProgressUI(`Đang truyền: ${file.name}`);
-      const chunkSize = 16384;
-      const totalChunks = Math.ceil(file.size / chunkSize) || 1;
+    function handleDataChannelJsonPacket(packet) {
+      if (!selectedPeer || !packet || typeof packet !== 'object') return;
 
-      // Send FILE_START
-      rtcDataChannel.send(JSON.stringify({
+      if (packet.type === 'CHAT_MESSAGE') {
+        if (typeof packet.id !== 'string' || !packet.id || typeof packet.text !== 'string' || !packet.text.trim()) return;
+        playNotificationChime();
+
+        // Acknowledge receipt
+        if (rtcDataChannel && rtcDataChannel.readyState === 'open') {
+          rtcDataChannel.send(JSON.stringify({
+            type: 'CHAT_ACK',
+            messageId: packet.id,
+            status: 'delivered'
+          }));
+        }
+
+        if ((conversations[selectedPeer.connectionId] || []).some(message => message.id === packet.id && !message.isSelf)) return;
+        const msgObj = {
+          id: packet.id,
+          text: packet.text,
+          senderName: selectedPeer.displayName || selectedPeer.deviceName || 'Peer',
+          timestamp: packet.timestamp || Date.now(),
+          isSelf: false,
+          type: 'text'
+        };
+
+        if (!conversations[selectedPeer.connectionId]) conversations[selectedPeer.connectionId] = [];
+        conversations[selectedPeer.connectionId].push(msgObj);
+        saveConversationsToStorage();
+
+        // Hide typing indicator
+        document.getElementById('typing-indicator').style.display = 'none';
+        clearTimeout(peerTypingTimer);
+
+        document.getElementById('messages-stream').appendChild(createMessageElement(msgObj));
+        scrollChatToBottom();
+        renderSidebarPeers(peersList);
+      } else if (packet.type === 'CHAT_TYPING') {
+        clearTimeout(peerTypingTimer);
+        const ind = document.getElementById('typing-indicator');
+        if (packet.isTyping === true) {
+          ind.style.display = 'flex';
+          scrollChatToBottom();
+          peerTypingTimer = setTimeout(() => { ind.style.display = 'none'; }, 3000);
+        } else {
+          ind.style.display = 'none';
+        }
+      } else if (packet.type === 'CHAT_ACK') {
+        // Mark sent message with double ticks ✓✓
+        const msgs = conversations[selectedPeer.connectionId] || [];
+        const m = msgs.find(x => x.id === packet.messageId && x.isSelf);
+        if (m) {
+          m.ack = true;
+          saveConversationsToStorage();
+          const tickEl = document.getElementById('msg-' + packet.messageId)?.querySelector('.ack-tick');
+          if (tickEl) tickEl.textContent = '✓✓';
+        }
+      } else if (packet.type === 'FILE_START') {
+        playNotificationChime();
+        handleIncomingFileStart(packet);
+      } else if (packet.type === 'FILE_END') {
+        handleIncomingFileEnd(packet);
+      } else if (packet.type === 'FILE_CANCEL') {
+        if (currentIncomingMeta) {
+          const message = (conversations[selectedPeer.connectionId] || []).find(item => item.id === currentIncomingMeta.fileId);
+          if (message) message.transferStatus = 'failed';
+          currentIncomingMeta = null; currentIncomingChunks = []; incomingBytes = 0;
+          saveConversationsToStorage(); renderChatTimeline();
+        }
+      } else if (packet.type === 'PING') {
+        if (rtcDataChannel && rtcDataChannel.readyState === 'open') {
+          rtcDataChannel.send(JSON.stringify({
+            type: 'PONG',
+            clientTimestamp: packet.timestamp,
+            timestamp: packet.timestamp
+          }));
+        }
+      } else if (packet.type === 'PONG') {
+        const latency = Math.max(1, Date.now() - (packet.clientTimestamp || packet.timestamp));
+        updateChatHeaderStatus(true, `P2P Đã kết nối · Độ trễ: ${latency} ms`);
+      }
+    }
+
+    // --- INLINE FILE TRANSFER LOGIC ---
+    function triggerFileUpload() {
+      document.getElementById('composer-file-input').click();
+    }
+
+    function handleFilePicked(e) {
+      if (e.target.files && e.target.files[0]) {
+        sendFileOverDataChannel(e.target.files[0]);
+      }
+    }
+
+    async function sendFileOverDataChannel(file) {
+      if (!selectedPeer) return;
+      if (!rtcDataChannel || rtcDataChannel.readyState !== 'open') {
+        pendingOutgoingFile = file;
+        updateChatHeaderStatus(false, 'Đang kết nối P2P để gửi tệp "' + file.name + '"...');
+        initiateP2PConnectionToPeer(selectedPeer.connectionId);
+        return;
+      }
+      if (sendingFile) { alert('Đang gửi một tệp. Vui lòng chờ tệp này hoàn tất.'); return; }
+      sendingFile = true;
+      const channel = rtcDataChannel;
+      const peerId = selectedPeer.connectionId;
+      const transferId = activeTransferId;
+
+      const fileId = 'file-' + Date.now();
+      const chunkSize = 65536;
+      const totalChunks = file.size === 0 ? 0 : Math.ceil(file.size / chunkSize);
+
+      // 1. Send FILE_START packet
+      try { channel.send(JSON.stringify({
         type: 'FILE_START',
+        transferId,
+        fileId,
         fileName: file.name,
         fileSize: file.size,
         mimeType: file.type || 'application/octet-stream',
         chunkSize,
         totalChunks
-      }));
+      })); } catch (error) {
+        sendingFile = false;
+        document.getElementById('client-feedback').textContent = error.message;
+        return;
+      }
+
+      // Append file message bubble to chat
+      const msgObj = {
+        id: fileId,
+        senderName: 'Me',
+        timestamp: Date.now(),
+        isSelf: true,
+        type: 'file',
+        fileMeta: { name: file.name, size: file.size },
+        transferStatus: 'transferring',
+        percent: 0,
+        speed: '0 MB/s'
+      };
+
+      if (!conversations[selectedPeer.connectionId]) conversations[selectedPeer.connectionId] = [];
+      conversations[selectedPeer.connectionId].push(msgObj);
+      saveConversationsToStorage();
+
+      document.getElementById('messages-stream').appendChild(createMessageElement(msgObj));
+      scrollChatToBottom();
 
       const startTime = Date.now();
       let bytesSent = 0;
-
-      for (let offset = 0; offset < file.size; offset += chunkSize) {
-        if (!rtcDataChannel || rtcDataChannel.readyState !== 'open') break;
-
-        const slice = file.slice(offset, Math.min(file.size, offset + chunkSize));
-        const buffer = await slice.arrayBuffer();
-
-        // Backpressure: chờ nếu buffer bị đầy > 64KB
-        if (rtcDataChannel.bufferedAmount > 65536) {
-          await new Promise(res => {
-            const onLow = () => {
-              if (rtcDataChannel) rtcDataChannel.onbufferedamountlow = null;
-              res();
-            };
-            if (rtcDataChannel) rtcDataChannel.onbufferedamountlow = onLow;
-            setTimeout(res, 200);
-          });
-        }
-
-        rtcDataChannel.send(buffer);
-        bytesSent += buffer.byteLength;
-
-        // Cập nhật giao diện tiến độ
-        updateProgressMetrics(bytesSent, file.size, startTime);
-      }
-
-      // Send FILE_END
-      if (rtcDataChannel && rtcDataChannel.readyState === 'open') {
-        rtcDataChannel.send(JSON.stringify({ type: 'FILE_END', fileName: file.name }));
-      }
-
-      finishProgressUI(true, 'Truyền tệp hoàn tất 100%!');
-      currentSendingFile = null;
-    }
-
-    function handleDataChannelJsonMessage(msg) {
-      if (msg.type === 'FILE_START') {
-        currentIncomingFile = {
-          fileName: msg.fileName,
-          fileSize: msg.fileSize,
-          mimeType: msg.mimeType,
-          totalChunks: msg.totalChunks,
-          chunks: [],
-          receivedBytes: 0,
-          startTime: Date.now()
-        };
-        showProgressUI(`Đang nhận: ${msg.fileName}`);
-      } else if (msg.type === 'FILE_END') {
-        if (!currentIncomingFile) return;
-
-        const blob = new Blob(currentIncomingFile.chunks, { type: currentIncomingFile.mimeType });
-        const blobUrl = URL.createObjectURL(blob);
-
-        const item = {
-          id: 'file-' + Date.now(),
-          fileName: currentIncomingFile.fileName,
-          fileSize: currentIncomingFile.fileSize,
-          blobUrl,
-          receivedAt: new Date().toLocaleTimeString()
-        };
-        receivedFilesList.unshift(item);
-        renderReceivedFiles();
-
-        // Tự động tải xuống
-        const a = document.createElement('a');
-        a.href = blobUrl;
-        a.download = item.fileName;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-
-        finishProgressUI(false, `Đã nhận xong: ${item.fileName}!`);
-        currentIncomingFile = null;
-      } else if (msg.type === 'TEXT_MESSAGE') {
-        quickTextList.unshift({
-          text: msg.text,
-          time: new Date().toLocaleTimeString(),
-          isSent: false
-        });
-        renderQuickTextHistory();
-        switchAppTab('text');
-      }
-    }
-
-    function handleDataChannelBinaryChunk(chunk) {
-      if (!currentIncomingFile) return;
-      currentIncomingFile.chunks.push(chunk);
-      currentIncomingFile.receivedBytes += chunk.byteLength;
-
-      updateProgressMetrics(currentIncomingFile.receivedBytes, currentIncomingFile.fileSize, currentIncomingFile.startTime);
-    }
-
-    function updateProgressMetrics(bytes, total, startTime) {
-      const percent = Math.min(100, Math.round((bytes / Math.max(1, total)) * 100));
-      document.getElementById('progress-bar-fill').style.width = percent + '%';
-      document.getElementById('progress-percent').textContent = percent + '%';
-
-      const elapsed = Math.max(0.1, (Date.now() - startTime) / 1000);
-      const speedBytesPerSec = bytes / elapsed;
-      const speedMb = (speedBytesPerSec / (1024 * 1024)).toFixed(1);
-      document.getElementById('metric-speed').textContent = speedMb + ' MB/s';
-
-      const transferredMb = (bytes / (1024 * 1024)).toFixed(1);
-      const totalMb = (total / (1024 * 1024)).toFixed(1);
-      document.getElementById('metric-transferred').textContent = `${transferredMb} / ${totalMb} MB`;
-
-      const remainingBytes = Math.max(0, total - bytes);
-      const etaSec = speedBytesPerSec > 0 ? Math.ceil(remainingBytes / speedBytesPerSec) : 0;
-      document.getElementById('metric-eta').textContent = etaSec > 0 ? etaSec + 's' : '0s';
-    }
-
-    function showProgressUI(title) {
-      document.getElementById('progress-title').textContent = title;
-      document.getElementById('progress-percent').textContent = '0%';
-      document.getElementById('progress-bar-fill').style.width = '0%';
-      document.getElementById('transfer-progress-box').style.display = 'block';
-    }
-
-    function finishProgressUI(isSender, msg) {
-      document.getElementById('progress-title').textContent = msg;
-      document.getElementById('progress-percent').textContent = '100%';
-      document.getElementById('progress-bar-fill').style.width = '100%';
-      setTimeout(() => {
-        document.getElementById('transfer-progress-box').style.display = 'none';
-      }, 4000);
-    }
-
-    function cancelCurrentTransfer() {
-      if (rtcDataChannel && rtcDataChannel.readyState === 'open') {
-        rtcDataChannel.send(JSON.stringify({ type: 'FILE_CANCEL' }));
-      }
-      resetTransferUI();
-    }
-
-    function resetTransferUI() {
-      document.getElementById('transfer-progress-box').style.display = 'none';
-      currentSendingFile = null;
-      currentIncomingFile = null;
-      if (rtcPeer) { try{ rtcPeer.close(); }catch(e){} rtcPeer = null; }
-    }
-
-    function renderReceivedFiles() {
-      const container = document.getElementById('received-list');
-      const empty = document.getElementById('received-empty');
-      if (receivedFilesList.length === 0) {
-        empty.style.display = 'block';
-        return;
-      }
-      empty.style.display = 'none';
-      container.innerHTML = receivedFilesList.map(f => `
-        <div class="received-item">
-          <div style="display:flex; align-items:center; gap:0.75rem; overflow:hidden;">
-            <span style="font-size:1.5rem;">📥</span>
-            <div style="overflow:hidden;">
-              <strong style="display:block; font-size:0.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(f.fileName)}</strong>
-              <span style="font-size:0.75rem; color:var(--text-muted);">${formatBytes(f.fileSize)} &bull; ${f.receivedAt}</span>
-            </div>
-          </div>
-          <a href="${f.blobUrl}" download="${escapeHtml(f.fileName)}" class="btn btn-primary btn-sm">
-            💾 Tải về
-          </a>
-        </div>
-      `).join('');
-    }
-
-    // QUICK TEXT / CLIPBOARD DROP
-    function sendQuickTextAction() {
-      const input = document.getElementById('quick-text-input');
-      const text = input.value.trim();
-      if (!text) { alert('Vui lòng nhập văn bản muốn gửi!'); return; }
-
-      if (!rtcDataChannel || rtcDataChannel.readyState !== 'open') {
-        alert('Chưa có kết nối P2P tới thiết bị. Vui lòng chọn máy và bấm gửi để mở kết nối!');
-        switchAppTab('radar');
-        return;
-      }
-
-      rtcDataChannel.send(JSON.stringify({
-        type: 'TEXT_MESSAGE',
-        text
-      }));
-
-      quickTextList.unshift({
-        text,
-        time: new Date().toLocaleTimeString(),
-        isSent: true
-      });
-      input.value = '';
-      renderQuickTextHistory();
-    }
-
-    function renderQuickTextHistory() {
-      const container = document.getElementById('quick-text-history');
-      const empty = document.getElementById('quick-text-empty');
-      if (quickTextList.length === 0) {
-        empty.style.display = 'block';
-        return;
-      }
-      empty.style.display = 'none';
-      container.innerHTML = quickTextList.map((m, idx) => `
-        <div style="padding:0.75rem 1rem; background:rgba(11,17,32,0.8); border:1px solid var(--border); border-radius:10px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem;">
-            <span style="font-size:0.75rem; font-weight:700; color:${m.isSent ? 'var(--accent-sky)' : 'var(--accent-success)'};">
-              ${m.isSent ? '📤 ĐÃ GỬI' : '📥 ĐÃ NHẬN'} &bull; ${m.time}
-            </span>
-            <button class="btn btn-secondary btn-sm" onclick="copyTextSnippet(${idx})">📋 Sao chép</button>
-          </div>
-          <p style="font-size:0.9rem; word-break:break-word; white-space:pre-wrap; color:var(--text-main);">${escapeHtml(m.text)}</p>
-        </div>
-      `).join('');
-    }
-
-    function copyTextSnippet(idx) {
-      if (quickTextList[idx]) {
-        navigator.clipboard.writeText(quickTextList[idx].text);
-        alert('Đã sao chép vào bộ nhớ tạm (Clipboard)!');
-      }
-    }
-
-    // WORKSPACES
-    async function loadWorkspaces() {
-      const container = document.getElementById('workspaces-list');
+      let lastProgressEmit = 0;
+      const BLOCK_SIZE = 1048576; // 1 MB chunk reading batch
       try {
-        const res = await fetch('/api/workspaces', {
-          headers: { 'Authorization': 'Bearer ' + authToken }
-        });
-        if (res.ok) {
-          const list = await res.json();
-          const items = Array.isArray(list) ? list : (list.data || []);
-          if (items.length === 0) {
-            container.innerHTML = '<div style="text-align:center; padding:1.5rem; color:var(--text-muted); font-size:0.85rem;">Chưa có nhóm nào. Hãy tạo nhóm đầu tiên!</div>';
-          } else {
-            container.innerHTML = items.map(w => `
-              <div style="padding:0.75rem 1rem; background:rgba(11,17,32,0.8); border:1px solid var(--border); border-radius:10px; display:flex; justify-content:space-between; align-items:center;">
-                <div>
-                  <strong style="font-size:0.95rem;">${escapeHtml(w.name)}</strong>
-                  <div style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(w.description || 'Không có mô tả')}</div>
-                </div>
-                <span class="btn btn-secondary btn-sm" style="cursor:default;">Đã tham gia</span>
-              </div>
-            `).join('');
+        for (let blockOffset = 0; blockOffset < file.size; blockOffset += BLOCK_SIZE) {
+          if (rtcDataChannel !== channel || channel.readyState !== 'open') throw new Error('Kết nối bị ngắt trong khi truyền tệp.');
+
+          const blockSlice = file.slice(blockOffset, Math.min(file.size, blockOffset + BLOCK_SIZE));
+          const blockBuffer = await blockSlice.arrayBuffer();
+
+          for (let chunkOffset = 0; chunkOffset < blockBuffer.byteLength; chunkOffset += chunkSize) {
+            if (rtcDataChannel !== channel || channel.readyState !== 'open') throw new Error('Kết nối bị ngắt trong khi truyền tệp.');
+
+            const chunk = blockBuffer.slice(chunkOffset, Math.min(blockBuffer.byteLength, chunkOffset + chunkSize));
+
+            // Event-driven backpressure wait
+            await waitForChannelBuffer(channel);
+            channel.send(chunk);
+            bytesSent += chunk.byteLength;
+
+            const now = Date.now();
+            if (now - lastProgressEmit >= 100 || bytesSent >= file.size) {
+              lastProgressEmit = now;
+              const pct = Math.min(100, Math.round((bytesSent / Math.max(1, file.size)) * 100));
+              const elapsed = Math.max(0.05, (now - startTime) / 1000);
+              const speedMb = (bytesSent / elapsed / (1024 * 1024)).toFixed(1) + ' MB/s';
+
+              // Update bubble UI
+              msgObj.percent = pct; msgObj.speed = speedMb;
+              const bubble = document.getElementById('msg-' + fileId);
+              const bar = bubble?.querySelector('.file-progress-bar');
+              const metrics = bubble?.querySelector('.file-metrics-row span');
+              if (bar) bar.style.width = pct + '%';
+              if (metrics) metrics.textContent = `${pct}% · ${speedMb}`;
+            }
           }
         }
-      } catch (e) {
-        container.innerHTML = '<div style="text-align:center; color:var(--accent-danger); font-size:0.85rem;">Không thể tải danh sách workspace</div>';
+
+        // 2. Send FILE_END packet
+        await waitForChannelBuffer(channel);
+        channel.send(JSON.stringify({ type: 'FILE_END', transferId, fileId }));
+        msgObj.transferStatus = 'completed';
+      } catch (error) {
+        msgObj.transferStatus = 'failed';
+        document.getElementById('client-feedback').textContent = error.message;
+        if (channel.readyState === 'open') {
+          try { channel.send(JSON.stringify({ type: 'FILE_CANCEL', transferId, reason: 'Transfer interrupted' })); } catch { /* channel closed */ }
+        }
+      } finally {
+        sendingFile = false;
+        saveConversationsToStorage();
+        if (selectedPeer?.connectionId === peerId) renderChatTimeline();
       }
     }
 
-    async function createWorkspace() {
-      const input = document.getElementById('new-ws-name');
-      const name = input.value.trim();
-      if (!name) return;
-      try {
-        const res = await fetch('/api/workspaces', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + authToken
-          },
-          body: JSON.stringify({ name, description: 'Workspace tạo từ Web Client' })
-        });
-        if (res.ok) {
-          input.value = '';
-          loadWorkspaces();
+    async function waitForChannelBuffer(channel) {
+      if (!channel.bufferedAmount || channel.bufferedAmount <= 1048576) {
+        if (rtcDataChannel !== channel || channel.readyState !== 'open') throw new Error('Kết nối bị ngắt trong khi truyền tệp.');
+        return;
+      }
+      const deadline = Date.now() + 30000;
+      await new Promise(resolve => {
+        let timer = null;
+        const onLow = () => { cleanup(); resolve(); };
+        const cleanup = () => {
+          if (timer) clearTimeout(timer);
+          if (typeof channel.removeEventListener === 'function') channel.removeEventListener('bufferedamountlow', onLow);
+        };
+        if (typeof channel.addEventListener === 'function') {
+          channel.addEventListener('bufferedamountlow', onLow, { once: true });
+        } else {
+          const check = () => {
+            if (rtcDataChannel !== channel || channel.readyState !== 'open' || !channel.bufferedAmount || channel.bufferedAmount <= 1048576 || Date.now() >= deadline) {
+              cleanup(); resolve();
+            } else {
+              timer = setTimeout(check, 10);
+            }
+          };
+          timer = setTimeout(check, 10);
+          return;
         }
-      } catch (e) {}
+        timer = setTimeout(() => { cleanup(); resolve(); }, 30000);
+      });
+      if (rtcDataChannel !== channel || channel.readyState !== 'open') throw new Error('Kết nối bị ngắt trong khi truyền tệp.');
+    }
+
+    let currentIncomingChunks = [];
+    let currentIncomingMeta = null;
+    let lastIncomingProgressEmit = 0;
+
+    function handleIncomingFileStart(packet) {
+      if (currentIncomingMeta || typeof packet.fileId !== 'string' || !packet.fileId || typeof packet.fileName !== 'string'
+          || !Number.isSafeInteger(packet.fileSize) || packet.fileSize < 0) return;
+      currentIncomingMeta = packet;
+      currentIncomingChunks = [];
+      incomingBytes = 0;
+      lastIncomingProgressEmit = 0;
+
+      const msgObj = {
+        id: packet.fileId,
+        senderName: selectedPeer ? selectedPeer.displayName : 'Peer',
+        timestamp: Date.now(),
+        isSelf: false,
+        type: 'file',
+        fileMeta: { name: packet.fileName, size: packet.fileSize },
+        transferStatus: 'transferring',
+        percent: 0,
+        speed: 'Đang nhận...'
+      };
+
+      if (!conversations[selectedPeer.connectionId]) conversations[selectedPeer.connectionId] = [];
+      conversations[selectedPeer.connectionId].push(msgObj);
+      saveConversationsToStorage();
+
+      document.getElementById('messages-stream').appendChild(createMessageElement(msgObj));
+      scrollChatToBottom();
+    }
+
+    function handleIncomingBinaryChunk(chunk) {
+      if (!currentIncomingMeta) return;
+      currentIncomingChunks.push(chunk);
+      incomingBytes += chunk.byteLength;
+      if (incomingBytes > currentIncomingMeta.fileSize) {
+        handleDataChannelJsonPacket({ type: 'FILE_CANCEL' });
+        return;
+      }
+
+      if (currentIncomingChunks.length > 256) {
+        currentIncomingChunks = [new Blob(currentIncomingChunks)];
+      }
+
+      const now = Date.now();
+      if (now - lastIncomingProgressEmit >= 100 || incomingBytes >= currentIncomingMeta.fileSize) {
+        lastIncomingProgressEmit = now;
+        const totalReceived = incomingBytes;
+        const pct = Math.min(100, Math.round((totalReceived / Math.max(1, currentIncomingMeta.fileSize)) * 100));
+
+        const message = (conversations[selectedPeer.connectionId] || []).find(item => item.id === currentIncomingMeta.fileId);
+        if (message) message.percent = pct;
+        const bubble = document.getElementById('msg-' + currentIncomingMeta.fileId);
+        const bar = bubble?.querySelector('.file-progress-bar');
+        const metrics = bubble?.querySelector('.file-metrics-row span');
+        if (bar) bar.style.width = pct + '%';
+        if (metrics) metrics.textContent = pct + '%';
+      }
+    }
+
+    function handleIncomingFileEnd(packet) {
+      if (!currentIncomingMeta || packet.fileId !== currentIncomingMeta.fileId) return;
+      if (incomingBytes !== currentIncomingMeta.fileSize) {
+        handleDataChannelJsonPacket({ type: 'FILE_CANCEL' });
+        return;
+      }
+
+      const blob = new Blob(currentIncomingChunks, { type: currentIncomingMeta.mimeType || 'application/octet-stream' });
+      const blobUrl = URL.createObjectURL(blob);
+
+      const msgs = conversations[selectedPeer.connectionId] || [];
+      const m = msgs.find(x => x.id === packet.fileId);
+      if (m) {
+        m.transferStatus = 'completed';
+        m.blobUrl = blobUrl;
+        saveConversationsToStorage();
+      }
+
+      // Auto trigger download for mobile & desktop ease
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = currentIncomingMeta.fileName;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+
+      renderChatTimeline();
+      currentIncomingMeta = null;
+      currentIncomingChunks = [];
+    }
+
+    // --- PING TEST ---
+    function sendPingTest() {
+      if (!rtcDataChannel || rtcDataChannel.readyState !== 'open') {
+        alert('Kênh DataChannel chưa mở.');
+        return;
+      }
+      rtcDataChannel.send(JSON.stringify({
+        type: 'PING',
+        timestamp: Date.now()
+      }));
+    }
+
+    // --- DRAG AND DROP ON ENTIRE CHAT PANE ---
+    function setupDragAndDrop() {
+      const pane = document.getElementById('chat-pane');
+      const overlay = document.getElementById('chat-drop-overlay');
+
+      pane.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        overlay.style.display = 'flex';
+      });
+
+      pane.addEventListener('dragleave', (e) => {
+        e.preventDefault();
+        if (e.target === overlay) {
+          overlay.style.display = 'none';
+        }
+      });
+
+      pane.addEventListener('drop', (e) => {
+        e.preventDefault();
+        overlay.style.display = 'none';
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+          sendFileOverDataChannel(e.dataTransfer.files[0]);
+        }
+      });
+    }
+
+    // --- MODAL UTILS ---
+    function showConnectionInfoModal() {
+      document.getElementById('qr-modal').style.display = 'flex';
+    }
+
+    function showQrModal() {
+      showConnectionInfoModal();
+    }
+
+    function closeQrModal() {
+      document.getElementById('qr-modal').style.display = 'none';
+    }
+
+    function copyMyConnId() {
+      if (!myConnectionId) return;
+      navigator.clipboard.writeText(myConnectionId);
+      alert('Đã sao chép ID: ' + myConnectionId);
     }
 
     function formatBytes(bytes) {

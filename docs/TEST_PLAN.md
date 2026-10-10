@@ -16,9 +16,10 @@ mvn test "-Dlandrop.database.enabled=false" "-Dtest=*,!PersistentChatTest,!FileM
 
 | Kiểm tra | Phạm vi và giới hạn |
 | --- | --- |
-| Node tests | Launcher server, cấu hình, lifecycle và readiness |
+| Node tests | Launcher server, cấu hình, lifecycle, readiness và client đi kèm: auth/signaling, chuyển peer, ICE sớm, tệp thiếu byte/ngắt kết nối |
 | Frontend API tests | HTTP/error/cancellation, DTO, refresh đồng thời và đổi phiên, pagination, folder cycles và payload di chuyển metadata |
 | TypeScript | Import, kiểu dữ liệu, cú pháp; chưa xác minh API thật |
+| Frontend WebRTC tests | Chat/ACK không trùng tin, dọn typing, nhận đủ byte, tệp rỗng, chống gửi đồng thời và mất kênh; transport giả lập |
 | Next.js build | Biên dịch route và đóng gói; chưa chứng minh dữ liệu thật |
 | Maven regression không DB | LAN, packet/crypto, transfer, auth in-memory, server/control và suite không cần PostgreSQL |
 
@@ -49,3 +50,7 @@ mvn -pl backend test "-Dlandrop.test.postgres=true" "-Dtest=WorkspacePostgresTes
 | Admin | Phân quyền, tìm kiếm server và paging, CRUD user/workspace, membership, tự hạ quyền/xóa tài khoản, owner, revoke/disconnect, cấu hình và log |
 
 Mock auth/data và thanh tiến trình giả chưa đáp ứng tiêu chí tích hợp. Kết quả đợt dọn cấu trúc nằm trong [repository report](REPOSITORY_REPORT.md).
+
+## Database persistence regression
+
+See [DATABASE_PERSISTENCE.md](guides/DATABASE_PERSISTENCE.md). Run `ServerBootstrapPersistenceTest` and `DatabaseConnectionConfigTest` in the default suite. Run `ServerPersistencePostgresTest` with `landrop.test.postgres=true` and `TEST_DATABASE_URL` targeting a dedicated test database; it verifies HTTP-to-SQL persistence across restarts, atomic registration/refresh/enrollment failures, concurrent refresh and migration history.

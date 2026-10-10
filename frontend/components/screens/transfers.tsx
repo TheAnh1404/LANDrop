@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import {
   Activity,
   ArrowDownUp,
+  ArrowLeft,
   Check,
   CheckCircle2,
   Clock,
@@ -11,10 +12,13 @@ import {
   Download,
   FileText,
   Globe,
+  Image,
   Info,
   Laptop,
   Loader2,
+  MessageSquare,
   Monitor,
+  Paperclip,
   Play,
   QrCode,
   Radio,
@@ -112,6 +116,44 @@ function getPlatformIcon(platform?: string) {
   return <Globe size={18} className="text-blue-400" />;
 }
 
+function playWebNotificationSound(type: 'message' | 'file') {
+  if (typeof window === 'undefined') return;
+  try {
+    const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+    if (!AudioContextClass) return;
+    const ctx = new AudioContextClass();
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(() => {});
+    }
+    const osc = ctx.createOscillator();
+    osc.onended = () => { void ctx.close().catch(() => {}); };
+    const gain = ctx.createGain();
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+
+    if (type === 'message') {
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(587.33, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.12);
+      gain.gain.setValueAtTime(0.08, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.22);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.22);
+    } else {
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(523.25, ctx.currentTime);
+      osc.frequency.setValueAtTime(659.25, ctx.currentTime + 0.08);
+      osc.frequency.setValueAtTime(783.99, ctx.currentTime + 0.16);
+      gain.gain.setValueAtTime(0.09, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+      osc.start(ctx.currentTime);
+      osc.stop(ctx.currentTime + 0.35);
+    }
+  } catch {
+    /* AudioContext may be blocked until user interaction */
+  }
+}
+
 export function TransfersScreen({ id }: { id: string }) {
   const { transfers, startDemo, cancelTransfer } = useDemoTransfers();
   const { mode, request, user } = useSession();
@@ -125,6 +167,8 @@ export function TransfersScreen({ id }: { id: string }) {
     transferProgress,
     receivedFiles,
     quickMessages,
+    chatMessages,
+    peerTyping,
     onlinePeers,
     requestP2P,
     acceptIncomingRequest,
@@ -133,23 +177,41 @@ export function TransfersScreen({ id }: { id: string }) {
     resetToIdle,
     sendFile,
     sendQuickText,
+    sendChatMessage,
+    sendChatTyping,
+    clearChatMessages,
     fetchOnlinePeers,
     clearReceivedFiles,
     clearQuickMessages,
   } = useWebRTC();
 
-  // Navigation tab: 'send' (File Drop), 'text' (Quick Text), 'received' (Inbox), 'lookup' (UUID Audit)
-  const [activeTab, setActiveTab] = useState<'send' | 'text' | 'received' | 'lookup'>('send');
+  // Navigation tab: 'chat' (Dual-Pane Web App), 'send' (File Drop), 'text' (Quick Text), 'received' (Inbox), 'lookup' (UUID Audit)
+  const [activeTab, setActiveTab] = useState<'chat' | 'send' | 'text' | 'received' | 'lookup'>('chat');
   const [demoFilterTab, setDemoFilterTab] = useState('all');
 
-  // File Drop state
+  // Peer & Search state
   const [selectedPeer, setSelectedPeer] = useState<OnlinePeerItem | null>(null);
+  const [peerSearchQuery, setPeerSearchQuery] = useState('');
   const [manualConnectionId, setManualConnectionId] = useState('');
   const [showManualInput, setShowManualInput] = useState(false);
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [showMobilePeerList, setShowMobilePeerList] = useState(false);
+
+  // File Drop state
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [transferError, setTransferError] = useState('');
   const [isSending, setIsSending] = useState(false);
+
+  // Chat state
+  const [chatInput, setChatInput] = useState('');
+  const [isChatDragging, setIsChatDragging] = useState(false);
+  const chatBottomRef = useRef<HTMLDivElement>(null);
+  const chatAttachmentInputRef = useRef<HTMLInputElement>(null);
+  const chatMediaInputRef = useRef<HTMLInputElement>(null);
+  const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const prevChatCountRef = useRef(chatMessages.length);
+  const prevReceivedCountRef = useRef(receivedFiles.length);
 
   // Quick Text state
   const [quickTextInput, setQuickTextInput] = useState('');
@@ -168,6 +230,7 @@ export function TransfersScreen({ id }: { id: string }) {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pendingFileToSendRef = useRef<File | null>(null);
+  const pendingChatToSendRef = useRef<string | null>(null);
 
   // Periodic peer scan in live mode
   useEffect(() => {
@@ -191,11 +254,158 @@ export function TransfersScreen({ id }: { id: string }) {
     }
   }, [peerState, sendFile]);
 
+  // When connection succeeds and a chat message was queued, automatically trigger sendChatMessage
+  useEffect(() => {
+    if (peerState === 'CONNECTED' && pendingChatToSendRef.current) {
+      const msg = pendingChatToSendRef.current;
+      pendingChatToSendRef.current = null;
+      try {
+        sendChatMessage(msg);
+      } catch (err) {
+        setTransferError(errorMessage(err));
+      }
+    }
+  }, [peerState, sendChatMessage]);
+
   // Handle Scanning Refresh
   const handleScanNow = () => {
     setIsScanning(true);
     fetchOnlinePeers();
     setTimeout(() => setIsScanning(false), 800);
+  };
+
+  // Audio chime when receiving messages
+  useEffect(() => {
+    if (chatMessages.length > prevChatCountRef.current) {
+      const latest = chatMessages[chatMessages.length - 1];
+      if (latest && latest.direction === 'received') {
+        playWebNotificationSound(latest.type === 'file' ? 'file' : 'message');
+      }
+    }
+    prevChatCountRef.current = chatMessages.length;
+  }, [chatMessages]);
+
+  // Audio chime when file is received
+  useEffect(() => {
+    if (receivedFiles.length > prevReceivedCountRef.current) {
+      playWebNotificationSound('file');
+    }
+    prevReceivedCountRef.current = receivedFiles.length;
+  }, [receivedFiles]);
+
+  // Auto scroll chat to bottom
+  useEffect(() => {
+    chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [chatMessages.length, peerTyping]);
+
+  // Handle Chat Input & Typing Indicator Broadcast
+  const handleChatInputChange = (val: string) => {
+    setChatInput(val);
+    if (peerState === 'CONNECTED') {
+      sendChatTyping(true);
+      if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
+      typingTimeoutRef.current = setTimeout(() => {
+        sendChatTyping(false);
+      }, 2000);
+    }
+  };
+
+  // Send Chat Message Action
+  const handleSendChat = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const text = chatInput.trim();
+    if (!text) return;
+
+    if (peerState !== 'CONNECTED') {
+      const targetConnId = selectedPeer?.connectionId || manualConnectionId.trim();
+      if (!targetConnId) {
+        setTransferError('Vui lòng chọn thiết bị nhận từ Radar trước khi gửi tin nhắn.');
+        return;
+      }
+      pendingChatToSendRef.current = text;
+      setChatInput('');
+      setTransferError('');
+      if (peerState === 'IDLE' || peerState === 'DISCONNECTED') {
+        void handleConnectPeer();
+      }
+      return;
+    }
+
+    try {
+      if (typingTimeoutRef.current) {
+        clearTimeout(typingTimeoutRef.current);
+        sendChatTyping(false);
+      }
+      sendChatMessage(text);
+      setChatInput('');
+      setTransferError('');
+    } catch (err) {
+      setTransferError(errorMessage(err));
+    }
+  };
+
+  // Direct File Transfer helper
+  const handleSendFileDirect = async (file: File) => {
+    if (!file) return;
+    const targetConnId = selectedPeer?.connectionId || manualConnectionId.trim();
+    if (!targetConnId) {
+      setTransferError('Vui lòng chọn thiết bị nhận từ Radar trước khi gửi tệp.');
+      return;
+    }
+    setTransferError('');
+    setIsSending(true);
+    try {
+      if (peerState === 'CONNECTED') {
+        await sendFile(file);
+      } else {
+        pendingFileToSendRef.current = file;
+        await requestP2P({
+          workspaceId: id,
+          receiverConnectionId: targetConnId,
+          targetDeviceName: selectedPeer?.deviceName || 'Thiết bị đối phương',
+          fileName: file.name,
+          fileSize: file.size,
+        });
+      }
+    } catch (err) {
+      pendingFileToSendRef.current = null;
+      setTransferError(errorMessage(err));
+    } finally {
+      setIsSending(false);
+    }
+  };
+
+  // Drag & drop on chat area
+  const handleChatDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsChatDragging(true);
+  };
+  const handleChatDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsChatDragging(false);
+  };
+  const handleChatDrop = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsChatDragging(false);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      await handleSendFileDirect(e.dataTransfer.files[0]);
+    }
+  };
+
+  // Manual connect trigger
+  const handleConnectPeer = async () => {
+    const targetConnId = selectedPeer?.connectionId || manualConnectionId.trim();
+    if (!targetConnId) return;
+    try {
+      setTransferError('');
+      await requestP2P({
+        workspaceId: id,
+        receiverConnectionId: targetConnId,
+        targetDeviceName: selectedPeer?.deviceName || 'Thiết bị đối phương',
+      });
+    } catch (err) {
+      setTransferError(errorMessage(err));
+    }
   };
 
   // Copy local ID
@@ -223,9 +433,35 @@ export function TransfersScreen({ id }: { id: string }) {
 
   // Select target peer
   const handleSelectPeer = (peer: OnlinePeerItem) => {
+    if (diagnostics.targetConnectionId && diagnostics.targetConnectionId !== peer.connectionId) {
+      pendingFileToSendRef.current = null;
+      pendingChatToSendRef.current = null;
+      cancelConnection('Chuyển sang thiết bị khác');
+      clearChatMessages();
+      setChatInput('');
+    }
     setSelectedPeer(peer);
     setManualConnectionId(peer.connectionId);
+    setShowMobilePeerList(false);
     setTransferError('');
+    if (peerState === 'IDLE' || peerState === 'DISCONNECTED') {
+      void requestP2P({
+        workspaceId: id,
+        receiverConnectionId: peer.connectionId,
+        targetDeviceName: peer.deviceName || 'Thiết bị đối phương',
+      });
+    }
+  };
+
+  const handleManualConnectionChange = (value: string) => {
+    if (diagnostics.targetConnectionId && diagnostics.targetConnectionId !== value.trim()) {
+      pendingFileToSendRef.current = null;
+      cancelConnection('Thay đổi thiết bị nhận');
+      clearChatMessages();
+      setChatInput('');
+    }
+    setManualConnectionId(value);
+    setSelectedPeer(null);
   };
 
   // File Drag & Drop Handlers
@@ -485,6 +721,24 @@ export function TransfersScreen({ id }: { id: string }) {
         <div className="flex items-center gap-2 p-1 bg-slate-900/70 border border-slate-800/80 rounded-xl">
           <button
             type="button"
+            onClick={() => setActiveTab('chat')}
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
+              activeTab === 'chat'
+                ? 'bg-gradient-to-r from-cyan-500/20 to-emerald-500/20 text-cyan-300 border border-cyan-500/30 shadow-sm'
+                : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            <MessageSquare size={14} className={activeTab === 'chat' ? 'text-cyan-400' : ''} />
+            <span>Hội thoại & P2P Web App</span>
+            {chatMessages.length > 0 && (
+              <span className="px-1.5 py-0.2 bg-cyan-500/20 text-[10px] rounded-full text-cyan-300 font-bold">
+                {chatMessages.length}
+              </span>
+            )}
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('send')}
             className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-all ${
               activeTab === 'send'
@@ -560,7 +814,481 @@ export function TransfersScreen({ id }: { id: string }) {
       </div>
 
       {/* ========================================================================= */}
-      {/* 5. TAB: FILE DROP & RADAR DISCOVERY */}
+      {/* 5. TAB: P2P WEB APP & REALTIME CONVERSATION (MASTER-DETAIL DUAL PANE)     */}
+      {/* ========================================================================= */}
+      {activeTab === 'chat' && (
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+          {/* --------------------------------------------------------------------- */}
+          {/* LEFT PANE: LAN Device Radar & Session Directory (4 cols)              */}
+          {/* --------------------------------------------------------------------- */}
+          <div className={`lg:col-span-5 xl:col-span-4 space-y-4 ${selectedPeer && !showMobilePeerList ? 'hidden lg:block' : 'block'}`}>
+            <div className="p-4 sm:p-5 bg-slate-900/80 border border-slate-800/80 rounded-2xl backdrop-blur-md space-y-3.5 shadow-xl">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <div className="relative">
+                    <Wifi size={18} className="text-cyan-400" />
+                    <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-cyan-400 animate-ping" />
+                  </div>
+                  <div>
+                    <strong className="text-sm font-bold text-slate-100 block">
+                      Thiết bị LAN lân cận
+                    </strong>
+                    <span className="text-[11px] text-slate-400">
+                      {onlinePeers.length} máy đang phát hiện qua WebRTC
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setShowQrModal(true)}
+                    title="Mã QR & Link chia sẻ"
+                    className="p-2 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-cyan-300 transition-colors"
+                  >
+                    <QrCode size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleScanNow}
+                    title="Quét lại mạng"
+                    className="flex items-center gap-1 px-2.5 py-1.5 text-xs rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 transition-colors"
+                  >
+                    <RefreshCw size={12} className={isScanning ? 'animate-spin text-cyan-400' : ''} />
+                    <span className="hidden sm:inline">Quét lại</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Peer Search Filter */}
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  value={peerSearchQuery}
+                  onChange={e => setPeerSearchQuery(e.target.value)}
+                  placeholder="Lọc thiết bị theo tên hoặc HĐH..."
+                  className="w-full bg-slate-950/70 border border-slate-800/80 rounded-xl pl-8 pr-3 py-2 text-xs text-slate-200 placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
+                />
+              </div>
+
+              {/* Peer Device List */}
+              {(() => {
+                const filteredPeers = onlinePeers.filter(p => {
+                  const query = peerSearchQuery.toLowerCase().trim();
+                  if (!query) return true;
+                  return (
+                    (p.deviceName || '').toLowerCase().includes(query) ||
+                    (p.displayName || '').toLowerCase().includes(query) ||
+                    (p.platform || '').toLowerCase().includes(query) ||
+                    p.connectionId.toLowerCase().includes(query)
+                  );
+                });
+
+                if (filteredPeers.length === 0) {
+                  return (
+                    <div className="p-6 border border-dashed border-slate-800 rounded-xl text-center space-y-2.5 bg-slate-950/40">
+                      <Radio size={28} className="text-slate-400 animate-pulse mx-auto" />
+                      <strong className="text-xs font-semibold text-slate-300 block">
+                        {onlinePeers.length === 0 ? 'Đang tìm kiếm thiết bị LAN...' : 'Không tìm thấy thiết bị phù hợp'}
+                      </strong>
+                      <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                        Mở LANDrop trên một thiết bị khác cùng mạng Wi-Fi/LAN để thấy nhau ngay lập tức.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-2 max-h-[460px] overflow-y-auto pr-1">
+                    {filteredPeers.map(peer => {
+                      const isSelected = selectedPeer?.connectionId === peer.connectionId;
+                      return (
+                        <div
+                          key={peer.connectionId}
+                          onClick={() => handleSelectPeer(peer)}
+                          className={`p-3 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
+                            isSelected
+                              ? 'bg-gradient-to-r from-cyan-950/60 to-slate-900 border-cyan-500/80 shadow-[0_0_15px_rgba(6,182,212,0.18)]'
+                              : 'bg-slate-950/40 border-slate-800/80 hover:border-slate-700 hover:bg-slate-900/60'
+                          }`}
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <div className="relative p-2.5 rounded-xl bg-slate-900 border border-slate-800 shrink-0">
+                              {getPlatformIcon(peer.platform)}
+                              <span className="absolute bottom-1 right-1 w-2 h-2 rounded-full bg-emerald-400 ring-2 ring-slate-900" />
+                            </div>
+                            <div className="min-w-0">
+                              <strong className="text-xs sm:text-sm font-semibold text-slate-200 block truncate">
+                                {peer.displayName || peer.deviceName || 'Thiết bị LAN'}
+                              </strong>
+                              <div className="flex items-center gap-1.5 text-[11px] text-slate-400 mt-0.5">
+                                <span className="truncate max-w-[100px]">{peer.platform || 'Trình duyệt Web'}</span>
+                                <span>·</span>
+                                <code className="font-mono text-[10px] text-slate-400">
+                                  {peer.connectionId.substring(0, 8)}...
+                                </code>
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="shrink-0 pl-2">
+                            {isSelected ? (
+                              <span className="px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-300 text-[11px] font-semibold border border-cyan-500/40">
+                                Đang chọn
+                              </span>
+                            ) : (
+                              <span className="text-[11px] text-slate-400 hover:text-cyan-300 font-medium">
+                                Vào chat →
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              })()}
+
+              {/* Manual Connection ID Toggle */}
+              <div className="pt-2 border-t border-slate-800/80">
+                <button
+                  type="button"
+                  onClick={() => setShowManualInput(v => !v)}
+                  className="text-[11px] text-slate-400 hover:text-slate-200 flex items-center gap-1 transition-colors"
+                >
+                  <span>{showManualInput ? 'Ẩn nhập ID thủ công' : 'Hoặc kết nối bằng ID máy đối phương'}</span>
+                </button>
+
+                {showManualInput && (
+                  <div className="mt-2.5 space-y-2">
+                    <input
+                      type="text"
+                      value={manualConnectionId}
+                      onChange={e => {
+                        handleManualConnectionChange(e.target.value);
+                        setSelectedPeer(null);
+                      }}
+                      placeholder="Dán ID phiên thiết bị (ví dụ: conn-xyz...)"
+                      className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2 text-xs text-slate-200 font-mono focus:border-cyan-500 focus:outline-none"
+                    />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Quick Session Status Pill */}
+            <div className="p-3.5 bg-slate-900/40 border border-slate-800/60 rounded-xl text-xs space-y-2">
+              <div className="flex items-center justify-between text-slate-400">
+                <span>Kênh WebRTC P2P:</span>
+                <Tag tone={peerStateTone[peerState]}>{peerStateLabel[peerState]}</Tag>
+              </div>
+              {testResult?.passed && (
+                <div className="flex items-center justify-between text-emerald-400 pt-1 border-t border-slate-800/40 text-[11px]">
+                  <span className="flex items-center gap-1">
+                    <ShieldCheck size={13} /> Độ trễ RTCDataChannel:
+                  </span>
+                  <span className="font-mono font-bold">{testResult.roundTripMs} ms</span>
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* --------------------------------------------------------------------- */}
+          {/* RIGHT PANE: P2P Conversation & Live Drop Stream (8 cols)              */}
+          {/* --------------------------------------------------------------------- */}
+          <div className={`lg:col-span-7 xl:col-span-8 space-y-4 ${!selectedPeer && !manualConnectionId && showMobilePeerList ? 'hidden lg:block' : 'block'}`}>
+            {!selectedPeer && !manualConnectionId ? (
+              <div className="p-10 sm:p-16 bg-slate-900/70 border border-slate-800/80 rounded-2xl text-center space-y-4 backdrop-blur-md">
+                <div className="p-4 rounded-3xl bg-cyan-950/40 text-cyan-400 border border-cyan-500/30 w-fit mx-auto shadow-lg shadow-cyan-500/10">
+                  <MessageSquare size={44} />
+                </div>
+                <div className="max-w-md mx-auto space-y-1.5">
+                  <strong className="text-lg font-bold text-slate-100 block">
+                    Phòng Trò Chuyện & Truyền Tệp P2P Trực Tiếp
+                  </strong>
+                  <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
+                    Chọn một thiết bị từ danh sách Radar bên trái để bắt đầu nhắn tin tức thì, chia sẻ liên kết và kéo thả tệp tin không giới hạn dung lượng.
+                  </p>
+                </div>
+                <div className="pt-2 flex flex-wrap justify-center gap-2.5 text-xs text-slate-400">
+                  <span className="px-3 py-1 bg-slate-950/60 border border-slate-800 rounded-lg">🔒 Mã hóa đầu cuối WebRTC</span>
+                  <span className="px-3 py-1 bg-slate-950/60 border border-slate-800 rounded-lg">⚡ Tốc độ đường truyền LAN</span>
+                  <span className="px-3 py-1 bg-slate-950/60 border border-slate-800 rounded-lg">📂 Không nén dung lượng</span>
+                </div>
+              </div>
+            ) : (
+              <div
+                onDragOver={handleChatDragOver}
+                onDragLeave={handleChatDragLeave}
+                onDrop={handleChatDrop}
+                className="relative bg-slate-900/85 border border-slate-800/80 rounded-2xl backdrop-blur-md flex flex-col h-[680px] shadow-2xl overflow-hidden"
+              >
+                {/* Drag and Drop Overlay */}
+                {isChatDragging && (
+                  <div className="absolute inset-0 z-30 bg-cyan-950/80 border-2 border-dashed border-cyan-400 rounded-2xl flex flex-col items-center justify-center gap-3 backdrop-blur-sm animate-in fade-in duration-150">
+                    <div className="p-4 rounded-2xl bg-cyan-500/20 text-cyan-300 animate-bounce">
+                      <UploadCloud size={44} />
+                    </div>
+                    <strong className="text-base font-bold text-cyan-200">
+                      Thả tệp vào đây để gửi trực tiếp!
+                    </strong>
+                    <span className="text-xs text-cyan-400">
+                      Gửi tới {selectedPeer?.deviceName || 'Thiết bị đối phương'} qua kênh RTCDataChannel
+                    </span>
+                  </div>
+                )}
+
+                {/* 1. Chat Header */}
+                <div className="p-3.5 sm:p-4 bg-slate-950/70 border-b border-slate-800/80 flex items-center justify-between gap-3 shrink-0">
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <button
+                      type="button"
+                      onClick={() => setShowMobilePeerList(true)}
+                      className="lg:hidden p-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300"
+                      title="Quay lại danh sách"
+                    >
+                      <ArrowLeft size={16} />
+                    </button>
+                    <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-cyan-400 shrink-0">
+                      {getPlatformIcon(selectedPeer?.platform)}
+                    </div>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <strong className="text-sm font-bold text-slate-100 truncate block">
+                          {selectedPeer?.displayName || selectedPeer?.deviceName || 'Thiết bị P2P'}
+                        </strong>
+                        <span className="w-2 h-2 rounded-full bg-emerald-400 shrink-0" />
+                      </div>
+                      <div className="flex items-center gap-2 text-[11px] text-slate-400 truncate">
+                        <span>{selectedPeer?.platform || 'LAN Peer'}</span>
+                        <span>·</span>
+                        <code className="text-cyan-300/80 font-mono text-[10px]">
+                          {(selectedPeer?.connectionId || manualConnectionId).substring(0, 12)}...
+                        </code>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    <Tag tone={peerStateTone[peerState]}>{peerStateLabel[peerState]}</Tag>
+
+                    {chatMessages.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => clearChatMessages()}
+                        className="p-1.5 rounded-lg bg-slate-800 hover:bg-rose-950/50 hover:text-rose-300 text-slate-400 transition-colors"
+                        title="Xóa lịch sử trò chuyện"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                    )}
+
+                    {peerState === 'CONNECTED' ? (
+                      <button
+                        type="button"
+                        onClick={() => cancelConnection('Ngắt bởi người dùng')}
+                        className="px-2.5 py-1 text-xs font-semibold rounded-lg bg-slate-800 hover:bg-rose-950/50 hover:text-rose-300 text-slate-300 transition-colors"
+                      >
+                        Ngắt kết nối
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={handleConnectPeer}
+                        className="px-3 py-1 text-xs font-bold rounded-lg bg-gradient-to-r from-cyan-500 to-emerald-500 text-slate-950 hover:from-cyan-400 hover:to-emerald-400 transition-all shadow-sm"
+                      >
+                        Mở P2P
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* 2. Chat Timeline (Messages & File Bubbles) */}
+                <div className="flex-1 p-4 overflow-y-auto space-y-3.5 bg-slate-950/30">
+                  {chatMessages.length === 0 ? (
+                    <div className="h-full flex flex-col items-center justify-center text-center p-6 space-y-2.5 text-slate-400">
+                      <div className="p-3 bg-slate-900/60 rounded-2xl text-slate-400">
+                        <MessageSquare size={28} />
+                      </div>
+                      <strong className="text-xs sm:text-sm font-semibold text-slate-300">
+                        Chưa có tin nhắn trong phiên trò chuyện này
+                      </strong>
+                      <p className="text-[11px] text-slate-400 max-w-sm">
+                        Gõ tin nhắn bên dưới hoặc kéo thả ảnh/tệp tin vào khung này để bắt đầu trao đổi dữ liệu trực tiếp.
+                      </p>
+                    </div>
+                  ) : (
+                    chatMessages.map(msg => {
+                      const isMe = msg.direction === 'sent';
+                      return (
+                        <div
+                          key={msg.id}
+                          className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} space-y-1`}
+                        >
+                          <div className="flex items-center gap-1.5 text-[10px] text-slate-400 px-1">
+                            <span className="font-semibold text-slate-400">
+                              {isMe ? 'Bạn' : msg.senderName}
+                            </span>
+                            <span>·</span>
+                            <span>{formatRelativeTime(msg.timestamp)}</span>
+                          </div>
+
+                          {msg.type === 'file' ? (
+                            <div
+                              className={`p-3.5 rounded-2xl border max-w-sm sm:max-w-md space-y-2.5 ${
+                                isMe
+                                  ? 'bg-gradient-to-br from-cyan-950/60 to-slate-900 border-cyan-500/40 text-slate-100 shadow-md'
+                                  : 'bg-slate-900/90 border-slate-800 text-slate-100 shadow-md'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3">
+                                <FileGlyph name={msg.fileMeta?.name || 'file.dat'} />
+                                <div className="min-w-0">
+                                  <strong className="text-xs sm:text-sm font-bold text-slate-100 block truncate">
+                                    {msg.fileMeta?.name || 'Tệp đính kèm'}
+                                  </strong>
+                                  <span className="text-[11px] text-slate-400 block font-mono">
+                                    {msg.fileMeta ? formatBytes(msg.fileMeta.size) : '—'}
+                                  </span>
+                                </div>
+                              </div>
+
+                              {msg.fileMeta?.blobUrl && (
+                                <a
+                                  href={msg.fileMeta.blobUrl}
+                                  download={msg.fileMeta.name}
+                                  className="w-full py-1.5 px-3 rounded-xl text-xs font-bold bg-gradient-to-r from-emerald-500 to-teal-400 hover:from-emerald-400 hover:to-teal-300 text-slate-950 transition-all flex items-center justify-center gap-1.5 shadow-sm"
+                                >
+                                  <Download size={13} /> Tải tệp về máy
+                                </a>
+                              )}
+                            </div>
+                          ) : (
+                            <div
+                              className={`group relative p-3 sm:px-4 sm:py-2.5 rounded-2xl text-xs sm:text-sm max-w-[85%] sm:max-w-md break-words whitespace-pre-wrap leading-relaxed ${
+                                isMe
+                                  ? 'bg-gradient-to-r from-cyan-600 to-sky-600 text-white rounded-br-none shadow-md shadow-cyan-600/10'
+                                  : 'bg-slate-900 border border-slate-800/80 text-slate-100 rounded-bl-none shadow-md'
+                              }`}
+                            >
+                              {msg.text}
+
+                              {/* Message Delivery Checkmark & Copy Action */}
+                              <div className="flex items-center justify-end gap-1 text-[10px] mt-1 opacity-75">
+                                {isMe && (
+                                  <span title={msg.pending ? 'Đang chờ gửi (Pending)' : (msg.ack ? 'Đã nhận (Delivered)' : 'Đã gửi (Sent)')}>
+                                    {msg.pending ? '🕒' : (msg.ack ? '✓✓' : '✓')}
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+
+                  {/* Typing Indicator Bubble */}
+                  {peerTyping && (
+                    <div className="flex items-center gap-2 text-xs text-cyan-400 bg-slate-900/60 border border-slate-800 px-3 py-1.5 rounded-2xl w-fit animate-pulse">
+                      <span className="flex gap-1">
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-bounce" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-bounce [animation-delay:0.2s]" />
+                        <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-bounce [animation-delay:0.4s]" />
+                      </span>
+                      <span>{peerTyping.senderName} đang nhập tin nhắn...</span>
+                    </div>
+                  )}
+
+                  <div ref={chatBottomRef} />
+                </div>
+
+                {/* Error Notice in Chat */}
+                {transferError && (
+                  <div className="px-4 py-2 bg-rose-950/60 border-t border-rose-800/40 text-rose-300 text-xs flex items-center justify-between">
+                    <span>{transferError}</span>
+                    <button type="button" onClick={() => setTransferError('')} className="text-rose-400 hover:text-rose-200">
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+
+                {/* 3. Chat Composer Bar */}
+                <form
+                  onSubmit={handleSendChat}
+                  className="p-3 bg-slate-950/90 border-t border-slate-800/80 flex items-center gap-2 shrink-0"
+                >
+                  {/* Hidden File Picker Inputs */}
+                  <input
+                    ref={chatAttachmentInputRef}
+                    type="file"
+                    className="hidden"
+                    onChange={e => {
+                      if (e.target.files && e.target.files[0]) {
+                        handleSendFileDirect(e.target.files[0]);
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+                  <input
+                    ref={chatMediaInputRef}
+                    type="file"
+                    accept="image/*,video/*"
+                    className="hidden"
+                    onChange={e => {
+                      if (e.target.files && e.target.files[0]) {
+                        handleSendFileDirect(e.target.files[0]);
+                        e.target.value = '';
+                      }
+                    }}
+                  />
+
+                  {/* Attachment buttons */}
+                  <button
+                    type="button"
+                    onClick={() => chatAttachmentInputRef.current?.click()}
+                    title="Đính kèm tệp tin"
+                    className="p-2 sm:p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-cyan-400 transition-colors shrink-0"
+                  >
+                    <Paperclip size={17} />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => chatMediaInputRef.current?.click()}
+                    title="Gửi ảnh / video"
+                    className="p-2 sm:p-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-emerald-400 transition-colors shrink-0"
+                  >
+                    <Image size={17} />
+                  </button>
+
+                  {/* Text Input */}
+                  <input
+                    type="text"
+                    value={chatInput}
+                    onChange={e => handleChatInputChange(e.target.value)}
+                    placeholder="Nhập tin nhắn hoặc kéo thả tệp vào khung..."
+                    className="flex-1 bg-slate-900/90 border border-slate-800 rounded-xl px-3.5 py-2.5 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:border-cyan-500 focus:outline-none"
+                  />
+
+                  {/* Send Button */}
+                  <button
+                    type="submit"
+                    disabled={!chatInput.trim()}
+                    className="p-2.5 sm:px-4 sm:py-2.5 rounded-xl bg-gradient-to-r from-cyan-500 to-sky-500 hover:from-cyan-400 hover:to-sky-400 text-slate-950 font-bold transition-all disabled:opacity-40 disabled:cursor-not-allowed shadow-md shadow-cyan-500/10 flex items-center gap-1.5 shrink-0"
+                  >
+                    <Send size={16} />
+                    <span className="hidden sm:inline text-xs font-bold">Gửi</span>
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 6. TAB: FILE DROP & RADAR DISCOVERY */}
       {/* ========================================================================= */}
       {activeTab === 'send' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
@@ -668,7 +1396,7 @@ export function TransfersScreen({ id }: { id: string }) {
                       type="text"
                       value={manualConnectionId}
                       onChange={e => {
-                        setManualConnectionId(e.target.value);
+                        handleManualConnectionChange(e.target.value);
                         setSelectedPeer(null);
                       }}
                       placeholder="Dán ID phiên thiết bị (ví dụ: conn-xyz...)"
@@ -1104,6 +1832,56 @@ export function TransfersScreen({ id }: { id: string }) {
           </div>
         )}
       </div>
+      {/* 10. QR CODE & CONNECTION INFO MODAL                                       */}
+      {/* ========================================================================= */}
+      {showQrModal && (
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl animate-in fade-in duration-200">
+            <div className="flex items-center justify-between">
+              <strong className="text-base font-bold text-slate-100">
+                Thông tin phiên & Quét kết nối
+              </strong>
+              <button
+                type="button"
+                onClick={() => setShowQrModal(false)}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-200"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="p-4 bg-slate-950/80 rounded-xl border border-slate-800 text-center space-y-3">
+              <QrCode size={48} className="text-cyan-400 mx-auto" />
+              <div>
+                <span className="text-xs text-slate-400 block">ID thiết bị của bạn:</span>
+                <code className="text-xs font-mono text-cyan-300 break-all select-all font-semibold block mt-1">
+                  {localConnectionId || 'Đang kết nối tới máy chủ...'}
+                </code>
+              </div>
+              <button
+                type="button"
+                onClick={handleCopyMyId}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-800 hover:bg-slate-700 text-slate-200 transition-colors flex items-center gap-1.5 mx-auto"
+              >
+                {copiedMyId ? <Check size={14} className="text-emerald-400" /> : <Copy size={14} />}
+                <span>{copiedMyId ? 'Đã chép ID' : 'Sao chép ID phiên'}</span>
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400 leading-relaxed text-center">
+              Các thiết bị trong cùng mạng Wi-Fi hoặc mạng LAN chỉ cần mở trình duyệt và truy cập máy chủ LANDrop là có thể tự động nhìn thấy nhau qua Radar.
+            </p>
+
+            <button
+              type="button"
+              onClick={() => setShowQrModal(false)}
+              className="w-full py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-semibold transition-colors"
+            >
+              Đóng
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

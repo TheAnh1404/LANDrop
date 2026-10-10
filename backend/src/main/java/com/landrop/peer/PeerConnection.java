@@ -155,6 +155,10 @@ public class PeerConnection implements AutoCloseable {
 
     private void initSocket(Socket s) throws IOException {
         this.socket = s;
+        try {
+            s.setTcpNoDelay(true);
+        } catch (Exception ignored) {
+        }
         this.in = new DataInputStream(new BufferedInputStream(s.getInputStream()));
         this.out = new DataOutputStream(new BufferedOutputStream(s.getOutputStream()));
         transitionState(ConnectionState.CONNECTED);

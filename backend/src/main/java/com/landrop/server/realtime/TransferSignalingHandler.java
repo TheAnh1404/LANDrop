@@ -212,7 +212,7 @@ public final class TransferSignalingHandler {
     }
     private boolean member(UUID workspaceId, UUID userId) {
         WorkspaceRepository repository = workspaceRepository;
-        if (repository == null) return false;
+        if (repository == null) return true; // Standalone LAN mode allows direct peer transfers
         try { WorkspaceAccess.requireMember(repository, workspaceId, userId); return true; }
         catch (Exception unavailable) { return false; } // Fail closed, including database unavailability.
     }

@@ -593,6 +593,7 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
                 Map<String, Object> p = new LinkedHashMap<>();
                 p.put("connectionId", other.connectionId());
                 p.put("userId", other.userId() != null ? other.userId().toString() : null);
+                p.put("username", other.username());
                 p.put("displayName", other.username() != null ? other.username() : (other.deviceName() != null ? other.deviceName() : "Thiết bị LAN"));
                 p.put("deviceName", other.deviceName() != null ? other.deviceName() : "Thiết bị LAN");
                 p.put("platform", other.platform() != null ? other.platform() : "browser");

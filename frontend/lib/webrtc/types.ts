@@ -75,13 +75,54 @@ export interface QuickTextDataMessage {
   timestamp: number;
 }
 
+export interface ChatDataMessage {
+  type: 'CHAT_MESSAGE';
+  id: string;
+  text: string;
+  senderName: string;
+  timestamp: number;
+  replyToId?: string;
+}
+
+export interface ChatTypingMessage {
+  type: 'CHAT_TYPING';
+  isTyping: boolean;
+  senderName?: string;
+}
+
+export interface ChatAckMessage {
+  type: 'CHAT_ACK';
+  messageId: string;
+  status: 'delivered';
+}
+
+export interface P2PChatMessage {
+  id: string;
+  text: string;
+  senderName: string;
+  timestamp: number;
+  replyToId?: string;
+  direction: 'sent' | 'received';
+  type: 'text' | 'file';
+  fileMeta?: {
+    name: string;
+    size: number;
+    blobUrl?: string;
+  };
+  ack?: boolean;
+  pending?: boolean;
+}
+
 export type TechnicalDataMessage =
   | TechnicalPingMessage
   | TechnicalPongMessage
   | FileStartMessage
   | FileEndMessage
   | FileCancelMessage
-  | QuickTextDataMessage;
+  | QuickTextDataMessage
+  | ChatDataMessage
+  | ChatTypingMessage
+  | ChatAckMessage;
 
 export interface IncomingTransferRequest {
   transferId: string;

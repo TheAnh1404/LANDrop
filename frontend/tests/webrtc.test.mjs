@@ -277,6 +277,109 @@ test('WebRTCPeerService starts in IDLE state with clear diagnostics', () => {
   assert.ok(!('sdp' in diag), 'Diagnostics must not expose raw SDP');
 });
 
+function createChatPeer(connectionId) {
+  const { client } = createConnectedRealtimeClient(connectionId);
+  const service = createService(client);
+  const channel = new MockRTCDataChannel('landrop-chat', { ordered: true });
+  service.dataChannel = channel;
+  service.setupDataChannel(channel);
+  channel.simulateOpen();
+  channel.sentMessages.length = 0;
+  return { service, channel };
+}
+
+test('P2P chat sends once and publishes delivery updates without duplicating history', () => {
+  const alice = createChatPeer('conn-alice');
+  const bob = createChatPeer('conn-bob');
+  const changes = [];
+  alice.service.onChatMessage(message => changes.push(message));
+  const message = alice.service.sendChatMessage(' hello ', 'previous-message');
+  assert.equal(changes.length, 1);
+  assert.equal(alice.service.getChatMessages().length, 1);
+  const packet = JSON.parse(alice.channel.sentMessages[0]);
+  assert.equal(packet.text, 'hello');
+  assert.equal(packet.replyToId, 'previous-message');
+  assert.equal(message.timestamp, packet.timestamp);
+
+  bob.channel.simulateMessage(packet);
+  bob.channel.simulateMessage(packet);
+  assert.equal(bob.service.getChatMessages().length, 1, 'Repeated delivery must be acknowledged without a second bubble');
+  assert.equal(bob.service.getChatMessages()[0].replyToId, 'previous-message');
+  const ack = JSON.parse(bob.channel.sentMessages[0]);
+  alice.channel.simulateMessage(ack);
+  alice.channel.simulateMessage(ack);
+  assert.equal(changes.length, 2, 'Delivery publishes one update for the existing bubble');
+  assert.equal(changes[1].ack, true);
+  assert.equal(alice.service.getChatMessages().length, 1);
+  assert.equal(alice.service.getChatMessages()[0].ack, true);
+});
+
+test('P2P chat rejects blank or disconnected sends and ignores malformed messages and acknowledgements', () => {
+  const { service, channel } = createChatPeer('conn-chat');
+  assert.throws(() => service.sendChatMessage('   '));
+  const message = service.sendChatMessage('hello');
+  for (const packet of [
+    { type: 'CHAT_MESSAGE', id: 'bad', text: {} },
+    { type: 'CHAT_MESSAGE', text: 'missing id' },
+    { type: 'CHAT_ACK', messageId: message.id, status: 'unknown' },
+    { type: 'CHAT_ACK', messageId: 'unknown', status: 'delivered' },
+  ]) channel.simulateMessage(packet);
+  assert.equal(service.getChatMessages().length, 1);
+  assert.equal(service.getChatMessages()[0].ack, false);
+  channel.readyState = 'closed';
+  assert.throws(() => service.sendChatMessage('offline'));
+});
+
+test('P2P typing clears when a message arrives or the peer disconnects, and destroy removes listeners', () => {
+  const { service, channel } = createChatPeer('conn-chat');
+  const typing = [];
+  service.onChatTyping(event => typing.push(event.isTyping));
+  channel.simulateMessage({ type: 'CHAT_TYPING', isTyping: true });
+  channel.simulateMessage({ type: 'CHAT_MESSAGE', id: 'incoming', text: 'hello' });
+  assert.deepEqual(typing, [true, false]);
+  channel.simulateMessage({ type: 'CHAT_TYPING', isTyping: true });
+  service.cancelConnection();
+  assert.equal(typing.at(-1), false);
+  service.destroy();
+  assert.equal(service.chatMessageListeners.size, 0);
+  assert.equal(service.chatTypingListeners.size, 0);
+  assert.deepEqual(service.getChatMessages(), []);
+});
+
+test('P2P file completion requires matching identity and the complete byte count', () => {
+  const { service, channel } = createChatPeer('conn-file');
+  const files = [];
+  service.onFileReceived(file => files.push(file));
+  const start = { type: 'FILE_START', transferId: 'transfer', fileId: 'truncated', fileName: 'test.bin', fileSize: 3, mimeType: 'application/octet-stream', totalChunks: 1 };
+  channel.simulateMessage(start);
+  service.handleBinaryChunk(new Uint8Array([1, 2]).buffer);
+  channel.simulateMessage({ type: 'FILE_END', transferId: 'transfer', fileId: 'wrong' });
+  assert.equal(service.getTransferProgress().status, 'transferring');
+  channel.simulateMessage({ type: 'FILE_END', transferId: 'transfer', fileId: 'truncated' });
+  assert.equal(files.length, 0);
+  assert.equal(service.getTransferProgress().status, 'failed');
+  channel.simulateMessage({ ...start, fileId: 'empty', fileSize: 0, totalChunks: 0 });
+  channel.simulateMessage({ type: 'FILE_END', transferId: 'transfer', fileId: 'empty' });
+  assert.equal(files.length, 1);
+  assert.equal(files[0].fileSize, 0);
+  assert.equal(service.getTransferProgress().status, 'completed');
+});
+
+test('P2P sender prevents simultaneous files and preserves failure after channel loss', async () => {
+  const { service, channel } = createChatPeer('conn-file');
+  channel.send = data => {
+    channel.sentMessages.push(data);
+    if (data instanceof ArrayBuffer) channel.readyState = 'closed';
+  };
+  const file = new File([new Uint8Array(40000)], 'test.bin');
+  const sending = service.sendFile(file);
+  await assert.rejects(service.sendFile(file));
+  await assert.rejects(sending);
+  assert.equal(service.getTransferProgress().status, 'failed');
+  assert.equal(service.getChatMessages().length, 0);
+  assert.equal(channel.sentMessages.some(data => typeof data === 'string' && JSON.parse(data).type === 'FILE_END'), false);
+});
+
 test('Offerer initiates transfer.request and transitions IDLE -> REQUESTING -> WAITING_ACCEPT', async () => {
   const { client, ws } = createConnectedRealtimeClient('conn-alice');
   const service = createService(client);
