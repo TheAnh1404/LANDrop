@@ -5,6 +5,7 @@ import { CURRENT_USER } from '../mock-data';
 import { ServerConnectionInfo, User } from '../types';
 import { ApiError, AuthResponse, fetchJson, normalizeServerUrl, TokenPair, tokenRole, errorMessage } from '../api/client';
 import { createAuthenticatedRequester } from '../api/authorized';
+import { getRealtimeClient } from '../realtime/realtime-client';
 
 type Mode = 'live' | 'demo';
 interface Session {
@@ -53,6 +54,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const apply = useCallback((auth: AuthResponse) => {
     tokens.current = auth;
     sessionStorage.setItem('landrop.refresh', auth.refreshToken);
+    sessionStorage.removeItem('landrop.mode');
     setUser(prev => {
       const mapped = mapUser(auth);
       if (
@@ -71,6 +73,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setAuthVersion(v => v + 1);
   }, []);
 
+  const enrollBrowser = useCallback(async (auth: AuthResponse, serverUrl: string, signal?: AbortSignal) => {
+    try {
+      await fetchJson(serverUrl, '/api/devices/enroll', {
+        method: 'POST', signal,
+        headers: { Authorization: `Bearer ${auth.accessToken}` },
+        body: JSON.stringify({
+          clientInstanceId: getRealtimeClient().getClientInstanceId(auth.user.id),
+          deviceName: `${navigator.platform || 'Web'} Browser`, platform: 'web', clientVersion: '1.0.0',
+        }),
+      });
+    } catch (failure) {
+      if (signal?.aborted) throw failure;
+      // Authentication has already persisted successfully; keep that session available for retry.
+      setError(`Đã đăng nhập nhưng chưa lưu được thiết bị: ${errorMessage(failure)}`);
+    }
+  }, []);
+
   useEffect(() => {
     let active = true;
     const controller = new AbortController();
@@ -79,10 +98,16 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       try {
         const saved = localStorage.getItem('landrop.server');
         if (saved) { origin.current = normalizeServerUrl(saved); setServerInfo(s => ({ ...s, serverUrl: origin.current })); }
-        if (sessionStorage.getItem('landrop.mode') === 'demo') { setMode('demo'); setUser(CURRENT_USER); return; }
         const refreshToken = sessionStorage.getItem('landrop.refresh');
+        if (!refreshToken && sessionStorage.getItem('landrop.mode') === 'demo') { setMode('demo'); setUser(CURRENT_USER); return; }
         if (refreshToken) {
           const auth = await fetchJson<AuthResponse>(origin.current, '/api/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken }), signal: controller.signal });
+          if (active && version === generation.current) {
+            // Rotation is committed already; retain the replacement before another network operation.
+            sessionStorage.setItem('landrop.refresh', auth.refreshToken);
+            sessionStorage.removeItem('landrop.mode');
+            await enrollBrowser(auth, origin.current, controller.signal);
+          }
           if (active && version === generation.current) { apply(auth); setServerInfo(s => ({ ...s, status: 'connected' })); }
         }
       } catch { if (active && version === generation.current) clear(); }
@@ -91,7 +116,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     // Defer so StrictMode's discarded effect never rotates a refresh token.
     const timer = setTimeout(restore, 0);
     return () => { active = false; clearTimeout(timer); controller.abort(); };
-  }, [apply, clear]);
+  }, [apply, clear, enrollBrowser]);
 
   const request = useMemo(() => createAuthenticatedRequester({
     read: () => ({ origin: origin.current, tokens: tokens.current, version: generation.current }),
@@ -107,9 +132,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const nextOrigin = normalizeServerUrl(input);
       if (typeof location !== 'undefined' && nextOrigin === location.origin) throw new ApiError('Đây là cổng frontend. Hãy nhập cổng backend, mặc định localhost:3100 khi chạy cùng máy.');
       const start = performance.now();
-      const health = await fetchJson<{ status: string; serverVersion?: string; protocolVersion?: number }>(nextOrigin, '/health');
+      const health = await fetchJson<{ status: string; serverVersion?: string; protocolVersion?: number; persistenceAvailable?: boolean }>(nextOrigin, '/health');
       if (version !== generation.current) return false;
       if (health.status !== 'ok') throw new ApiError('Server chưa sẵn sàng.');
+      if (health.persistenceAvailable === false) throw new ApiError('Backend chưa bật database. Cần cấu hình DATABASE_URL và khởi động lại server để đăng ký, đăng nhập và lưu dữ liệu.');
       clear();
       origin.current = nextOrigin;
       localStorage.setItem('landrop.server', nextOrigin);
@@ -124,6 +150,10 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const version = ++generation.current;
     try {
       const auth = await fetchJson<AuthResponse>(origin.current, route, { method: 'POST', body: JSON.stringify(body) });
+      if (version !== generation.current) return false;
+      sessionStorage.setItem('landrop.refresh', auth.refreshToken);
+      sessionStorage.removeItem('landrop.mode');
+      await enrollBrowser(auth, origin.current);
       if (version !== generation.current) return false;
       apply(auth);
       setServerInfo(s => ({ ...s, status: 'connected' }));

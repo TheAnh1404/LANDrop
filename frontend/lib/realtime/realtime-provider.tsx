@@ -191,6 +191,7 @@ export function RealtimeProvider({ children }: { children: React.ReactNode }) {
       accessToken: token,
       token,
       deviceName: typeof navigator !== 'undefined' ? `${navigator.platform || 'Web'} Browser` : 'Browser',
+      clientInstanceId: client.getClientInstanceId(userId),
     });
   }, [mode, userId, serverUrl, authVersion, getAccessToken, client]);
 

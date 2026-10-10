@@ -64,16 +64,21 @@ export class RealtimeClient {
     this.clientInstanceId = this.resolveClientInstanceId();
   }
 
-  private resolveClientInstanceId(): string {
+  private resolveClientInstanceId(userId?: string): string {
     if (typeof window !== 'undefined' && window.sessionStorage) {
-      let id = window.sessionStorage.getItem('landrop.client_instance_id');
+      const key = userId ? `landrop.client_instance_id:${userId}` : 'landrop.client_instance_id';
+      let id = window.sessionStorage.getItem(key);
       if (!id) {
         id = `tab-${generateSafeUuid()}`;
-        window.sessionStorage.setItem('landrop.client_instance_id', id);
+        window.sessionStorage.setItem(key, id);
       }
       return id;
     }
     return `tab-${generateSafeUuid()}`;
+  }
+
+  public getClientInstanceId(userId?: string): string {
+    return userId ? this.resolveClientInstanceId(userId) : this.clientInstanceId;
   }
 
   public getState(): ConnectionState {
@@ -109,6 +114,7 @@ export class RealtimeClient {
     }
 
     this.options = options;
+    if (options.clientInstanceId) this.clientInstanceId = options.clientInstanceId;
     this.manualDisconnect = false;
     this.reconnectAttempts = 0;
     this.lastPrecedingAuthError = null;
