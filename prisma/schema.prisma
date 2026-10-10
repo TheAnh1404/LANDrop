@@ -108,9 +108,11 @@ model Workspace {
   name        String   @db.VarChar(255)
   slug        String   @unique @db.VarChar(100)
   description String?
-  ownerId     String   @map("owner_id") @db.Uuid
-  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
-  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
+  ownerId          String   @map("owner_id") @db.Uuid
+  joinPolicy       String   @default("INVITE_ONLY") @map("join_policy") @db.VarChar(30)
+  joinPasswordHash String?  @map("join_password_hash") @db.VarChar(255)
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt        DateTime @default(now()) @updatedAt @map("updated_at") @db.Timestamptz(6)
 
   owner    User              @relation("WorkspaceOwner", fields: [ownerId], references: [id], onDelete: Restrict)
   members  WorkspaceMember[]
@@ -119,6 +121,7 @@ model Workspace {
   files    File[]
 
   @@index([ownerId], map: "idx_workspaces_owner_id")
+  @@index([joinPolicy], map: "idx_workspaces_join_policy")
   @@map("workspaces")
 }
 

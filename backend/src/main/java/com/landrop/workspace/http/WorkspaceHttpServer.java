@@ -61,9 +61,19 @@ public final class WorkspaceHttpServer {
         exchange.getResponseHeaders().set("Access-Control-Allow-Headers", "Content-Type, Authorization");
         exchange.getResponseHeaders().set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
         if ("OPTIONS".equalsIgnoreCase(exchange.getRequestMethod())) { send(exchange, 204, null); return; }
+        String path = exchange.getRequestURI().getPath();
+        if (path.matches("^/api/workspaces/[0-9a-fA-F-]+/qr$")) {
+            if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                String tail = path.substring("/api/workspaces/".length());
+                String[] parts = tail.split("/", -1);
+                qrCode(exchange, uuid(parts[0]));
+                return;
+            }
+            method(exchange, "GET");
+            return;
+        }
         try {
             JwtClaims claims = auth.authenticate(exchange);
-            String path = exchange.getRequestURI().getPath();
             String base = "/api/workspaces";
             if (path.equals(base)) {
                 if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) create(exchange, claims.userId());
@@ -81,6 +91,24 @@ public final class WorkspaceHttpServer {
                     case "DELETE" -> { service.delete(claims.userId(), id); send(exchange, 204, null); }
                     default -> method(exchange, "GET, PATCH, DELETE");
                 }
+                return;
+            }
+            if (parts.length == 2 && "preview".equals(parts[1])) {
+                UUID id = uuid(parts[0]);
+                if ("GET".equalsIgnoreCase(exchange.getRequestMethod())) preview(exchange, claims.userId(), id);
+                else method(exchange, "GET");
+                return;
+            }
+            if (parts.length == 2 && "join".equals(parts[1])) {
+                UUID id = uuid(parts[0]);
+                if ("POST".equalsIgnoreCase(exchange.getRequestMethod())) join(exchange, claims.userId(), id);
+                else method(exchange, "POST");
+                return;
+            }
+            if (parts.length == 2 && "join-settings".equals(parts[1])) {
+                UUID id = uuid(parts[0]);
+                if ("PATCH".equalsIgnoreCase(exchange.getRequestMethod())) updateJoinSettings(exchange, claims.userId(), id);
+                else method(exchange, "PATCH");
                 return;
             }
             if (parts.length == 2 && "members".equals(parts[1])) {
@@ -189,9 +217,67 @@ public final class WorkspaceHttpServer {
         send(e, 201, Map.of("data", created));
     }
 
+    private void preview(HttpExchange e, UUID user, UUID id) throws IOException, SQLException {
+        var p = service.getPreview(user, id);
+        Map<String, Object> data = map(
+            "id", p.id(),
+            "name", p.name(),
+            "slug", p.slug(),
+            "description", p.description(),
+            "ownerName", p.ownerName(),
+            "membersCount", p.membersCount(),
+            "joinPolicy", p.joinPolicy(),
+            "hasPassword", p.hasPassword(),
+            "isMember", p.isMember(),
+            "role", p.role() != null ? p.role().name() : null
+        );
+        send(e, 200, Map.of("data", data));
+    }
+
+    private void join(HttpExchange e, UUID user, UUID id) throws IOException, SQLException {
+        JsonNode body = body(e, Set.of("password"));
+        String password = body.hasNonNull("password") ? text(body, "password", false) : null;
+        var member = service.join(user, id, password);
+        send(e, 200, Map.of("data", member(member)));
+    }
+
+    private void updateJoinSettings(HttpExchange e, UUID user, UUID id) throws IOException, SQLException {
+        JsonNode body = body(e, Set.of("joinPolicy", "password"));
+        String policy = body.hasNonNull("joinPolicy") ? text(body, "joinPolicy", false) : null;
+        String password = body.hasNonNull("password") ? text(body, "password", false) : null;
+        var view = service.updateJoinSettings(user, id, policy, password);
+        send(e, 200, Map.of("data", workspace(view)));
+    }
+
+    private void qrCode(HttpExchange e, UUID id) throws IOException {
+        String origin = e.getRequestHeaders().getFirst("Origin");
+        if (origin == null || origin.isBlank()) {
+            String host = e.getRequestHeaders().getFirst("Host");
+            origin = host != null ? "http://" + host : "http://localhost:3000";
+        }
+        String joinUrl = origin + "/w/" + id;
+        try {
+            java.awt.image.BufferedImage qrImage = com.landrop.server.desktop.QrCodeGenerator.generateQrCode(joinUrl, 320, java.awt.Color.BLACK, java.awt.Color.WHITE);
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(qrImage, "png", baos);
+            byte[] bytes = baos.toByteArray();
+            e.getResponseHeaders().set("Content-Type", "image/png");
+            e.getResponseHeaders().set("Cache-Control", "public, max-age=60");
+            e.sendResponseHeaders(200, bytes.length);
+            try (OutputStream out = e.getResponseBody()) {
+                out.write(bytes);
+            }
+        } catch (Exception ex) {
+            sendError(e, 500, "QR_GENERATION_FAILED", "Không thể tạo mã QR cho workspace.");
+        }
+    }
+
     private Map<String,Object> workspace(WorkspaceService.WorkspaceView v) {
         var w = v.workspace();
-        return map("id", w.id(), "name", w.name(), "slug", w.slug(), "description", w.description(), "ownerId", w.ownerId(), "role", v.role(), "createdAt", w.createdAt(), "updatedAt", w.updatedAt());
+        boolean hasPassword = w.joinPasswordHash() != null && !w.joinPasswordHash().isBlank();
+        return map("id", w.id(), "name", w.name(), "slug", w.slug(), "description", w.description(),
+            "ownerId", w.ownerId(), "role", v.role(), "joinPolicy", w.joinPolicy() != null ? w.joinPolicy() : "INVITE_ONLY",
+            "hasPassword", hasPassword, "createdAt", w.createdAt(), "updatedAt", w.updatedAt());
     }
     private Map<String,Object> member(WorkspaceService.MemberView v) {
         return map("id", v.member().id(), "workspaceId", v.member().workspaceId(), "userId", v.member().userId(),

@@ -8,6 +8,7 @@ import { useSession } from '@/lib/session/session-provider';
 import { useWorkspace } from '@/lib/data/workspace-provider';
 import { Initials } from './primitives';
 import { cn } from '@/lib/utils';
+import { WorkspaceGate } from '../screens/workspace-gate';
 
 export function AuthGate({ children }: { children: React.ReactNode }) {
   const { ready, user } = useSession();
@@ -50,7 +51,10 @@ function Shell({ children, title, items, workspaceName, channels, workspaceId }:
 }
 
 export function WorkspaceShell({ children, id }: { children: React.ReactNode; id: string }) {
-  const { workspace, channels } = useWorkspace();
+  const { workspace, channels, requiresJoin } = useWorkspace();
+  if (requiresJoin) {
+    return <WorkspacesShell><WorkspaceGate id={id} /></WorkspacesShell>;
+  }
   const base = `/w/${id}`;
   return <Shell title="Tổng quan" workspaceId={id} workspaceName={workspace?.name || 'Đang tải workspace…'} channels={channels} items={[
     { label: 'Tổng quan', href: base, icon: <LayoutDashboard size={18} /> },

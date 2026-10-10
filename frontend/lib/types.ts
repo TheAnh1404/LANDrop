@@ -37,7 +37,22 @@ export interface Workspace {
   membersCount: number;
   channelsCount: number;
   filesCount: number;
+  joinPolicy?: 'INVITE_ONLY' | 'PASSWORD_PROTECTED' | 'OPEN_LAN';
+  hasPassword?: boolean;
   createdAt: string;
+}
+
+export interface WorkspacePreview {
+  id: string;
+  name: string;
+  slug: string;
+  description?: string;
+  ownerName: string;
+  membersCount: number;
+  joinPolicy: 'INVITE_ONLY' | 'PASSWORD_PROTECTED' | 'OPEN_LAN';
+  hasPassword: boolean;
+  isMember: boolean;
+  role?: WorkspaceRole;
 }
 
 export interface WorkspaceMember {

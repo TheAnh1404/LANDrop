@@ -93,6 +93,26 @@ public class WorkspaceRepository {
     public Workspace updateBasic(UUID id,String name,String description) throws SQLException {
         return one(query("UPDATE workspaces SET name=?,description=?,updated_at=CURRENT_TIMESTAMP WHERE id=? RETURNING *",this::mapRow,name,description,id));
     }
+    public Workspace updateJoinSettings(UUID id, String joinPolicy, String joinPasswordHash) throws SQLException {
+        return one(query("""
+            UPDATE workspaces SET join_policy=?, join_password_hash=?, updated_at=CURRENT_TIMESTAMP
+            WHERE id=? RETURNING *
+            """, this::mapRow, joinPolicy, joinPasswordHash, id));
+    }
+    public long countMembers(UUID workspace) throws SQLException {
+        return connection(c -> {
+            try (var ps = c.prepareStatement("SELECT COUNT(*) FROM workspace_members WHERE workspace_id=?")) {
+                ps.setObject(1, workspace);
+                try (var rs = ps.executeQuery()) {
+                    return rs.next() ? rs.getLong(1) : 0L;
+                }
+            }
+        });
+    }
+    public Optional<String> findOwnerName(UUID ownerId) throws SQLException {
+        var names = query("SELECT COALESCE(display_name, username) AS name FROM users WHERE id=?", rs -> rs.getString("name"), ownerId);
+        return names.stream().findFirst();
+    }
     public boolean userExists(UUID id) throws SQLException {
         return !query("SELECT id FROM users WHERE id=?",rs -> rs.getObject(1,UUID.class),id).isEmpty();
     }
@@ -141,8 +161,16 @@ public class WorkspaceRepository {
     public void deleteAllMembers() throws SQLException { execute("DELETE FROM workspace_members"); }
     public void deleteAll() throws SQLException { execute("DELETE FROM workspaces"); }
     private Workspace mapRow(ResultSet rs) throws SQLException {
+        String joinPolicy = "INVITE_ONLY";
+        String joinPasswordHash = null;
+        try {
+            joinPolicy = rs.getString("join_policy");
+            if (joinPolicy == null) joinPolicy = "INVITE_ONLY";
+            joinPasswordHash = rs.getString("join_password_hash");
+        } catch (SQLException ignored) {}
         return new Workspace(rs.getObject("id",UUID.class),rs.getString("name"),rs.getString("slug"),rs.getString("description"),
-            rs.getObject("owner_id",UUID.class),rs.getTimestamp("created_at").toInstant(),rs.getTimestamp("updated_at").toInstant());
+            rs.getObject("owner_id",UUID.class),rs.getTimestamp("created_at").toInstant(),rs.getTimestamp("updated_at").toInstant(),
+            joinPolicy, joinPasswordHash);
     }
     private WorkspaceMember mapMemberRow(ResultSet rs) throws SQLException {
         return new WorkspaceMember(rs.getObject("id",UUID.class),rs.getObject("workspace_id",UUID.class),rs.getObject("user_id",UUID.class),
