@@ -21,10 +21,12 @@ public final class DesktopServerController {
     private volatile State state = State.STOPPED;
     private volatile RuntimeHandle runtime;
     private boolean closing;
+    private volatile com.landrop.server.config.ServerConfig serviceConfig;
 
     public DesktopServerController(Supplier<DesktopServerSettings> settings, BiConsumer<State, String> listener) {
-        this(() -> new RuntimeHandle() {
-            private final ServerBootstrap backend = new ServerBootstrap(settings.get().serverConfig());
+        this.listener = listener;
+        this.factory = () -> new RuntimeHandle() {
+            private final ServerBootstrap backend = new ServerBootstrap(nextConfig(settings.get()));
             @Override public void start() throws Exception { backend.start(); }
             @Override public void stop() {
                 if (backend.isRunning()) backend.stop();
@@ -38,7 +40,7 @@ public final class DesktopServerController {
                 }
             }
             @Override public ServerBootstrap bootstrap() { return backend; }
-        }, listener, true);
+        };
     }
 
     DesktopServerController(Supplier<RuntimeHandle> factory, BiConsumer<State, String> listener, boolean ignored) {
@@ -47,6 +49,13 @@ public final class DesktopServerController {
     }
 
     public State state() { return state; }
+    public void setServiceConfig(com.landrop.server.config.ServerConfig config) { serviceConfig = config; }
+    private com.landrop.server.config.ServerConfig nextConfig(DesktopServerSettings settings) {
+        var base = serviceConfig == null
+                ? new com.landrop.server.config.ServerConfigManager(settings.serverConfig()).getPendingConfig() : serviceConfig;
+        return new com.landrop.server.config.ServerConfig(settings.bindHost(), settings.httpPort(), settings.wsPort(),
+                base.getProtocolVersion(), base.getHeartbeatIntervalMs(), base.getHeartbeatTimeoutMs(), base.getEnvironment(), base.getLogLevel());
+    }
     public ServerBootstrap bootstrap() { RuntimeHandle current = runtime; return current == null ? null : current.bootstrap(); }
 
     public synchronized boolean start() {

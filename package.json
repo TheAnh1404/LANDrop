@@ -8,7 +8,6 @@
     "server:desktop": "node scripts/start-server.mjs",
     "server:headless": "node scripts/start-server.mjs --headless",
     "server:backend": "node scripts/start-server.mjs --backend-only",
-    "server:admin": "node scripts/start-server.mjs --admin-only",
     "server:test": "node --test scripts/start-server.test.mjs",
     "dev": "npm --prefix frontend run dev",
     "build": "npm --prefix frontend run build",

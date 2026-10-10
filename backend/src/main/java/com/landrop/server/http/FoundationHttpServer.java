@@ -232,19 +232,20 @@ public class FoundationHttpServer {
         }
 
         String path = exchange.getRequestURI().getPath();
+        String query = exchange.getRequestURI().getRawQuery();
+        boolean adminTarget = query != null && java.util.Arrays.stream(query.split("&")).anyMatch("target=admin"::equals);
+        if ("/admin".equals(path) || (path != null && path.startsWith("/admin/")) || adminTarget) {
+            byte[] bytes = objectMapper.writeValueAsBytes(Map.of("error", "ADMIN_WEB_REMOVED", "message", "Use LANDrop Server Desktop for administration"));
+            exchange.getResponseHeaders().set("Content-Type", "application/json; charset=UTF-8");
+            exchange.sendResponseHeaders(410, bytes.length);
+            try (OutputStream os = exchange.getResponseBody()) { os.write(bytes); }
+            return;
+        }
         boolean isClientPath = path == null || path.isEmpty() || "/".equals(path) || "/index.html".equals(path)
                 || "/connect".equals(path) || "/client".equals(path)
                 || (path != null && (path.startsWith("/auth/") || path.startsWith("/w/") || "/workspaces".equals(path)));
 
         if (isClientPath) {
-            String query = exchange.getRequestURI().getQuery();
-            if (query != null && query.contains("target=admin")) {
-                exchange.getResponseHeaders().set("Location", "/admin");
-                exchange.sendResponseHeaders(302, -1);
-                exchange.close();
-                return;
-            }
-
             // If JSON requested explicitly by an API client, return API status catalog
             String accept = exchange.getRequestHeaders().getFirst("Accept");
             if (accept != null && accept.contains("application/json") && !accept.contains("text/html")) {
@@ -305,7 +306,7 @@ public class FoundationHttpServer {
         apiInfo.put("endpoints", Map.of(
             "health", "/health",
             "status", "/status",
-            "admin", "/admin",
+            "adminApi", "/api/admin",
             "auth", "/api/auth",
             "workspaces", "/api/workspaces",
             "devices", "/api/devices"
@@ -348,7 +349,7 @@ public class FoundationHttpServer {
             <h1>LANDrop LAN Portal</h1>
             <p>Không gian truyền tệp và cộng tác mạng nội bộ LANDrop.</p>
             <div style="margin:2rem 0;">
-              <a href="/admin" style="background:#0284c7; color:white; padding:10px 20px; border-radius:6px; text-decoration:none; margin:10px; display:inline-block;">Quản Trị Viên (/admin)</a>
+              <p>LANDrop Server Desktop</p>
             </div>
             </body></html>
             """;

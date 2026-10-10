@@ -36,7 +36,16 @@ public final class ServerDashboardPreview {
                     new ServerDashboardPanel.Activity(now.minusSeconds(30), "INFO", "Yêu cầu transfer đã được chấp nhận"),
                     new ServerDashboardPanel.Activity(now.minusSeconds(10), "INFO", "WebRTC signaling: trạng thái CONNECTING")));
             try {
-                for (String page : List.of("overview", "clients", "transfers", "logs", "settings")) {
+                var userTable = ServerDashboardPanelTest.components(panel.administration(), JTable.class).stream()
+                        .filter(t -> t.getModel().getColumnCount() == 7).findFirst().orElseThrow();
+                var userModel = (javax.swing.table.DefaultTableModel) userTable.getModel();
+                userModel.addRow(new Object[]{"theanh", "The Anh", "theanh@example.test", "ACTIVE", "SYSTEM_ADMIN", 2, "11111111-1111-1111-1111-111111111111"});
+                userModel.addRow(new Object[]{"linh", "Linh", "linh@example.test", "ACTIVE", "USER", 1, "22222222-2222-2222-2222-222222222222"});
+                userModel.addRow(new Object[]{"minh", "Minh", "minh@example.test", "DISABLED", "USER", 0, "33333333-3333-3333-3333-333333333333"});
+                ServerDashboardPanelTest.components(panel.administration(), JLabel.class).stream()
+                        .filter(label -> "Khởi động máy chủ để quản trị dữ liệu.".equals(label.getText()))
+                        .forEach(label -> label.setText("DỮ LIỆU MẪU · Xem trước giao diện quản trị desktop"));
+                for (String page : List.of("overview", "clients", "transfers", "administration", "logs", "settings")) {
                     panel.showPage(page);
                     if (page.equals("clients")) ServerDashboardPanelTest.components(panel, JTable.class).stream()
                             .filter(t -> t.getModel().getColumnCount() == 6).findFirst().orElseThrow().setRowSelectionInterval(0, 0);
@@ -45,7 +54,11 @@ public final class ServerDashboardPreview {
                 panel.showPage("overview"); render(panel, output.resolve("landrop-server-compact.png"), 1080, 710);
                 ServerDashboardPanelTest.button(panel, "Giao diện tối").doClick();
                 render(panel, output.resolve("landrop-server-dark.png"), 1280, 850);
+                panel.showPage("administration");
+                render(panel, output.resolve("landrop-server-administration-dark.png"), 1280, 850);
+                render(panel, output.resolve("landrop-server-administration-compact.png"), 1080, 760);
             } catch (Exception error) { throw new IllegalStateException(error); }
+            finally { panel.administration().close(); }
         });
         System.out.println("Dashboard previews written to " + output.toAbsolutePath());
     }

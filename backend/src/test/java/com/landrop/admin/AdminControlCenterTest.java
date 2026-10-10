@@ -449,13 +449,13 @@ public class AdminControlCenterTest {
         int wsPort = bootstrap.getRealtimeServer().getPort();
         String baseUrl = "http://127.0.0.1:" + httpPort;
 
-        // 1. Verify Admin Web Console UI is served at /admin
-        HttpRequest uiReq = HttpRequest.newBuilder().uri(URI.create(baseUrl + "/admin")).GET().build();
-        HttpResponse<String> uiRes = httpClient.send(uiReq, HttpResponse.BodyHandlers.ofString());
-        assertEquals(200, uiRes.statusCode());
-        assertTrue(uiRes.headers().firstValue("Content-Type").orElse("").contains("text/html"));
-        assertTrue(uiRes.body().contains("LANDrop Server Control Center"), "Console title should be present");
-        assertTrue(uiRes.body().contains("nav-tabs"), "Navigation tabs should be present in web console");
+        // Old web-console bookmarks receive a retirement response, including HTML navigation requests.
+        for (String path : List.of("/admin", "/admin/", "/admin/users")) {
+            HttpRequest uiReq = HttpRequest.newBuilder().uri(URI.create(baseUrl + path)).header("Accept", "text/html").GET().build();
+            HttpResponse<String> uiRes = httpClient.send(uiReq, HttpResponse.BodyHandlers.ofString());
+            assertEquals(410, uiRes.statusCode());
+            assertTrue(uiRes.body().contains("ADMIN_WEB_REMOVED"));
+        }
 
         // 2. Resolve or create system admin user
         User adminUser;

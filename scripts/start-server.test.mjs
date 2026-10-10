@@ -20,7 +20,7 @@ import {
   openBrowser,
   formatServerBanner,
   waitForHealth,
-  waitForAdminReady,
+  waitForClientReady,
   createProcessManager,
   runServer
 } from './start-server.mjs';
@@ -48,8 +48,8 @@ test('loadServerConfig returns canonical defaults when no environment is set', (
   assert.equal(config.httpPort, 3000);
   assert.equal(config.wsPort, 3001);
   assert.equal(config.host, '0.0.0.0');
-  assert.equal(config.adminPort, 3000);
-  assert.equal(config.adminPath, '/admin');
+  assert.equal(config.adminPort, undefined);
+  assert.equal(config.adminPath, undefined);
   assert.equal(config.protocolVersion, 1);
   assert.equal(config.environment, 'development');
 });
@@ -69,7 +69,7 @@ test('loadServerConfig respects inherited process.env overrides and aliases', ()
   assert.equal(config.host, '192.168.1.100');
   assert.equal(config.protocolVersion, 2);
   assert.equal(config.environment, 'staging');
-  assert.equal(config.adminPort, 8080);
+  assert.equal(config.adminPort, undefined);
 });
 
 test('validateServerConfig enforces port boundaries and prevents collisions', () => {
@@ -218,7 +218,7 @@ test('formatServerBanner formats required operational status details', () => {
     lanIps: ['192.168.1.50'],
     httpPort: 3000,
     wsPort: 3001,
-    adminUrl: 'http://localhost:3000/admin',
+    clientUrl: 'http://localhost:3000/client',
     lanApiUrl: 'http://192.168.1.50:3000/api',
     protocolVersion: 1,
     environment: 'production'
@@ -230,7 +230,8 @@ test('formatServerBanner formats required operational status details', () => {
   assert.match(banner, /LAN IP:\s+192\.168\.1\.50/);
   assert.match(banner, /API Port:\s+3000/);
   assert.match(banner, /WebSocket Port:\s+3001/);
-  assert.match(banner, /Admin UI:\s+http:\/\/localhost:3000\/admin/);
+  assert.match(banner, /Administration:\s+LANDrop Server Desktop/);
+  assert.match(banner, /Client UI:\s+http:\/\/localhost:3000\/client/);
   assert.match(banner, /LAN API:\s+http:\/\/192\.168\.1\.50:3000\/api/);
   assert.match(banner, /Protocol Version:\s+v1/);
   assert.match(banner, /Environment:\s+production/);
@@ -275,9 +276,9 @@ test('waitForHealth aborts immediately when isAborted() signals child crash', as
   );
 });
 
-test('waitForAdminReady verifies successful Admin UI HTTP response', async () => {
+test('waitForClientReady verifies the embedded client HTTP response', async () => {
   const server = http.createServer((req, res) => {
-    if (req.url === '/admin') {
+    if (req.url === '/client') {
       res.writeHead(200, { 'Content-Type': 'text/html' });
       res.end('<!DOCTYPE html><html><body>LANDrop Control Center</body></html>');
     } else {
@@ -290,7 +291,7 @@ test('waitForAdminReady verifies successful Admin UI HTTP response', async () =>
   const port = server.address().port;
 
   try {
-    const ready = await waitForAdminReady(`http://127.0.0.1:${port}/admin`, {
+    const ready = await waitForClientReady(`http://127.0.0.1:${port}/client`, {
       timeoutMs: 3000,
       intervalMs: 50
     });

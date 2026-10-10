@@ -46,7 +46,6 @@ public class AdminHttpServer {
     private volatile int actualHttpPort = -1;
     private volatile int actualWsPort = -1;
 
-    private byte[] cachedConsoleHtml;
 
     public void setActualPorts(int httpPort, int wsPort) {
         this.actualHttpPort = httpPort;
@@ -114,9 +113,10 @@ public class AdminHttpServer {
     }
 
     public void register(HttpServer server) {
-        // Web Console UI
-        server.createContext("/admin", this::handleAdminUi);
-        server.createContext("/admin/", this::handleAdminUi);
+        // Retired web console. Keep a precise response for old bookmarks.
+        server.createContext("/admin", exchange -> {
+            sendJsonResponse(exchange, 410, Map.of("error", "ADMIN_WEB_REMOVED", "message", "Use LANDrop Server Desktop for administration"));
+        });
 
         // Control Center REST Endpoints
         server.createContext("/api/admin/auth/login", this::handleAdminLogin);
@@ -137,7 +137,7 @@ public class AdminHttpServer {
         server.createContext("/api/server", this::handleServerRoutes);
         server.createContext("/api/server/", this::handleServerRoutes);
 
-        AppLogger.info(TAG, "Admin Control Center endpoints registered at /admin and /api/admin/*");
+        AppLogger.info(TAG, "Authenticated admin API registered at /api/admin/*; administration UI is in Server Desktop");
     }
 
     /** Login endpoint reserved for the Server Control Center. */
@@ -162,48 +162,6 @@ public class AdminHttpServer {
 
     // =========================================================================
     // 1. Web Console UI Handler
-    // =========================================================================
-
-    private void handleAdminUi(HttpExchange exchange) throws IOException {
-        if (handleCorsPreflight(exchange)) return;
-
-        if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
-            sendMethodNotAllowed(exchange, "GET");
-            return;
-        }
-
-        byte[] htmlBytes = getConsoleHtmlBytes();
-        exchange.getResponseHeaders().set("Content-Type", "text/html; charset=UTF-8");
-        exchange.sendResponseHeaders(200, htmlBytes.length);
-        try (OutputStream os = exchange.getResponseBody()) {
-            os.write(htmlBytes);
-        }
-    }
-
-    private synchronized byte[] getConsoleHtmlBytes() {
-        if (cachedConsoleHtml != null) {
-            return cachedConsoleHtml;
-        }
-
-        try (InputStream is = getClass().getResourceAsStream("/admin/index.html")) {
-            if (is != null) {
-                cachedConsoleHtml = is.readAllBytes();
-                return cachedConsoleHtml;
-            }
-        } catch (IOException ignored) {}
-
-        // Fallback minimal HTML
-        String fallback = """
-            <!DOCTYPE html><html><head><title>LANDrop Server Control Center</title></head>
-            <body style="font-family:sans-serif; background:#0f172a; color:#f8fafc; padding:2rem;">
-            <h1>LANDrop Server Control Center</h1><p>Control center active.</p></body></html>
-            """;
-        cachedConsoleHtml = fallback.getBytes(StandardCharsets.UTF_8);
-        return cachedConsoleHtml;
-    }
-
-    // =========================================================================
-    // 2. Admin Dashboard API
     // =========================================================================
 
     private void handleDashboard(HttpExchange exchange) throws IOException {

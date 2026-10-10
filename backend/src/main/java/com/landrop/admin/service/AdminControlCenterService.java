@@ -182,6 +182,10 @@ public class AdminControlCenterService {
         }
 
         User user = userOpt.get();
+        if (user.isSystemAdmin() && User.STATUS_ACTIVE.equals(user.status())
+                && userRepository.countActiveSystemAdmins() <= 1) {
+            throw new ValidationException("At least one active system administrator must remain");
+        }
         boolean updated = userRepository.updateStatus(targetUserId, User.STATUS_DISABLED);
         if (updated) {
             // Immediately revoke all active sessions to block existing tokens
@@ -231,14 +235,16 @@ public class AdminControlCenterService {
         if (userRepository == null || targetUserId == null) throw new ValidationException("User management is unavailable");
         User target = userRepository.findById(targetUserId).orElseThrow(() -> new ValidationException("User not found"));
         Map<String, Object> safeUpdates = updates != null ? updates : Map.of();
+        String displayName = null;
+        String role = null;
+        String status = null;
 
         if (safeUpdates.containsKey("displayName")) {
-            String displayName = String.valueOf(safeUpdates.get("displayName")).trim();
+            displayName = String.valueOf(safeUpdates.get("displayName")).trim();
             if (displayName.isBlank() || displayName.length() > 255) throw new ValidationException("Display name must be 1-255 characters");
-            userRepository.updateDisplayName(targetUserId, displayName);
         }
         if (safeUpdates.containsKey("systemRole")) {
-            String role = String.valueOf(safeUpdates.get("systemRole")).trim().toUpperCase(Locale.ROOT);
+            role = String.valueOf(safeUpdates.get("systemRole")).trim().toUpperCase(Locale.ROOT);
             if (!Set.of(User.ROLE_USER, User.ROLE_SYSTEM_ADMIN).contains(role)) throw new ValidationException("Invalid system role");
             if (targetUserId.equals(actingAdminId) && !User.ROLE_SYSTEM_ADMIN.equals(role)) {
                 throw new ValidationException("Cannot remove your own system administrator role");
@@ -246,11 +252,25 @@ public class AdminControlCenterService {
             if (target.isSystemAdmin() && !User.ROLE_SYSTEM_ADMIN.equals(role) && userRepository.countSystemAdmins() <= 1) {
                 throw new ValidationException("At least one system administrator must remain");
             }
-            userRepository.updateSystemRole(targetUserId, role);
+            if (target.isSystemAdmin() && User.STATUS_ACTIVE.equals(target.status()) && !User.ROLE_SYSTEM_ADMIN.equals(role)
+                    && userRepository.countActiveSystemAdmins() <= 1) {
+                throw new ValidationException("At least one active system administrator must remain");
+            }
         }
         if (safeUpdates.containsKey("status")) {
-            String status = String.valueOf(safeUpdates.get("status")).trim().toUpperCase(Locale.ROOT);
+            status = String.valueOf(safeUpdates.get("status")).trim().toUpperCase(Locale.ROOT);
             if (!Set.of(User.STATUS_ACTIVE, User.STATUS_DISABLED).contains(status)) throw new ValidationException("Invalid user status");
+            if (User.STATUS_DISABLED.equals(status)) {
+                if (targetUserId.equals(actingAdminId)) throw new ValidationException("Cannot disable your own system administrator account");
+                if (target.isSystemAdmin() && User.STATUS_ACTIVE.equals(target.status()) && userRepository.countActiveSystemAdmins() <= 1) {
+                    throw new ValidationException("At least one active system administrator must remain");
+                }
+            }
+        }
+        // Validate the whole editor before saving anything, including the final-admin checks.
+        if (displayName != null) userRepository.updateDisplayName(targetUserId, displayName);
+        if (role != null) userRepository.updateSystemRole(targetUserId, role);
+        if (status != null) {
             if (User.STATUS_DISABLED.equals(status)) disableUser(targetUserId, actingAdminId, actingAdminUsername);
             else enableUser(targetUserId, actingAdminUsername);
         }
@@ -264,6 +284,9 @@ public class AdminControlCenterService {
         User target = userRepository.findById(targetUserId).orElseThrow(() -> new ValidationException("User not found"));
         if (target.isSystemAdmin() && userRepository.countSystemAdmins() <= 1) {
             throw new ValidationException("At least one system administrator must remain");
+        }
+        if (target.isSystemAdmin() && User.STATUS_ACTIVE.equals(target.status()) && userRepository.countActiveSystemAdmins() <= 1) {
+            throw new ValidationException("At least one active system administrator must remain");
         }
         revokeUserSessions(targetUserId, actingAdminUsername);
         boolean deleted;

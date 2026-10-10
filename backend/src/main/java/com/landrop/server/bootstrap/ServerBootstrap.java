@@ -73,6 +73,7 @@ public class ServerBootstrap {
     private AdminAuthMiddleware adminAuthMiddleware;
     private AdminControlCenterService adminControlCenterService;
     private AdminHttpServer adminHttpServer;
+    private com.landrop.database.repository.AdminDataRepository adminDataRepository;
 
     private FoundationHttpServer httpServer;
     private FoundationRealtimeServer realtimeServer;
@@ -111,6 +112,7 @@ public class ServerBootstrap {
         if (dbConnected) {
             try {
                 DatabaseManager db = DatabaseManager.getInstance();
+                this.adminDataRepository = new com.landrop.database.repository.AdminDataRepository(db);
                 if (this.userRepository == null) {
                     this.userRepository = new UserRepository(db);
                 }
@@ -369,7 +371,6 @@ public class ServerBootstrap {
         java.util.List<String> lanIps = resolveLanIpv4Addresses();
         String primaryLanIp = lanIps.isEmpty() ? (config.getHost().equals("0.0.0.0") ? "127.0.0.1" : config.getHost()) : lanIps.get(0);
         String lanHealthUrl = "http://" + primaryLanIp + ":" + actualHttpPort + "/health";
-        String lanAdminUrl = "http://" + primaryLanIp + ":" + actualHttpPort + "/admin";
         String lanWsUrl = "ws://" + primaryLanIp + ":" + actualWsPort;
 
         String banner = String.format("""
@@ -383,7 +384,7 @@ public class ServerBootstrap {
             LAN IP(s):          %s
             LAN URL (Health):   %s
             WebSocket URL:      %s
-            Control Center URL: %s
+            Administration:     LANDrop Server Desktop
             Protocol Version:   %d
             Environment:        %s
             Log Level:          %s
@@ -395,7 +396,6 @@ public class ServerBootstrap {
             lanIps.isEmpty() ? primaryLanIp : String.join(", ", lanIps),
             lanHealthUrl,
             lanWsUrl,
-            lanAdminUrl,
             config.getProtocolVersion(),
             config.getEnvironment(),
             config.getLogLevel()
@@ -403,7 +403,7 @@ public class ServerBootstrap {
 
         System.out.println(banner);
         ServerEventLogger.log(ServerEvent.SERVER_STARTED,
-                "Host: " + config.getHost() + " | LAN URL: " + lanHealthUrl + " | WebSocket URL: " + lanWsUrl + " | Control Center: " + lanAdminUrl);
+                "Host: " + config.getHost() + " | LAN URL: " + lanHealthUrl + " | WebSocket URL: " + lanWsUrl + " | Administration: Desktop");
     }
 
     public boolean isRunning() {
@@ -445,6 +445,8 @@ public class ServerBootstrap {
     public AdminControlCenterService getAdminControlCenterService() {
         return adminControlCenterService;
     }
+
+    public com.landrop.database.repository.AdminDataRepository getAdminDataRepository() { return adminDataRepository; }
 
     public AdminHttpServer getAdminHttpServer() {
         return adminHttpServer;

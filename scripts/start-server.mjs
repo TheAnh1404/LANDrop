@@ -18,7 +18,6 @@ export const SERVER_ENVIRONMENT_KEYS = new Set([
   'PROTOCOL_VERSION',
   'NODE_ENV', 'ENVIRONMENT',
   'DATABASE_URL',
-  'ADMIN_PORT', 'ADMIN_DEV_COMMAND', 'ADMIN_UI_URL',
   'LANDROP_JAR_PATH', 'SERVER_BACKEND_COMMAND',
   'LANDROP_NO_BROWSER', 'NO_OPEN'
 ]);
@@ -70,10 +69,6 @@ export function loadServerConfig(root = repositoryRoot, inherited = process.env)
   const environment = env.NODE_ENV || env.ENVIRONMENT || 'development';
   const databaseUrl = env.DATABASE_URL || null;
 
-  const rawAdminPort = env.ADMIN_PORT || String(httpPort);
-  const adminPort = parseInt(rawAdminPort, 10);
-
-  const adminDevCommand = env.ADMIN_DEV_COMMAND || null;
   const jarPath = env.LANDROP_JAR_PATH ? resolve(root, env.LANDROP_JAR_PATH) : null;
   const backendCommand = env.SERVER_BACKEND_COMMAND || null;
 
@@ -82,12 +77,9 @@ export function loadServerConfig(root = repositoryRoot, inherited = process.env)
     host,
     httpPort,
     wsPort,
-    adminPort,
-    adminPath: '/admin',
     protocolVersion: Number.isNaN(protocolVersion) ? 1 : protocolVersion,
     environment,
     databaseUrl,
-    adminDevCommand,
     jarPath,
     backendCommand,
     raw: env
@@ -125,10 +117,6 @@ export function validateServerConfig(config) {
 
   if (!Number.isNaN(config.httpPort) && !Number.isNaN(config.wsPort) && config.httpPort === config.wsPort) {
     errors.push(`Port conflict: HTTP port (${config.httpPort}) and WebSocket port (${config.wsPort}) cannot be identical.`);
-  }
-
-  if (Number.isNaN(config.adminPort) || config.adminPort < 1024 || config.adminPort > 65535) {
-    errors.push(`Invalid Admin UI port: ${config.adminPort}. Port must be an integer between 1024 and 65535.`);
   }
 
   return {
@@ -346,9 +334,9 @@ export async function waitForHealth(healthUrl, {
 }
 
 /**
- * Verifies that the Admin UI endpoint is listening and responding.
+ * Verifies that the Client UI endpoint is listening and responding.
  */
-export async function waitForAdminReady(adminUrl, {
+export async function waitForClientReady(clientUrl, {
   timeoutMs = 15000,
   intervalMs = 300,
   isAborted = () => false,
@@ -362,17 +350,17 @@ export async function waitForAdminReady(adminUrl, {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 2000);
-      const res = await fetchFn(adminUrl, { signal: controller.signal });
+      const res = await fetchFn(clientUrl, { signal: controller.signal });
       clearTimeout(timer);
       if (res.status === 200 || res.status === 304) {
         return true;
       }
     } catch {
-      // Admin UI not yet ready
+      // Client UI not yet ready
     }
     await new Promise(r => setTimeout(r, intervalMs));
   }
-  throw new Error(`LANDrop Admin UI readiness check timed out after ${timeoutMs}ms at ${adminUrl}`);
+  throw new Error(`LANDrop Client readiness check timed out after ${timeoutMs}ms at ${clientUrl}`);
 }
 
 /**
@@ -417,7 +405,7 @@ export function formatServerBanner({
   lanIps = [],
   httpPort = 3000,
   wsPort = 3001,
-  adminUrl = 'http://localhost:3000/admin',
+  clientUrl = 'http://localhost:3000/client',
   lanApiUrl = 'http://localhost:3000/api',
   protocolVersion = 1,
   environment = 'development'
@@ -432,7 +420,8 @@ export function formatServerBanner({
     `LAN IP:           ${ipDisplay}`,
     `API Port:         ${httpPort}`,
     `WebSocket Port:   ${wsPort}`,
-    `Admin UI:         ${adminUrl}`,
+    'Administration:   LANDrop Server Desktop',
+    `Client UI:        ${clientUrl}`,
     `LAN API:          ${lanApiUrl}`,
     `Protocol Version: v${protocolVersion}`,
     `Environment:      ${environment}`,
@@ -471,22 +460,15 @@ export async function runServer({
   // 2. Resolve network addresses
   const lanIps = resolveLanIpv4Addresses();
   const primaryLanIp = lanIps.length > 0 ? lanIps[0] : (config.host === '0.0.0.0' ? '127.0.0.1' : config.host);
-  const localAdminUrl = `http://localhost:${config.adminPort}${config.adminPath}`;
+  const localClientUrl = `http://localhost:${config.httpPort}/client`;
   const lanApiUrl = `http://${primaryLanIp}:${config.httpPort}/api`;
   const healthUrl = `http://127.0.0.1:${config.httpPort}/health`;
-  const adminCheckUrl = `http://127.0.0.1:${config.adminPort}${config.adminPath}`;
+  const clientCheckUrl = `http://127.0.0.1:${config.httpPort}/client`;
 
-  // 3. Admin-only mode: check and open existing Admin UI
   if (adminOnly) {
-    const isRunning = await checkPortInUse(config.adminPort);
-    if (isRunning) {
-      console.log(`LANDrop Server is active. Opening Admin UI at ${localAdminUrl}...`);
-      openBrowser(localAdminUrl);
-      return { success: true, opened: true };
-    }
-    console.log(`LANDrop Server is not running on port ${config.adminPort}.`);
-    console.log('To start both the Server and Admin UI, run:\n  npm run server\n');
-    return { success: false, reason: 'server_not_running' };
+    console.error('Admin web has been removed. Use npm run server:desktop for administration.');
+    process.exitCode = 1;
+    return { success: false, reason: 'admin_web_removed' };
   }
 
   // 4. Pre-flight check: ensure ports are not already occupied
@@ -516,7 +498,7 @@ export async function runServer({
       lanIps,
       httpPort: config.httpPort,
       wsPort: config.wsPort,
-      adminUrl: localAdminUrl,
+      clientUrl: localClientUrl,
       lanApiUrl,
       protocolVersion: config.protocolVersion,
       environment: config.environment
@@ -526,7 +508,7 @@ export async function runServer({
   }
 
   console.log('\nStarting LANDrop Server...');
-  console.log(`Mode:             ${backendOnly ? 'Backend Only' : 'Unified Server & Admin Control Center'}`);
+  console.log(`Mode:             ${backendOnly ? 'Backend Only' : 'Desktop Server & Administration'}`);
   console.log(`Host:             ${config.host}`);
   console.log(`HTTP Port:        ${config.httpPort}`);
   console.log(`WebSocket Port:   ${config.wsPort}`);
@@ -587,21 +569,6 @@ export async function runServer({
       windowsHide: true
     });
 
-    // 10. Launch external Admin UI process if configured
-    if (config.adminDevCommand) {
-      console.log(`Launching external Admin UI (${config.adminDevCommand})...`);
-      const adminInvocation = process.platform === 'win32'
-        ? { command: 'cmd.exe', args: ['/d', '/s', '/c', `${config.adminDevCommand} < nul`] }
-        : { command: '/bin/sh', args: ['-c', config.adminDevCommand] };
-      manager.launch('admin', adminInvocation, {
-        cwd: repositoryRoot,
-        env: childEnvironment,
-        stdio: ['ignore', 'inherit', 'inherit'],
-        detached: true,
-        windowsHide: true
-      });
-    }
-
     // 11. Wait for backend /health check
     console.log(`Waiting for backend health check at ${healthUrl}...`);
     await waitForHealth(healthUrl, {
@@ -610,10 +577,10 @@ export async function runServer({
       isAborted: () => manager.getProcess('backend')?.exitCode !== null || shuttingDown
     });
 
-    // 12. Wait for Admin UI readiness
+    // 12. Wait for Client readiness
     if (!backendOnly) {
-      console.log(`Verifying Admin UI readiness at ${adminCheckUrl}...`);
-      await waitForAdminReady(adminCheckUrl, {
+      console.log(`Verifying client readiness at ${clientCheckUrl}...`);
+      await waitForClientReady(clientCheckUrl, {
         timeoutMs: 15000,
         intervalMs: 400,
         isAborted: () => manager.getProcess('backend')?.exitCode !== null || shuttingDown
@@ -629,7 +596,7 @@ export async function runServer({
       lanIps,
       httpPort: config.httpPort,
       wsPort: config.wsPort,
-      adminUrl: localAdminUrl,
+      clientUrl: localClientUrl,
       lanApiUrl,
       protocolVersion: config.protocolVersion,
       environment: config.environment
@@ -639,8 +606,8 @@ export async function runServer({
     // 14. Open browser only if explicitly requested (--open-browser)
     const shouldOpen = openBrowserRequested && !backendOnly && !noOpen && !process.env.LANDROP_NO_BROWSER && !process.env.CI;
     if (shouldOpen) {
-      console.log(`Opening Admin UI in default browser: ${localAdminUrl}`);
-      openBrowser(localAdminUrl);
+      console.log(`Opening client in default browser: ${localClientUrl}`);
+      openBrowser(localClientUrl);
     }
 
     // 15. Keep orchestrator active and monitor child processes until shutdown
@@ -666,7 +633,7 @@ export async function runServer({
     return {
       success: true,
       config,
-      localAdminUrl,
+      localClientUrl,
       lanApiUrl
     };
   } catch (error) {

@@ -119,8 +119,12 @@ class DesktopServerControllerTest {
                 assertEquals(200, response.statusCode());
                 assertTrue(response.body().contains("LANDrop"));
             }
+            controller.setServiceConfig(new com.landrop.server.config.ServerConfig("127.0.0.1", httpPort, wsPort, 1, 7000, 12000, "test", "DEBUG"));
             assertTrue(controller.restart()); awaitState(states, RUNNING);
             assertNotSame(first, controller.bootstrap());
+            assertEquals(7000, controller.bootstrap().getConfig().getHeartbeatIntervalMs());
+            assertEquals(12000, controller.bootstrap().getConfig().getHeartbeatTimeoutMs());
+            assertEquals("DEBUG", controller.bootstrap().getConfig().getLogLevel());
             assertFalse(first.isRunning());
             controller.shutdown().get(5, TimeUnit.SECONDS);
             try (var http = new java.net.ServerSocket(httpPort); var ws = new java.net.ServerSocket(wsPort)) {

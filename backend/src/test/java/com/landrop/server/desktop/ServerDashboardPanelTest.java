@@ -17,7 +17,6 @@ class ServerDashboardPanelTest {
         @Override public void stop() { }
         @Override public void restart() { }
         @Override public void openClient() { }
-        @Override public void openAdmin() { }
         @Override public void copy(String text) { }
         @Override public void refreshNetwork() { }
         @Override public void disconnect(String id) { disconnected = id; }

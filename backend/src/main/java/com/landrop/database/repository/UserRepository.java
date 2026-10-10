@@ -208,6 +208,14 @@ public class UserRepository {
         return 0L;
     }
 
+    public long countActiveSystemAdmins() throws SQLException {
+        try (Connection conn = databaseManager.getConnection();
+             PreparedStatement ps = conn.prepareStatement("SELECT COUNT(*) FROM users WHERE system_role = ? AND status = ?")) {
+            ps.setString(1, User.ROLE_SYSTEM_ADMIN); ps.setString(2, User.STATUS_ACTIVE);
+            try (ResultSet rs = ps.executeQuery()) { return rs.next() ? rs.getLong(1) : 0L; }
+        }
+    }
+
     /** Returns one active system administrator for administrative recovery tooling. */
     public Optional<User> findFirstSystemAdmin() throws SQLException {
         String sql = "SELECT id, email, username, display_name, avatar_url, password_hash, status, system_role, created_at, updated_at "

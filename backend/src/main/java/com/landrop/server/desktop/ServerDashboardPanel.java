@@ -21,7 +21,8 @@ import java.util.function.Consumer;
 /** Desktop view, independently renderable without starting servers or opening native windows. */
 public final class ServerDashboardPanel extends JPanel {
     public interface Actions {
-        void start(); void stop(); void restart(); void openClient(); void openAdmin();
+        void start(); void stop(); void restart(); void openClient();
+        default void applyServiceConfig(com.landrop.server.config.ServerConfig config) { }
         void copy(String text); void refreshNetwork(); void disconnect(String connectionId);
         void cancelTransfer(String transferId); void applySettings(DesktopServerSettings settings);
     }
@@ -52,6 +53,7 @@ public final class ServerDashboardPanel extends JPanel {
     private final JButton themeButton;
     private final JButton clientButton;
     private final JButton adminButton;
+    private final DesktopAdminPanel administration;
     private final JLabel clientsMetric = new JLabel("0");
     private final JLabel transfersMetric = new JLabel("0");
     private final JLabel uptimeMetric = new JLabel("00:00:00");
@@ -111,7 +113,8 @@ public final class ServerDashboardPanel extends JPanel {
         restartButton = button("Khởi động lại", "restart", null, actions::restart);
         themeButton = button("Giao diện tối", "theme", null, this::toggleTheme);
         clientButton = button("Mở client", "link", BLUE, actions::openClient);
-        adminButton = button("Quản trị web", "shield", null, actions::openAdmin);
+        adminButton = button("Quản trị dữ liệu", "shield", null, () -> showPage("administration"));
+        administration = new DesktopAdminPanel(actions::applyServiceConfig);
         disconnectButton = button("Ngắt kết nối", "stop", RED, () -> actions.disconnect(selectedClientId()));
         cancelButton = button("Hủy phiên đã chọn", "stop", RED, () -> actions.cancelTransfer(selectedTransferId()));
         add(sidebar(), BorderLayout.WEST);
@@ -124,6 +127,7 @@ public final class ServerDashboardPanel extends JPanel {
         pageContainer.add(transfersPage(), "transfers");
         pageContainer.add(logsPage(), "logs");
         pageContainer.add(settingsPage(), "settings");
+        pageContainer.add(administration, "administration");
         main.add(pageContainer, BorderLayout.CENTER);
         JPanel status = transparent(new BorderLayout());
         style(footer, 11, false, true);
@@ -165,11 +169,12 @@ public final class ServerDashboardPanel extends JPanel {
         JLabel product = new JLabel("SERVER CONSOLE"); product.setFont(FONT.deriveFont(10f)); product.setForeground(new Color(0x91A4C2));
         brandText.add(name); brandText.add(product); brand.add(mark, BorderLayout.WEST); brand.add(brandText);
         upper.add(brand, BorderLayout.NORTH);
-        JPanel nav = transparent(new GridLayout(6, 1, 0, 8));
+        JPanel nav = transparent(new GridLayout(7, 1, 0, 8));
         JLabel caption = new JLabel("ĐIỀU KHIỂN MÁY CHỦ"); caption.setForeground(new Color(0x7185A4)); caption.setFont(FONT.deriveFont(Font.BOLD, 10));
         nav.add(caption);
         String[][] entries = {{"overview", "Tổng quan", "home"}, {"clients", "Thiết bị kết nối", "users"},
-                {"transfers", "Phiên truyền", "transfer"}, {"logs", "Nhật ký", "logs"}, {"settings", "Cấu hình", "settings"}};
+                {"transfers", "Phiên truyền", "transfer"}, {"administration", "Quản trị dữ liệu", "shield"},
+                {"logs", "Nhật ký", "logs"}, {"settings", "Cấu hình", "settings"}};
         ButtonGroup group = new ButtonGroup();
         for (String[] entry : entries) {
             JToggleButton item = new JToggleButton(entry[1], new LineIcon(entry[2]));
@@ -517,6 +522,7 @@ public final class ServerDashboardPanel extends JPanel {
             case "transfers" -> new String[]{"Phiên truyền", "Theo dõi yêu cầu và trạng thái kết nối giữa các client."};
             case "logs" -> new String[]{"Nhật ký máy chủ", "Tìm và lọc sự kiện để theo dõi hoạt động, xử lý lỗi."};
             case "settings" -> new String[]{"Cấu hình máy chủ", "Thiết lập mạng, cổng dịch vụ và cách người dùng truy cập."};
+            case "administration" -> new String[]{"Quản trị dữ liệu", "Quản lý tài khoản, phiên đăng nhập và dữ liệu PostgreSQL trực tiếp trên desktop."};
             default -> new String[]{"Tổng quan máy chủ", "Mọi thông tin và thao tác điều khiển trong một nơi."};
         };
         pageTitle.setText(text[0]); pageDescription.setText(text[1]);
@@ -526,6 +532,8 @@ public final class ServerDashboardPanel extends JPanel {
             item.setForeground(item.isSelected() ? Color.WHITE : new Color(0x9BAFCB));
         }
     }
+
+    public DesktopAdminPanel administration() { return administration; }
 
     private void toggleTheme() {
         dark = !dark; if (dark) FlatDarkLaf.setup(); else FlatLightLaf.setup();

@@ -53,7 +53,9 @@ public class ServerMainFrame extends JFrame {
             @Override public void stop() { stopServer(); }
             @Override public void restart() { restartServer(); }
             @Override public void openClient() { openBrowser(clientUrl()); }
-            @Override public void openAdmin() { openBrowser(apiUrl() + "/admin"); }
+            @Override public void applyServiceConfig(com.landrop.server.config.ServerConfig config) {
+                controller.setServiceConfig(config);
+            }
             @Override public void copy(String text) {
                 if (text != null && !text.isBlank()) Toolkit.getDefaultToolkit().getSystemClipboard().setContents(new StringSelection(text), null);
             }
@@ -151,6 +153,9 @@ public class ServerMainFrame extends JFrame {
         if (newLogs) dashboard.setActivity(List.copyOf(history));
         ServerBootstrap server = controller.bootstrap();
         boolean running = server != null && server.isRunning();
+        dashboard.administration().setRuntime(running && !closing && controller.state() == DesktopServerController.State.RUNNING
+                ? server.getAdminControlCenterService() : null, running ? server.getAdminDataRepository() : null,
+                running && server.getUserRepository() != null && server.getRefreshTokenRepository() != null);
         List<ClientConnection> connections = running ? server.getClientRegistry().activeConnections().stream()
                 .sorted(Comparator.comparing(ClientConnection::deviceName).thenComparing(ClientConnection::connectionId)).toList() : List.of();
         dashboard.setClients(connections.stream().map(c -> new ServerDashboardPanel.ClientRow(c.connectionId(), c.deviceName(),
@@ -198,7 +203,10 @@ public class ServerMainFrame extends JFrame {
                 "Ngắt kết nối thiết bị", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) return;
         background.execute(() -> {
             // Gateway close also triggers subscription/transfer cleanup; removing the registry alone is insufficient.
-            server.getRealtimeServer().disconnectConnection(id, "ADMIN_DISCONNECT", "Disconnected from LANDrop Server Desktop");
+            if (server.getRealtimeServer().disconnectConnection(id, "ADMIN_DISCONNECT", "Disconnected from LANDrop Server Desktop")) {
+                server.getOperationalLogService().warn("ADMIN_CLIENT_DISCONNECT", DesktopAdminPanel.ACTOR, id,
+                        "Disconnected client from LANDrop Server Desktop.");
+            }
             SwingUtilities.invokeLater(this::refreshDashboard);
         });
     }
@@ -208,7 +216,10 @@ public class ServerMainFrame extends JFrame {
         if (JOptionPane.showConfirmDialog(this, "Hủy phiên signaling này? Hai phía sẽ nhận thông báo kết thúc phiên.",
                 "Hủy phiên truyền", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) return;
         background.execute(() -> {
-            server.getRealtimeServer().cancelTransferFromAdmin(id);
+            if (server.getRealtimeServer().cancelTransferFromAdmin(id)) {
+                server.getOperationalLogService().warn("ADMIN_TRANSFER_CANCEL", DesktopAdminPanel.ACTOR, id,
+                        "Cancelled signaling transfer from LANDrop Server Desktop.");
+            }
             SwingUtilities.invokeLater(this::refreshDashboard);
         });
     }
@@ -245,13 +256,15 @@ public class ServerMainFrame extends JFrame {
         if (controller.bootstrap() != null && JOptionPane.showConfirmDialog(this, "Dừng máy chủ và thoát LANDrop Server?",
                 "Thoát ứng dụng", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) return;
         closing = true;
+        dashboard.administration().setRuntime(null, null, false);
         dashboard.setLifecycle(DesktopServerController.State.STOPPING, "Đang dừng dịch vụ trước khi thoát…", false);
         controller.shutdown().whenComplete((ignored, failure) -> SwingUtilities.invokeLater(() -> {
             if (failure != null) {
                 closing = false; dashboard.setLifecycle(DesktopServerController.State.FAILED, "Dừng dịch vụ chưa hoàn tất. Kiểm tra nhật ký.", true);
                 return;
             }
-            disposed = true; refreshTimer.stop(); AppLogger.removeLogListener(logListener); tray.dispose(); background.shutdownNow();
+            disposed = true; refreshTimer.stop(); dashboard.administration().close();
+            AppLogger.removeLogListener(logListener); tray.dispose(); background.shutdownNow();
             super.dispose();
         }));
     }
