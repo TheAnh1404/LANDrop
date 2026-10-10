@@ -459,6 +459,12 @@ public final class ServerDashboardPanel extends JPanel {
         notice.setText(message); notice.setForeground(state == DesktopServerController.State.FAILED ? RED : mutedColor());
         startButton.setEnabled(!busy && !activeRuntime); stopButton.setEnabled(!busy && activeRuntime);
         restartButton.setEnabled(running); clientButton.setEnabled(running); adminButton.setEnabled(running);
+        startButton.setVisible(!activeRuntime); stopButton.setVisible(activeRuntime); restartButton.setVisible(activeRuntime);
+        copyLinkButton.setEnabled(running && clientLink.getText() != null && !clientLink.getText().isBlank());
+        welcomeTitle.setText(running ? "Sẵn sàng kết nối và chia sẻ" : busy ? "Máy chủ đang xử lý…" : "Bắt đầu với LANDrop");
+        welcomeHint.setText(running ? "Gửi đường dẫn hoặc cho người dùng quét mã QR. Các thiết bị cần dùng cùng mạng."
+                : "Bật máy chủ để người dùng có thể đăng nhập và kết nối.");
+        qrLabel.setEnabled(running);
         if (!running && !activeRuntime) { uptimeMetric.setText("00:00:00"); apiHealth.setText("Chưa chạy"); wsHealth.setText("Chưa chạy"); }
         updateSelection();
     }
@@ -468,10 +474,14 @@ public final class ServerDashboardPanel extends JPanel {
         clientsMetric.setText(String.valueOf(clients)); transfersMetric.setText(String.valueOf(transfers));
         uptimeMetric.setText(String.format("%02d:%02d:%02d", uptime / 3600, (uptime / 60) % 60, uptime % 60));
         memoryMetric.setText((memoryBytes / (1024 * 1024)) + " MB");
-        apiHealth.setText(api); wsHealth.setText(ws); databaseHealth.setText(database);
+        apiHealth.setText(api.startsWith("Online") ? "Hoạt động" : api);
+        wsHealth.setText(ws.startsWith("Online") ? "Hoạt động" : ws);
+        databaseHealth.setText(database.equals("PostgreSQL online") ? "Đã kết nối" : database);
         accessHealth.setText(authenticatedServices ? "Sẵn sàng" : "Chưa khả dụng");
+        databaseGuidance.setText(authenticatedServices ? "Có thể quản lý tài khoản, nhóm và dữ liệu."
+                : "Cần kết nối dữ liệu để quản lý tài khoản và nhóm.");
         applyHealthColors();
-        footer.setText("Cập nhật " + TIME.format(Instant.now()) + "  ·  " + clients + " kết nối  ·  " + transfers + " phiên signaling");
+        footer.setText("Cập nhật " + TIME.format(Instant.now()) + "  ·  " + clients + " thiết bị  ·  " + transfers + " yêu cầu kết nối");
     }
     private void applyHealthColors() {
         apiHealth.setForeground(apiHealth.getText().startsWith("Chưa") ? mutedColor() : GREEN);
@@ -492,9 +502,10 @@ public final class ServerDashboardPanel extends JPanel {
     public void setConnectionUrls(String client, String api, String ws, boolean loopback) {
         clientLink.setText(client); clientLink.setToolTipText(client);
         backendLink.setText("API " + api + "    ·    WS " + ws); backendLink.setToolTipText(backendLink.getText());
-        connectionHint.setText(loopback ? "Chỉ máy này truy cập được. Đổi địa chỉ bind để cho phép thiết bị LAN."
-                : settings.externalClient() ? "Chạy Next.js riêng tại cổng " + settings.clientPort() + ". Thiết bị truy cập cần cùng mạng LAN."
-                : "Client đi kèm dùng chung cổng HTTP. Thiết bị truy cập cần cùng mạng LAN.");
+        connectionHint.setText(loopback ? "Chỉ máy này truy cập được. Mở Cài đặt để cho phép thiết bị khác."
+                : settings.externalClient() ? "Trang kết nối riêng cần được bật trước khi chia sẻ đường dẫn."
+                : "Người dùng mở đường dẫn, đăng nhập và chọn nhóm làm việc.");
+        copyLinkButton.setEnabled(lifecycleState == DesktopServerController.State.RUNNING && !client.isBlank());
     }
     public void setQrImage(java.awt.image.BufferedImage image) { qrLabel.setText(""); qrLabel.setIcon(new ImageIcon(image)); }
 
@@ -531,7 +542,7 @@ public final class ServerDashboardPanel extends JPanel {
         disconnectButton.setEnabled(stopButton.isEnabled() && selectedClientId() != null);
         cancelButton.setEnabled(stopButton.isEnabled() && selectedTransferId() != null);
         int selected = clientTable.getSelectedRow();
-        if (selected < 0) { selectedDevice.setText("Chọn một thiết bị"); selectedDetails.setText("Thông tin kết nối và thao tác quản lý sẽ hiển thị tại đây.\n\nNgắt kết nối sẽ đóng WebSocket và kết thúc các phiên signaling liên quan."); return; }
+        if (selected < 0) { selectedDevice.setText("Chọn một thiết bị"); selectedDetails.setText("Bấm vào một hàng để xem thông tin và quản lý thiết bị.\n\nNgắt kết nối sẽ kết thúc các yêu cầu kết nối liên quan."); return; }
         int row = clientTable.convertRowIndexToModel(selected);
         selectedDevice.setText(String.valueOf(clientModel.getValueAt(row, 0)));
         selectedDetails.setText("TÀI KHOẢN\n" + clientModel.getValueAt(row, 1) + "\n\nĐỊA CHỈ MẠNG\n" + clientModel.getValueAt(row, 2)
@@ -542,7 +553,7 @@ public final class ServerDashboardPanel extends JPanel {
     public void setActivity(List<Activity> entries) {
         activity = List.copyOf(entries); renderLogs();
         recentLines.removeAll();
-        List<Activity> last = activity.subList(Math.max(0, activity.size() - 5), activity.size());
+        List<Activity> last = activity.subList(Math.max(0, activity.size() - 4), activity.size());
         if (last.isEmpty()) recentLines.add(recentActivity);
         for (int i = last.size() - 1; i >= 0; i--) {
             Activity entry = last.get(i); JPanel row = transparent(new BorderLayout(10, 0));
@@ -570,17 +581,28 @@ public final class ServerDashboardPanel extends JPanel {
     }
 
     public void showPage(String page) {
-        selectedPage = page; pages.show(pageContainer, page);
+        selectedPage = page;
+        int section = switch (page) { case "users", "administration" -> 0; case "sessions" -> 1;
+            case "workspaces" -> 2; case "data" -> 3; case "audit" -> 4; case "server" -> 5; default -> -1; };
+        pages.show(pageContainer, section >= 0 ? "administration" : page);
+        if (section >= 0) administration.showSection(section);
         String[] text = switch (page) {
-            case "clients" -> new String[]{"Thiết bị kết nối", "Theo dõi các kết nối online và kiểm soát từng thiết bị."};
-            case "transfers" -> new String[]{"Phiên truyền", "Theo dõi yêu cầu và trạng thái kết nối giữa các client."};
+            case "clients" -> new String[]{"Thiết bị", "Xem ai đang kết nối và quản lý từng thiết bị."};
+            case "transfers" -> new String[]{"Truyền tệp", "Theo dõi yêu cầu chia sẻ và kết nối giữa các thiết bị."};
             case "logs" -> new String[]{"Nhật ký máy chủ", "Tìm và lọc sự kiện để theo dõi hoạt động, xử lý lỗi."};
-            case "settings" -> new String[]{"Cấu hình máy chủ", "Thiết lập mạng, cổng dịch vụ và cách người dùng truy cập."};
-            case "administration" -> new String[]{"Quản trị dữ liệu", "Quản lý tài khoản, phiên đăng nhập và dữ liệu PostgreSQL trực tiếp trên desktop."};
-            default -> new String[]{"Tổng quan máy chủ", "Mọi thông tin và thao tác điều khiển trong một nơi."};
+            case "settings" -> new String[]{"Cài đặt", "Điều chỉnh cách sử dụng máy chủ. Cài đặt mạng nằm trong phần nâng cao."};
+            case "administration", "users", "sessions" -> new String[]{"Người dùng", "Tìm tài khoản, quản lý quyền truy cập và các lần đăng nhập."};
+            case "workspaces" -> new String[]{"Nhóm làm việc", "Tổ chức nhóm và quản lý thành viên ở một nơi."};
+            case "data" -> new String[]{"Dữ liệu lưu trữ", "Xem thông tin đã lưu. Nội dung tệp có thể nằm trên thiết bị người dùng."};
+            case "audit" -> new String[]{"Lịch sử quản trị", "Xem ai đã thực hiện thao tác và thời điểm thay đổi."};
+            case "server" -> new String[]{"Thông tin & dịch vụ", "Chi tiết máy chủ và các thiết lập dành cho người vận hành."};
+            case "help" -> new String[]{"Hướng dẫn", "Các bước đơn giản để kết nối, quản lý và xử lý tình huống thường gặp."};
+            default -> new String[]{"Tổng quan", "Theo dõi máy chủ và giúp người dùng kết nối."};
         };
         pageTitle.setText(text[0]); pageDescription.setText(text[1]);
-        navigation.stream().filter(item -> item.getActionCommand().equals(page)).findFirst().ifPresent(item -> item.setSelected(true));
+        String navPage = switch (page) { case "administration", "sessions" -> "users"; case "audit" -> "logs";
+            case "server" -> "settings"; default -> page; };
+        navigation.stream().filter(item -> item.getActionCommand().equals(navPage)).findFirst().ifPresent(item -> item.setSelected(true));
         for (JToggleButton item : navigation) {
             item.setBackground(item.isSelected() ? new Color(0x263E64) : NAVY);
             item.setForeground(item.isSelected() ? Color.WHITE : new Color(0x9BAFCB));
@@ -596,18 +618,11 @@ public final class ServerDashboardPanel extends JPanel {
         themeButton.setText(dark ? "Giao diện sáng" : "Giao diện tối");
         showPage(selectedPage); setActivity(activity); repaint();
     }
-    private void applyPalette() { for (Runnable binding : themeBindings) binding.run(); }
-    private Color textColor() { return dark ? new Color(0xE5ECF7) : new Color(0x20304A); }
-    private Color mutedColor() { return dark ? new Color(0x8FA2BD) : new Color(0x76859B); }
+    private void applyPalette() { for (Runnable binding : themeBindings) binding.run(); administration.setDark(dark); }
+    private Color textColor() { return DesktopUi.text(dark); }
+    private Color mutedColor() { return DesktopUi.muted(dark); }
     private JPanel surface(LayoutManager layout) {
-        JPanel panel = new JPanel(layout) {
-            @Override protected void paintComponent(Graphics graphics) {
-                Graphics2D g = (Graphics2D) graphics.create(); g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                g.setColor(dark ? new Color(0x151F30) : Color.WHITE); g.fillRoundRect(0, 0, getWidth(), getHeight(), 18, 18);
-                g.setColor(dark ? new Color(0x24334A) : new Color(0xE3E8F0)); g.drawRoundRect(0, 0, getWidth() - 1, getHeight() - 1, 18, 18); g.dispose();
-            }
-        };
-        panel.setOpaque(false); panel.setBorder(new EmptyBorder(16, 20, 16, 20)); return panel;
+        return DesktopUi.card(layout, () -> dark);
     }
     private JLabel sectionTitle(String title, String icon) {
         JLabel text = label(title, 15, true, false); text.setIcon(new LineIcon(icon)); text.setIconTextGap(10); return text;
