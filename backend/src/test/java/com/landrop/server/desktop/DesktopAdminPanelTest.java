@@ -71,7 +71,7 @@ class DesktopAdminPanelTest {
                 assertTrue(button(view.get(), "Lọc nhật ký").isEnabled());
                 var text = components(view.get(), JLabel.class).stream().map(JLabel::getText).reduce("", (a, b) -> a + b);
                 assertFalse(text.contains("very-secret")); assertFalse(text.contains("private-host"));
-                assertTrue(text.contains("Không thể truy xuất database"));
+                assertTrue(text.contains("Không thể đọc dữ liệu lưu trữ"));
             });
         } finally { onEdt(() -> view.get().close()); }
     }
@@ -87,6 +87,21 @@ class DesktopAdminPanelTest {
             @SuppressWarnings("unchecked") var sorter = (javax.swing.table.TableRowSorter<javax.swing.table.DefaultTableModel>) table.getRowSorter();
             sorter.setRowFilter(RowFilter.regexFilter("Z User", 0)); table.setRowSelectionInterval(0, 0);
             assertEquals(z, DesktopAdminPanel.selectedUuid(table, 1));
+        });
+    }
+
+    @Test void managementActionsRequireSelectionAndInternalIdsStayHidden() throws Exception {
+        onEdt(() -> {
+            var view = new DesktopAdminPanel(ignored -> { });
+            // No repositories are used by this fixture; database controls stay unavailable.
+            view.setRuntime(service(), null, false);
+            var table = components(view, JTable.class).stream().filter(t -> t.getModel().getColumnCount() == 7).findFirst().orElseThrow();
+            assertEquals(6, table.getColumnCount(), "Internal user identity must remain in the model, outside normal columns");
+            assertFalse(button(view, "Sửa tài khoản").isEnabled());
+            assertFalse(button(view, "Thêm tác vụ").isEnabled());
+            assertTrue(components(view, JTextField.class).stream().noneMatch(field ->
+                    String.valueOf(field.getClientProperty("JTextField.placeholderText")).contains("UUID")));
+            view.close();
         });
     }
 }

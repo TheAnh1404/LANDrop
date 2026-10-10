@@ -7,6 +7,7 @@ import com.landrop.database.repository.AdminDataRepository;
 import com.landrop.server.config.ServerConfig;
 import com.landrop.util.AppLogger;
 import javax.swing.*;
+import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.sql.SQLException;
@@ -24,14 +25,22 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
     private final ExecutorService worker = Executors.newSingleThreadExecutor(task -> {
         var thread = new Thread(task, "desktop-administration"); thread.setDaemon(true); return thread;
     });
-    private final JTabbedPane tabs = new JTabbedPane();
-    private final JLabel feedback = new JLabel("Khởi động máy chủ để quản trị dữ liệu.");
+    private final CardLayout sectionLayout = new CardLayout();
+    private final JPanel sections = new JPanel(sectionLayout);
+    private final List<JPanel> sectionPages = new java.util.ArrayList<>();
+    private int selectedSection;
+    private boolean dark;
+    private final JLabel feedback = new JLabel("Bật máy chủ để quản lý người dùng và dữ liệu.");
     private final JLabel metrics = new JLabel(" ");
     private final JPanel controls = new JPanel(new BorderLayout(0, 12));
     private final JTextField userSearch = new JTextField(18);
     private final JComboBox<String> userStatus = new JComboBox<>(new String[]{"Tất cả", "ACTIVE", "DISABLED"});
     private final JCheckBox activeSessions = new JCheckBox("Chỉ phiên còn hiệu lực", true);
     private final JTextField sessionUser = new JTextField(22);
+    private final JLabel sessionScope = new JLabel("Tất cả người dùng");
+    private final JToggleButton accountsTab = new JToggleButton("Danh sách người dùng");
+    private final JToggleButton sessionsTab = new JToggleButton("Phiên đăng nhập");
+    private final JPanel userNavigation = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
     private final JTextField workspaceSearch = new JTextField(20);
     private final JComboBox<AdminDataRepository.Dataset> dataset = new JComboBox<>(AdminDataRepository.Dataset.values());
     private final JTextField auditSearch = new JTextField(18);
@@ -61,19 +70,64 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
     public DesktopAdminPanel(Consumer<ServerConfig> configurationChanged) {
         this.configurationChanged = configurationChanged;
         setLayout(new BorderLayout(0, 12)); setOpaque(false);
-        JPanel header = new JPanel(new BorderLayout(0, 8)); header.setOpaque(false);
+        JPanel header = new JPanel(new BorderLayout(0, 10)); header.setOpaque(false);
         feedback.putClientProperty("html.disable", true);
-        header.add(metrics, BorderLayout.NORTH); header.add(feedback); add(header, BorderLayout.NORTH);
-        tabs.addTab("Người dùng", usersPage());
-        tabs.addTab("Phiên đăng nhập", sessionsPage());
-        tabs.addTab("Workspace", workspacesPage());
-        tabs.addTab("Dữ liệu lưu trữ", dataPage());
-        tabs.addTab("Nhật ký quản trị", auditPage());
-        tabs.addTab("Thông tin server", serverPage());
-        controls.add(tabs); add(controls);
-        tabs.addChangeListener(event -> reload());
-        applyFont(this);
+        header.add(metrics, BorderLayout.NORTH); header.add(feedback);
+        userNavigation.setOpaque(false);
+        ButtonGroup group = new ButtonGroup();
+        for (JToggleButton button : List.of(accountsTab, sessionsTab)) {
+            button.setFont(DesktopUi.FONT.deriveFont(Font.BOLD)); button.setMargin(new Insets(10, 14, 10, 14));
+            button.putClientProperty("JButton.buttonType", "roundRect"); group.add(button); userNavigation.add(button);
+        }
+        accountsTab.addActionListener(event -> showSection(0)); sessionsTab.addActionListener(event -> showSection(1));
+        accountsTab.setSelected(true); header.add(userNavigation, BorderLayout.SOUTH); add(header, BorderLayout.NORTH);
+        sectionPages.addAll(List.of(usersPage(), sessionsPage(), workspacesPage(), dataPage(), auditPage(), serverPage()));
+        sections.setOpaque(false); controls.setOpaque(false);
+        for (int i = 0; i < sectionPages.size(); i++) sections.add(sectionPages.get(i), String.valueOf(i));
+        controls.add(sections); add(controls);
+        for (JTable table : List.of(users, sessions, workspaces, data, audit)) {
+            table.getSelectionModel().addListSelectionListener(event -> { if (!event.getValueIsAdjusting()) enableControls(); });
+        }
+        userStatus.setRenderer(DesktopUi.choiceRenderer()); auditLevel.setRenderer(DesktopUi.choiceRenderer());
+        metrics.setFont(DesktopUi.FONT.deriveFont(Font.BOLD)); feedback.setFont(DesktopUi.FONT.deriveFont(13f));
+        metrics.setName("administrationSummary"); feedback.setName("administrationFeedback");
+        setDark(false);
         enableControls();
+    }
+
+    public void showSection(int section) {
+        if (section < 0 || section >= sectionPages.size()) throw new IllegalArgumentException("Unknown administration section");
+        selectedSection = section; sectionLayout.show(sections, String.valueOf(section));
+        userNavigation.setVisible(section < 2); accountsTab.setSelected(section == 0); sessionsTab.setSelected(section == 1);
+        reload();
+    }
+
+    int selectedSection() { return selectedSection; }
+
+    public void setDark(boolean dark) {
+        this.dark = dark; metrics.setForeground(DesktopUi.text(dark)); feedback.setForeground(DesktopUi.muted(dark));
+        styleTree(controls); styleTree(userNavigation); userNavigation.setForeground(DesktopUi.text(dark)); repaint();
+    }
+
+    private void styleTree(Container parent) {
+        for (Component child : parent.getComponents()) {
+            if (child instanceof AbstractButton || child instanceof JTextField || child instanceof JComboBox<?>) {
+                child.setForeground(DesktopUi.text(dark));
+                child.setBackground(DesktopUi.surface(dark));
+            }
+            if (child instanceof JLabel label) label.setForeground(DesktopUi.muted(dark));
+            if (child instanceof JTable table) {
+                table.setBackground(DesktopUi.surface(dark)); table.setForeground(DesktopUi.text(dark));
+                table.setSelectionBackground(new Color(dark ? 0x29436A : 0xEAF1FF));
+                table.setSelectionForeground(DesktopUi.text(dark));
+                table.getTableHeader().setBackground(new Color(dark ? 0x23324A : 0xF2F5FA));
+                table.getTableHeader().setForeground(DesktopUi.muted(dark));
+            }
+            if (child instanceof JTextArea area) {
+                area.setBackground(DesktopUi.surface(dark)); area.setForeground(DesktopUi.text(dark));
+            }
+            if (child instanceof Container nested) styleTree(nested);
+        }
     }
 
     /** EDT only. Invalidates in-flight callbacks when the runtime changes or stops. */
@@ -84,8 +138,8 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
         userRows = List.of(); workspaceRows = List.of();
         for (JTable table : List.of(users, sessions, workspaces, data, audit)) model(table).setRowCount(0);
         information.setText(""); metrics.setText(" ");
-        feedback.setText(next == null ? "Khởi động máy chủ để quản trị dữ liệu."
-                : databaseAvailable ? "Đang tải dữ liệu…" : "Chưa cấu hình database. Nhật ký và thông tin server vẫn khả dụng.");
+        feedback.setText(next == null ? "Bật máy chủ để quản lý người dùng và dữ liệu."
+                : databaseAvailable ? "Đang tải dữ liệu…" : "Chưa kết nối dữ liệu. Bạn vẫn có thể xem nhật ký và thông tin máy chủ.");
         enableControls(); if (next != null) reload();
     }
 
@@ -94,34 +148,40 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
         JPanel page = page(users);
         page.add(bar(userSearch, userStatus, button("Tìm", () -> { userOffset = 0; reload(); }),
                 button("Làm mới", this::reload)), BorderLayout.NORTH);
-        page.add(bar(button("Chi tiết", this::userDetails), button("Sửa tài khoản", this::editUser),
-                button("Khóa / mở khóa", this::toggleUser), button("Thu hồi mọi phiên", this::revokeUser),
-                button("Xóa tài khoản", this::deleteUser), button("‹", () -> { userOffset = Math.max(0, userOffset - PAGE_SIZE); reload(); }),
-                userPage, button("›", () -> { if (userRows.size() == PAGE_SIZE) { userOffset += PAGE_SIZE; reload(); } })), BorderLayout.SOUTH);
+        JButton more = selectedButton("Thêm tác vụ", users, () -> { });
+        JPopupMenu menu = new JPopupMenu();
+        JMenuItem revoke = new JMenuItem("Đăng xuất trên mọi thiết bị"); revoke.addActionListener(event -> revokeUser()); menu.add(revoke);
+        JMenuItem delete = new JMenuItem("Xóa tài khoản vĩnh viễn…"); delete.addActionListener(event -> deleteUser()); menu.add(delete);
+        more.addActionListener(event -> menu.show(more, 0, more.getHeight()));
+        page.add(actionFooter(bar(selectedButton("Chi tiết", users, this::userDetails), selectedButton("Sửa tài khoản", users, this::editUser),
+                selectedButton("Khóa / mở khóa", users, this::toggleUser), more),
+                userPage, () -> { userOffset = Math.max(0, userOffset - PAGE_SIZE); reload(); },
+                () -> { if (userRows.size() == PAGE_SIZE) { userOffset += PAGE_SIZE; reload(); } }), BorderLayout.SOUTH);
         userSearch.addActionListener(event -> { userOffset = 0; reload(); });
         return page;
     }
 
     private JPanel sessionsPage() {
-        sessionUser.putClientProperty("JTextField.placeholderText", "User UUID (để trống: tất cả)");
         JPanel page = page(sessions);
-        page.add(bar(activeSessions, sessionUser, button("Tìm phiên", () -> { sessionOffset = 0; reload(); })), BorderLayout.NORTH);
-        page.add(bar(button("Thu hồi phiên", () -> {
+        page.add(bar(activeSessions, sessionScope, button("Chọn người dùng", () -> chooseSessionUser()),
+                button("Bỏ lọc", () -> { sessionUser.setText(""); sessionScope.setText("Tất cả người dùng"); sessionOffset = 0; reload(); })), BorderLayout.NORTH);
+        page.add(actionFooter(bar(selectedButton("Đăng xuất phiên đã chọn", sessions, () -> {
             UUID id = selectedUuid(sessions, 6); if (id == null) return;
-            mutate("Thu hồi phiên đăng nhập và ngắt kết nối liên quan?", current -> requireChanged(current.revokeSession(id, ACTOR)));
-        }), button("‹", () -> { sessionOffset = Math.max(0, sessionOffset - PAGE_SIZE); reload(); }), sessionPage,
-                button("›", () -> { if (model(sessions).getRowCount() == PAGE_SIZE) { sessionOffset += PAGE_SIZE; reload(); } })), BorderLayout.SOUTH);
+            mutate("Đăng xuất phiên này? Thiết bị liên quan sẽ phải đăng nhập lại.", current -> requireChanged(current.revokeSession(id, ACTOR)));
+        })), sessionPage, () -> { sessionOffset = Math.max(0, sessionOffset - PAGE_SIZE); reload(); },
+                () -> { if (model(sessions).getRowCount() == PAGE_SIZE) { sessionOffset += PAGE_SIZE; reload(); } }), BorderLayout.SOUTH);
+        activeSessions.addActionListener(event -> { sessionOffset = 0; reload(); });
         return page;
     }
 
     private JPanel workspacesPage() {
-        workspaceSearch.putClientProperty("JTextField.placeholderText", "Tìm tên hoặc slug workspace");
+        workspaceSearch.putClientProperty("JTextField.placeholderText", "Tìm tên nhóm làm việc");
         JPanel page = page(workspaces);
-        page.add(bar(workspaceSearch, button("Tìm workspace", this::reload)), BorderLayout.NORTH);
-        page.add(bar(button("Tạo workspace", () -> editWorkspace(true)), button("Sửa workspace", () -> editWorkspace(false)),
-                button("Thành viên", this::members), button("Xóa workspace", () -> {
+        page.add(bar(workspaceSearch, button("Tìm nhóm", this::reload), button("Tạo nhóm", () -> editWorkspace(true))), BorderLayout.NORTH);
+        page.add(bar(selectedButton("Sửa nhóm", workspaces, () -> editWorkspace(false)),
+                selectedButton("Quản lý thành viên", workspaces, this::members), selectedButton("Xóa nhóm…", workspaces, () -> {
                     UUID id = selectedUuid(workspaces, 5); if (id == null) return;
-                    mutate("Xóa workspace và toàn bộ kênh, tin nhắn, thư mục, thông tin tệp liên quan?", current -> requireChanged(current.deleteWorkspace(id, ACTOR)));
+                    mutate("Xóa nhóm và toàn bộ kênh, tin nhắn, thư mục, thông tin tệp liên quan? Thao tác này không thể hoàn tác.", current -> requireChanged(current.deleteWorkspace(id, ACTOR)));
                 })), BorderLayout.SOUTH);
         return page;
     }
@@ -132,13 +192,13 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
         heading.add(bar(dataset, button("Đọc dữ liệu", () -> { dataOffset = 0; reload(); })), BorderLayout.NORTH);
         heading.add(new JLabel("Thông tin trong PostgreSQL; tệp LAN có thể nằm trên thiết bị người dùng."));
         page.add(heading, BorderLayout.NORTH);
-        page.add(bar(button("Xem bản ghi", () -> {
+        page.add(actionFooter(bar(selectedButton("Xem chi tiết", data, () -> {
             int selected = data.getSelectedRow(); if (selected < 0) return;
             int row = data.convertRowIndexToModel(selected); var text = new StringBuilder();
             for (int col = 0; col < model(data).getColumnCount(); col++) text.append(model(data).getColumnName(col)).append(": ").append(model(data).getValueAt(row, col)).append('\n');
-            showText("Bản ghi database", text.toString());
-        }), button("‹", () -> { dataOffset = Math.max(0, dataOffset - PAGE_SIZE); reload(); }), dataPage,
-                button("›", () -> { if (model(data).getRowCount() == PAGE_SIZE) { dataOffset += PAGE_SIZE; reload(); } })), BorderLayout.SOUTH);
+            showText("Chi tiết dữ liệu lưu trữ", text.toString());
+        })), dataPage, () -> { dataOffset = Math.max(0, dataOffset - PAGE_SIZE); reload(); },
+                () -> { if (model(data).getRowCount() == PAGE_SIZE) { dataOffset += PAGE_SIZE; reload(); } }), BorderLayout.SOUTH);
         dataset.addActionListener(event -> { dataOffset = 0; reload(); });
         return page;
     }
@@ -154,8 +214,8 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
         information.setEditable(false); information.setFont(new Font("Consolas", Font.PLAIN, 12));
         page.add(new JScrollPane(information));
         JPanel form = new JPanel(new GridLayout(0, 2, 12, 8));
-        form.add(new JLabel("Heartbeat interval (ms)")); form.add(heartbeatInterval);
-        form.add(new JLabel("Heartbeat timeout (ms)")); form.add(heartbeatTimeout);
+        form.add(new JLabel("Chu kỳ kiểm tra kết nối (ms)")); form.add(heartbeatInterval);
+        form.add(new JLabel("Thời gian chờ kết nối (ms)")); form.add(heartbeatTimeout);
         form.add(new JLabel("Môi trường")); form.add(environment);
         form.add(new JLabel("Mức nhật ký")); form.add(logLevel);
         form.add(button("Lưu cấu hình dịch vụ", () -> {
@@ -166,14 +226,14 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
                 submit(current -> current.updateConfig(values, ACTOR), config -> {
                     configurationChanged.accept(config); feedback.setText("Đã lưu. Khởi động lại máy chủ để áp dụng cấu hình dịch vụ.");
                 });
-            } catch (NumberFormatException invalid) { feedback.setText("Heartbeat phải là số nguyên."); }
+            } catch (NumberFormatException invalid) { feedback.setText("Thời gian kiểm tra kết nối phải là số nguyên."); }
         })); form.add(button("Đọc thông tin server", this::reload));
         page.add(form, BorderLayout.SOUTH); return page;
     }
 
     public void reload() {
         if (service == null || busy || closed) return;
-        int tab = tabs.getSelectedIndex();
+        int tab = selectedSection;
         if (tab < 4 && !databaseAvailable) return;
         String query = userSearch.getText().trim(); String status = userStatus.getSelectedIndex() == 0 ? null : (String) userStatus.getSelectedItem();
         String groupQuery = workspaceSearch.getText().trim(); boolean active = activeSessions.isSelected();
@@ -201,11 +261,11 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
         }, result -> {
             // A user may switch tabs while a query is running. Render the captured page, then load the selected one.
             render(tab, result[0]);
-            if (result[1] instanceof AdminDashboardDto summary) metrics.setText("Database: " + summary.registeredUsers() + " tài khoản · "
-                    + summary.registeredDevices() + " thiết bị · " + summary.activeSessions() + " phiên còn hiệu lực · " + summary.workspaceCount() + " workspace");
+            if (result[1] instanceof AdminDashboardDto summary) metrics.setText(summary.registeredUsers() + " người dùng   ·   "
+                    + summary.registeredDevices() + " thiết bị đã đăng ký   ·   " + summary.activeSessions() + " phiên đăng nhập   ·   " + summary.workspaceCount() + " nhóm");
             if (tab == 5) renderConfig(result[2]);
             feedback.setText("Đã cập nhật · " + java.time.LocalTime.now().withNano(0));
-            if (tabs.getSelectedIndex() != tab) reload();
+            if (selectedSection != tab) reload();
         });
     }
 
@@ -284,9 +344,10 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
     private void editUser() {
         var user = selectedUser(); if (user == null) return;
         var name = new JTextField(user.displayName()); var role = new JComboBox<>(new String[]{User.ROLE_USER, User.ROLE_SYSTEM_ADMIN}); role.setSelectedItem(user.systemRole());
+        role.setRenderer(DesktopUi.choiceRenderer());
         if (!form("Sửa " + user.username(), "Tên hiển thị", name, "Quyền hệ thống", role)) return;
         var values = Map.<String, Object>of("displayName", name.getText(), "systemRole", role.getSelectedItem());
-        mutate("Lưu tên hiển thị và quyền của " + user.username() + "?", current -> current.updateUser(user.id(), null, values, ACTOR));
+        save(current -> current.updateUser(user.id(), null, values, ACTOR));
     }
     private void toggleUser() {
         var user = selectedUser(); if (user == null) return;
@@ -304,11 +365,71 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
         UUID id = create ? null : selectedUuid(workspaces, 5);
         var group = workspaceRows.stream().filter(w -> w.id().equals(id)).findFirst().orElse(null);
         if (!create && group == null) return;
+        if (create) submit(current -> current.listUsers(0, 100, null, User.STATUS_ACTIVE), choices -> workspaceEditor(null, choices));
+        else workspaceEditor(group, List.of());
+    }
+
+    private void workspaceEditor(AdminWorkspaceDto group, List<AdminUserDto> choices) {
+        boolean create = group == null;
         var name = new JTextField(create ? "" : group.name()); var description = new JTextField(create ? "" : group.description());
-        var owner = new JTextField(create ? "" : group.ownerId().toString()); owner.setEditable(create);
-        if (!form(create ? "Tạo workspace" : "Sửa workspace", "Tên", name, "Mô tả", description, "Owner UUID", owner)) return;
-        var values = Map.<String, Object>of("name", name.getText(), "description", description.getText(), "ownerId", owner.getText());
-        mutate("Lưu workspace " + name.getText() + "?", current -> create ? current.createWorkspace(values, ACTOR) : current.updateWorkspace(id, values, ACTOR));
+        UserPicker picker = create ? new UserPicker(choices) : null;
+        JComponent owner = create ? picker : new JLabel(group.ownerUsername());
+        if (!form(create ? "Tạo nhóm làm việc" : "Sửa nhóm làm việc", "Tên nhóm", name, "Mô tả", description, "Chủ nhóm", owner)) return;
+        UUID ownerId = create ? picker.selectedId() : group.ownerId();
+        if (ownerId == null) { showSelectionRequired(); return; }
+        var values = Map.<String, Object>of("name", name.getText(), "description", description.getText(), "ownerId", ownerId.toString());
+        save(current -> create ? current.createWorkspace(values, ACTOR)
+                : current.updateWorkspace(group.id(), values, ACTOR));
+    }
+
+    private void chooseSessionUser() {
+        submit(current -> current.listUsers(0, 100, null, null), choices -> {
+            UserPicker picker = new UserPicker(choices);
+            if (!form("Lọc phiên đăng nhập", "Người dùng", picker)) return;
+            UUID id = picker.selectedId(); if (id == null) { showSelectionRequired(); return; }
+            sessionUser.setText(id.toString()); sessionScope.setText(picker.selectedLabel()); sessionOffset = 0; reload();
+        });
+    }
+
+    private void showSelectionRequired() {
+        JOptionPane.showMessageDialog(this, "Hãy tìm và chọn một tài khoản trong danh sách.", "Chưa chọn người dùng", JOptionPane.INFORMATION_MESSAGE);
+    }
+
+    private record UserChoice(AdminUserDto user) {
+        @Override public String toString() {
+            String name = user.displayName() == null || user.displayName().isBlank() ? user.username() : user.displayName();
+            return name + " · @" + user.username();
+        }
+    }
+
+    /** Searches real accounts; forms keep IDs internally instead of asking operators to copy UUIDs. */
+    private final class UserPicker extends JPanel {
+        private final JComboBox<UserChoice> choices = new JComboBox<>();
+        private final JTextField query = new JTextField();
+        private final JLabel hint = new JLabel();
+        UserPicker(List<AdminUserDto> users) {
+            super(new BorderLayout(0, 10)); setOpaque(false); setPreferredSize(new Dimension(420, 140));
+            query.putClientProperty("JTextField.placeholderText", "Tìm tên, tài khoản hoặc email");
+            JPanel search = new JPanel(new BorderLayout(8, 0)); search.setOpaque(false); search.add(query);
+            JButton find = button("Tìm", () -> {
+                if (busy || service == null) return;
+                findUsers(query.getText().trim());
+            });
+            search.add(find, BorderLayout.EAST); query.addActionListener(event -> find.doClick());
+            add(search, BorderLayout.NORTH); choices.setFont(DesktopUi.FONT);
+            choices.putClientProperty("JComponent.minimumHeight", 38); add(choices);
+            hint.setFont(DesktopUi.FONT.deriveFont(12f)); hint.setForeground(DesktopUi.muted(dark)); add(hint, BorderLayout.SOUTH);
+            fill(users);
+        }
+        private void findUsers(String query) { submit(current -> current.listUsers(0, 100, query, null), this::fill); }
+        private void fill(List<AdminUserDto> users) {
+            choices.removeAllItems(); users.forEach(user -> choices.addItem(new UserChoice(user)));
+            choices.setSelectedIndex(-1);
+            hint.setText(users.isEmpty() ? "Không tìm thấy tài khoản. Hãy thử tên hoặc email khác."
+                    : users.size() + " tài khoản · Tìm kiếm để xem người dùng khác.");
+        }
+        UUID selectedId() { return choices.getSelectedItem() instanceof UserChoice selected ? selected.user().id() : null; }
+        String selectedLabel() { return choices.getSelectedItem() == null ? "" : choices.getSelectedItem().toString(); }
     }
 
     private void members() {
@@ -317,26 +438,35 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
         submit(current -> current.listWorkspaceMembers(id), rows -> {
             JTable members = table("Tài khoản", "Tên hiển thị", "Quyền", "Tham gia lúc", "User ID");
             replace(members, rows.stream().map(m -> new Object[]{m.username(), m.displayName(), m.role(), m.joinedAt(), m.userId()}).toList(), 4);
-            JDialog dialog = new JDialog(SwingUtilities.getWindowAncestor(this), "Thành viên workspace", Dialog.ModalityType.APPLICATION_MODAL);
+            JDialog dialog = new JDialog(SwingUtilities.getWindowAncestor(this), "Thành viên nhóm làm việc", Dialog.ModalityType.APPLICATION_MODAL);
             JPanel panel = page(members);
             panel.add(bar(button("Thêm / đổi quyền", () -> {
                 if (service != origin || busy) { dialog.dispose(); return; }
                 UUID selected = selectedUuid(members, 4);
-                var user = new JTextField(selected == null ? "" : selected.toString());
                 var role = new JComboBox<>(new String[]{"MEMBER", "ADMIN", "OWNER"});
-                if (!form("Thành viên", "User UUID", user, "Quyền", role)) return;
-                var values = Map.<String, Object>of("userId", user.getText(), "role", role.getSelectedItem());
-                mutate("Lưu thành viên workspace?", current -> current.upsertWorkspaceMember(id, values, ACTOR)); dialog.dispose();
+                role.setRenderer(DesktopUi.choiceRenderer());
+                submit(current -> current.listUsers(0, 100, null, null), choices -> {
+                    if (service != origin) { dialog.dispose(); return; }
+                    UserPicker picker = new UserPicker(choices);
+                    for (int i = 0; i < picker.choices.getItemCount(); i++) {
+                        if (picker.choices.getItemAt(i).user().id().equals(selected)) picker.choices.setSelectedIndex(i);
+                    }
+                    if (!form("Thành viên nhóm", "Người dùng", picker, "Quyền trong nhóm", role)) return;
+                    UUID target = picker.selectedId(); if (target == null) { showSelectionRequired(); return; }
+                    var values = Map.<String, Object>of("userId", target.toString(), "role", role.getSelectedItem());
+                    save(current -> current.upsertWorkspaceMember(id, values, ACTOR)); dialog.dispose();
+                });
             }), button("Xóa thành viên", () -> {
                 if (service != origin || busy) { dialog.dispose(); return; }
                 UUID userId = selectedUuid(members, 4); if (userId == null) return;
-                mutate("Xóa thành viên khỏi workspace?", current -> requireChanged(current.removeWorkspaceMember(id, userId, ACTOR))); dialog.dispose();
+                mutate("Xóa thành viên khỏi nhóm? Người này sẽ mất quyền truy cập dữ liệu của nhóm.", current -> requireChanged(current.removeWorkspaceMember(id, userId, ACTOR))); dialog.dispose();
             })), BorderLayout.SOUTH);
             dialog.setContentPane(panel); dialog.setSize(780, 420); dialog.setLocationRelativeTo(this); dialog.setVisible(true);
         });
     }
 
     @FunctionalInterface interface Query<T> { T run(AdminControlCenterService current) throws Exception; }
+    private void save(Query<?> operation) { submit(operation, ignored -> { feedback.setText("Đã lưu thay đổi."); reload(); }); }
     private void mutate(String question, Query<?> operation) {
         var origin = service;
         if (origin == null || busy) return;
@@ -365,8 +495,8 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
                     if (closed || revision != version || service != origin) { completion.complete(null); return; }
                     busy = false; enableControls();
                     // SQL diagnostics can contain connection details. Keep them out of the UI and logs.
-                    feedback.setText(failure instanceof SQLException ? "Không thể truy xuất database. Kiểm tra kết nối và migrations, rồi làm mới."
-                            : failure instanceof IllegalArgumentException ? "Dữ liệu không hợp lệ. Kiểm tra UUID và giá trị nhập."
+                    feedback.setText(failure instanceof SQLException ? "Không thể đọc dữ liệu lưu trữ. Kiểm tra kết nối hoặc nhờ người thiết lập máy chủ hỗ trợ."
+                            : failure instanceof IllegalArgumentException ? "Dữ liệu không hợp lệ. Hãy kiểm tra các giá trị đã nhập."
                             : failure instanceof com.landrop.auth.exception.ValidationException ? failure.getMessage() : "Không thể hoàn tất thao tác. Hãy tải lại dữ liệu.");
                     AppLogger.warn("DesktopAdmin", "Administration operation failed: " + failure.getClass().getSimpleName());
                     completion.completeExceptionally(failure);
@@ -377,14 +507,18 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
     }
 
     private void enableControls() {
-        for (int i = 0; i < tabs.getTabCount(); i++) {
+        for (int i = 0; i < sectionPages.size(); i++) {
             boolean enabled = service != null && !busy && (i >= 4 || databaseAvailable);
-            enableTree((Container) tabs.getComponentAt(i), enabled);
+            enableTree(sectionPages.get(i), enabled);
         }
     }
     private static void enableTree(Container parent, boolean enabled) {
         for (Component child : parent.getComponents()) {
-            child.setEnabled(enabled); if (child instanceof Container nested) enableTree(nested, enabled);
+            boolean available = enabled;
+            if (child instanceof JComponent component && component.getClientProperty("requiresSelection") instanceof JTable table) {
+                available &= table.getSelectedRow() >= 0;
+            }
+            child.setEnabled(available); if (child instanceof Container nested) enableTree(nested, available);
         }
     }
     private static Object requireChanged(boolean changed) {
@@ -393,15 +527,24 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
     }
     static JTable table(String... columns) {
         var model = new DefaultTableModel(columns, 0) { @Override public boolean isCellEditable(int row, int col) { return false; } };
-        var table = new JTable(model); table.setAutoCreateRowSorter(true); table.setRowHeight(32);
-        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION); table.setAutoResizeMode(JTable.AUTO_RESIZE_OFF);
+        var table = new JTable(model); table.setAutoCreateRowSorter(true); table.setRowHeight(46);
+        table.setFont(DesktopUi.FONT); table.setShowGrid(false); table.setIntercellSpacing(new Dimension(0, 0));
+        table.setSelectionMode(ListSelectionModel.SINGLE_SELECTION); table.setAutoResizeMode(JTable.AUTO_RESIZE_SUBSEQUENT_COLUMNS);
+        table.getTableHeader().setFont(DesktopUi.FONT.deriveFont(Font.BOLD, 12));
+        table.getTableHeader().setPreferredSize(new Dimension(0, 40));
         table.setDefaultRenderer(Object.class, new javax.swing.table.DefaultTableCellRenderer() {
             @Override public Component getTableCellRendererComponent(JTable t, Object value, boolean selected, boolean focus, int row, int col) {
-                super.getTableCellRendererComponent(t, value, selected, focus, row, col);
+                super.getTableCellRendererComponent(t, DesktopUi.display(value), selected, focus, row, col);
+                setBorder(new EmptyBorder(8, 12, 8, 12));
                 putClientProperty("html.disable", true); setToolTipText(value == null ? null : value.toString()); return this;
             }
         });
         for (int col = 0; col < columns.length; col++) table.getColumnModel().getColumn(col).setPreferredWidth(col == columns.length - 1 ? 280 : 160);
+        for (int col = columns.length - 1; col >= 0; col--) {
+            if (columns[col].equals("ID") || columns[col].equals("User ID") || columns[col].equals("Slug")) {
+                table.removeColumn(table.getColumnModel().getColumn(col));
+            }
+        }
         return table;
     }
     private static DefaultTableModel model(JTable table) { return (DefaultTableModel) table.getModel(); }
@@ -414,27 +557,56 @@ public final class DesktopAdminPanel extends JPanel implements AutoCloseable {
         model(table).setRowCount(0); rows.forEach(model(table)::addRow);
         if (idColumn >= 0) ServerDashboardPanel.restoreSelection(table, model(table), idColumn, selected);
     }
-    private static JPanel page(JTable table) {
+    private JPanel page(JTable table) {
         var panel = new JPanel(new BorderLayout(0, 10)); panel.setOpaque(false);
-        var scroll = new JScrollPane(table); scroll.setColumnHeaderView(table.getTableHeader());
-        table.setFillsViewportHeight(true); panel.add(scroll); return panel;
-    }
-    private static void applyFont(Container parent) {
-        for (Component child : parent.getComponents()) {
-            child.setFont(new Font("Segoe UI", Font.PLAIN, 13));
-            if (child instanceof Container nested) applyFont(nested);
-        }
+        JPanel card = DesktopUi.card(new BorderLayout(), () -> dark);
+        JPanel content = new JPanel(new CardLayout()); content.setOpaque(false);
+        var scroll = new JScrollPane(table); scroll.setBorder(null); scroll.setColumnHeaderView(table.getTableHeader());
+        scroll.getVerticalScrollBar().setUnitIncrement(20); table.setFillsViewportHeight(true);
+        JPanel empty = new JPanel(new GridBagLayout()); empty.setOpaque(false);
+        JPanel message = new JPanel(new GridLayout(2, 1, 0, 12)); message.setOpaque(false);
+        JLabel title = new JLabel("Chưa có dữ liệu để hiển thị", SwingConstants.CENTER);
+        title.setFont(DesktopUi.FONT.deriveFont(Font.BOLD, 18));
+        JLabel hint = new JLabel("Kiểm tra kết nối dữ liệu, rồi tìm kiếm hoặc làm mới.", SwingConstants.CENTER);
+        hint.setFont(DesktopUi.FONT.deriveFont(13f)); message.add(title); message.add(hint); empty.add(message);
+        content.add(empty, "empty"); content.add(scroll, "table");
+        table.getModel().addTableModelListener(event -> ((CardLayout) content.getLayout()).show(content,
+                table.getModel().getRowCount() == 0 ? "empty" : "table"));
+        card.add(content); panel.add(card); return panel;
     }
     private static JPanel bar(Component... components) {
-        var panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 6, 6)); panel.setOpaque(false);
+        var panel = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 6)); panel.setOpaque(false);
         for (var component : components) panel.add(component); return panel;
     }
-    private static JButton button(String label, Runnable action) { var button = new JButton(label); button.addActionListener(event -> action.run()); return button; }
+    private static JButton button(String label, Runnable action) {
+        var button = new JButton(label); button.setFont(DesktopUi.FONT.deriveFont(13f));
+        button.setMargin(new Insets(10, 14, 10, 14)); button.putClientProperty("JButton.buttonType", "roundRect");
+        button.addActionListener(event -> action.run()); return button;
+    }
+    private static JButton selectedButton(String label, JTable table, Runnable action) {
+        JButton button = button(label, action); button.putClientProperty("requiresSelection", table); return button;
+    }
+    private static JPanel actionFooter(JPanel actions, JLabel count, Runnable previous, Runnable next) {
+        JPanel footer = new JPanel(new BorderLayout(8, 8)); footer.setOpaque(false);
+        footer.add(actions, BorderLayout.NORTH);
+        JPanel pages = bar(button("Trang trước", previous), count, button("Trang sau", next));
+        footer.add(pages, BorderLayout.SOUTH); return footer;
+    }
     private boolean form(String title, Object... fields) {
-        var panel = new JPanel(new GridLayout(fields.length / 2, 2, 12, 10));
-        for (int i = 0; i < fields.length; i += 2) { panel.add(new JLabel((String) fields[i])); panel.add((Component) fields[i + 1]); }
+        var panel = new JPanel(new GridBagLayout()); panel.setBorder(new EmptyBorder(12, 4, 12, 4));
+        GridBagConstraints layout = new GridBagConstraints(); layout.fill = GridBagConstraints.HORIZONTAL;
+        layout.anchor = GridBagConstraints.NORTHWEST; layout.insets = new Insets(8, 8, 8, 8);
+        for (int i = 0; i < fields.length; i += 2) {
+            JLabel label = new JLabel((String) fields[i]); label.setFont(DesktopUi.FONT); label.setLabelFor((Component) fields[i + 1]);
+            layout.gridx = 0; layout.gridy = i / 2; layout.weightx = 0; panel.add(label, layout);
+            layout.gridx = 1; layout.weightx = 1; Component field = (Component) fields[i + 1]; field.setFont(DesktopUi.FONT);
+            if (field instanceof JComponent component) component.putClientProperty("JComponent.minimumHeight", 38);
+            panel.add(field, layout);
+        }
         var origin = service;
-        return JOptionPane.showConfirmDialog(this, panel, title, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION && service == origin;
+        boolean confirmed = JOptionPane.showConfirmDialog(this, panel, title, JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE) == JOptionPane.OK_OPTION;
+        if (confirmed && busy) { feedback.setText("Đang tìm người dùng. Hãy chờ tìm kiếm hoàn tất rồi mở lại biểu mẫu."); return false; }
+        return confirmed && service == origin && !closed;
     }
     private void showText(String title, String text) {
         var area = new JTextArea(text); area.setEditable(false); area.setLineWrap(true); area.setWrapStyleWord(true); area.setCaretPosition(0);

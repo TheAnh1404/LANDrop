@@ -5,11 +5,11 @@ Chạy từ thư mục gốc bằng `npm run server` với JDK 21 và Maven 3.9+
 ## Điều khiển máy chủ
 
 - **Tổng quan:** trạng thái chạy, số WebSocket đang online, phiên signaling đang hoạt động, uptime, bộ nhớ Java và tình trạng dịch vụ. Nút Khởi động/Dừng/Khởi động lại luôn ở phía trên.
-- **Cho người dùng kết nối:** chọn card mạng LAN rồi chia sẻ URL/QR. Mặc định URL là `http://<IP>:<HTTP_PORT>/client`. Nút **Mở client** mở giao diện người dùng; **Quản trị dữ liệu** mở phần quản trị ngay trong desktop.
+- **Cho người dùng kết nối:** chọn card mạng LAN rồi chia sẻ URL/QR. Mặc định URL là `http://<IP>:<HTTP_PORT>/client`. Nút **Mở trang kết nối** mở giao diện người dùng; **Quản lý người dùng** mở phần quản trị ngay trong desktop. Client đi kèm có đăng nhập/đăng ký, chọn nhóm và chat/truyền tệp trực tiếp theo [giao thức DataChannel](../api/P2P_DATA_CHANNEL.md).
 - **Thiết bị kết nối:** tìm theo thiết bị/tài khoản/IP, chọn một hàng để xem chi tiết hoặc ngắt WebSocket. Thao tác nhắm đúng connectionId đang chọn, không nhắm một socket mới sau reconnect. Cleanup subscription và signaling dùng gateway hiện có.
 - **Phiên truyền:** hiển thị tên/kích thước tệp trong metadata, hai đối tác, trạng thái signaling và thời gian hết hạn. Hủy phiên gửi `transfer.cancel` với `ADMIN_CANCELLED` cho hai phía còn quyền nhận và loại phiên khỏi danh sách hoạt động. Đây là trạng thái điều phối WebRTC; không phải tiến độ truyền bytes.
 - **Nhật ký:** lọc mức, tìm nội dung, bật/tắt theo dõi trực tiếp, sao chép hoặc xóa màn hình. Bộ đệm desktop giới hạn 2.000 sự kiện. Xóa màn hình không xóa log máy chủ; không hiển thị SDP đầy đủ.
-- **Cấu hình:** địa chỉ bind, HTTP/WebSocket, chế độ client, cổng Next.js và thu nhỏ xuống khay. Kiểm tra cổng hợp lệ và xung đột trước khi áp dụng.
+- **Cài đặt:** chọn chỉ máy này hoặc các thiết bị trong mạng nội bộ và thu nhỏ xuống khay. Phần mạng nâng cao chứa địa chỉ bind, HTTP/WebSocket, chế độ client và cổng Next.js. Kiểm tra cổng hợp lệ và xung đột trước khi áp dụng.
 
 Các cài đặt trong cửa sổ có hiệu lực cho lần chạy desktop hiện tại. Đổi bind/cổng khi server đang chạy cần bấm Khởi động lại. URL/QR vẫn dùng bind/cổng của server đang chạy cho đến khi restart thành công. Muốn giữ cấu hình qua lần mở ứng dụng sau, đặt `HOST`, `PORT`, `WS_PORT` trong cấu hình launcher.
 
@@ -17,11 +17,11 @@ Các cài đặt trong cửa sổ có hiệu lực cho lần chạy desktop hi�
 
 Admin web đã được gỡ khỏi backend và Next.js. Các đường dẫn backend `/admin`, `/admin/…` trả `410 ADMIN_WEB_REMOVED`; frontend không còn route quản trị. Launcher không khởi chạy hoặc kiểm tra admin web. `--open-browser` mở client; dùng `npm run server:desktop` để quản trị máy chủ.
 
-Trang **Quản trị dữ liệu** có sáu tab:
+Menu bên trái mở các trang **Người dùng**, **Nhóm làm việc**, **Dữ liệu lưu trữ** và **Nhật ký hoạt động**. Trang Người dùng có nút chuyển giữa danh sách tài khoản và phiên đăng nhập; đổi giao diện sáng/tối giữ nguyên trang đang xem. Thông tin dịch vụ nằm trong Cài đặt nâng cao.
 
 - **Người dùng:** tìm theo tài khoản/tên/email, lọc trạng thái, phân trang 100 tài khoản; xem danh tính, thiết bị đăng ký, phiên và kết nối online; sửa tên/quyền; khóa/mở khóa, thu hồi mọi phiên, xóa tài khoản. Không được khóa, xóa hoặc hạ quyền quản trị viên hoạt động cuối cùng. Khóa/thu hồi phiên đóng các kết nối liên quan. Xóa tài khoản còn sở hữu dữ liệu được repository từ chối theo khóa ngoại.
-- **Phiên đăng nhập:** xem phiên còn hiệu lực hoặc mọi phiên; lọc theo User UUID, phân trang 100 phiên và thu hồi phiên đã chọn. Không hiển thị refresh token hoặc token hash.
-- **Workspace:** tìm theo tên/slug; tạo bằng Owner UUID có sẵn; sửa tên/mô tả, xóa và quản lý thành viên/quyền. OWNER được giữ nguyên; xóa workspace xóa các dữ liệu liên quan theo cascade của schema.
+- **Phiên đăng nhập:** xem phiên còn hiệu lực hoặc mọi phiên; chọn người dùng qua tìm tên/tài khoản/email, phân trang 100 phiên và đăng xuất phiên đã chọn. Không hiển thị refresh token hoặc token hash.
+- **Nhóm làm việc:** tìm theo tên/slug; chọn chủ nhóm từ tài khoản có sẵn; sửa tên/mô tả, xóa và quản lý thành viên/quyền bằng bộ chọn người dùng. Không yêu cầu nhập UUID. OWNER được giữ nguyên; xóa workspace xóa các dữ liệu liên quan theo cascade của schema.
 - **Dữ liệu lưu trữ:** xem thiết bị đã đăng ký, kênh, tin nhắn, thư mục, thông tin tệp và lịch sử truyền từ PostgreSQL. Bảng có tổng số bản ghi, phân trang 100 hàng và xem chi tiết bản ghi. Các truy vấn cố định chỉ đọc, không nhận SQL tùy ý và không trả thông tin xác thực hoặc đường dẫn lưu trữ. Nội dung tệp LAN có thể nằm trên thiết bị người dùng; bản ghi database là metadata. Các bản ghi đã soft-delete cũng có thể xuất hiện để kiểm tra lưu trữ.
 - **Nhật ký quản trị:** xem tối đa 1.000 sự kiện trong bộ nhớ, lọc mức và nội dung; thao tác desktop được ghi với actor `DESKTOP_OPERATOR`.
 - **Thông tin server:** xem trạng thái/JVM, sửa heartbeat, môi trường và mức log. Cấu hình dịch vụ được lưu ở `data/server-config.json` và đọc khi desktop khởi động lại; bind/cổng tiếp tục dùng thiết lập desktop/launcher. Bấm Khởi động lại để áp dụng.

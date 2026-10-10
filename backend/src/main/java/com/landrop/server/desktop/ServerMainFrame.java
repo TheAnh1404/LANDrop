@@ -46,7 +46,7 @@ public class ServerMainFrame extends JFrame {
     public ServerMainFrame() {
         super("LANDrop Server — Bảng điều khiển máy chủ");
         setDefaultCloseOperation(DO_NOTHING_ON_CLOSE);
-        setSize(1280, 900); setMinimumSize(new Dimension(1080, 760)); setLocationRelativeTo(null);
+        setSize(1320, 900); setMinimumSize(new Dimension(1080, 760)); setLocationRelativeTo(null);
         controller = new DesktopServerController(() -> settings, this::lifecycleChanged);
         dashboard = new ServerDashboardPanel(settings, new ServerDashboardPanel.Actions() {
             @Override public void start() { startServer(); }
@@ -80,13 +80,13 @@ public class ServerMainFrame extends JFrame {
     public void startServer() { controller.start(); }
     public void stopServer() {
         if (controller.bootstrap() != null && controller.bootstrap().getClientRegistry().size() > 0
-                && JOptionPane.showConfirmDialog(this, "Dừng máy chủ sẽ ngắt các kết nối và phiên signaling đang hoạt động.",
+                && JOptionPane.showConfirmDialog(this, "Dừng máy chủ sẽ ngắt kết nối các thiết bị và kết thúc yêu cầu truyền tệp đang hoạt động.",
                 "Dừng máy chủ?", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) return;
         controller.stop();
     }
     public void restartServer() {
         if (controller.state() != DesktopServerController.State.RUNNING) return;
-        if (JOptionPane.showConfirmDialog(this, "Các client sẽ bị ngắt và cần kết nối lại sau khi máy chủ khởi động.\nTiếp tục khởi động lại?",
+        if (JOptionPane.showConfirmDialog(this, "Các thiết bị sẽ bị ngắt và cần kết nối lại sau khi máy chủ khởi động.\nTiếp tục khởi động lại?",
                 "Khởi động lại máy chủ", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) == JOptionPane.OK_OPTION) controller.restart();
     }
 
@@ -199,7 +199,7 @@ public class ServerMainFrame extends JFrame {
     private void disconnectClient(String id) {
         ServerBootstrap server = controller.bootstrap();
         if (id == null || server == null || server.getRealtimeServer() == null) return;
-        if (JOptionPane.showConfirmDialog(this, "Đóng WebSocket của thiết bị này và kết thúc các phiên signaling liên quan?",
+        if (JOptionPane.showConfirmDialog(this, "Ngắt thiết bị này và kết thúc các yêu cầu truyền tệp liên quan? Người dùng có thể kết nối lại.",
                 "Ngắt kết nối thiết bị", JOptionPane.OK_CANCEL_OPTION, JOptionPane.WARNING_MESSAGE) != JOptionPane.OK_OPTION) return;
         background.execute(() -> {
             // Gateway close also triggers subscription/transfer cleanup; removing the registry alone is insufficient.

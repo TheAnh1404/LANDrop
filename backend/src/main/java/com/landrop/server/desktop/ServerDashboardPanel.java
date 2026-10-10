@@ -97,6 +97,7 @@ public final class ServerDashboardPanel extends JPanel {
     private final JTextField wsField = new JTextField();
     private final JTextField clientPortField = new JTextField();
     private final JComboBox<String> clientMode = new JComboBox<>(new String[]{"Client đi kèm máy chủ", "Next.js client riêng"});
+    private final JComboBox<String> accessMode = new JComboBox<>(new String[]{"Các thiết bị trong mạng nội bộ", "Chỉ máy này"});
     private final JCheckBox minimizeTray = new JCheckBox("Đóng cửa sổ để thu nhỏ xuống khay hệ thống");
     private final JLabel settingsFeedback = new JLabel(" ");
     private DesktopServerSettings settings;
@@ -117,7 +118,9 @@ public final class ServerDashboardPanel extends JPanel {
         restartButton = button("Khởi động lại", "restart", null, actions::restart);
         themeButton = button("Giao diện tối", "theme", null, this::toggleTheme);
         clientButton = button("Mở trang kết nối", "link", BLUE, actions::openClient);
-        copyLinkButton = button("Sao chép đường dẫn", "copy", null, () -> actions.copy(clientLink.getText()));
+        copyLinkButton = button("Sao chép đường dẫn", "copy", null, () -> {
+            actions.copy(clientLink.getText()); notice.setText("Đã sao chép đường dẫn. Bạn có thể gửi cho người dùng ngay.");
+        });
         adminButton = button("Quản lý người dùng", "users", null, () -> showPage("users"));
         administration = new DesktopAdminPanel(actions::applyServiceConfig);
         disconnectButton = button("Ngắt kết nối", "stop", RED, () -> actions.disconnect(selectedClientId()));
@@ -136,6 +139,7 @@ public final class ServerDashboardPanel extends JPanel {
         pageContainer.add(helpPage(), "help");
         main.add(pageContainer, BorderLayout.CENTER);
         JPanel status = transparent(new BorderLayout());
+        footer.setName("dashboardFooter");
         style(footer, 11, false, true);
         status.add(footer, BorderLayout.WEST);
         JLabel version = label("LANDrop Server Desktop", 11, false, true);
@@ -165,7 +169,6 @@ public final class ServerDashboardPanel extends JPanel {
         side.setBackground(NAVY);
         side.setPreferredSize(new Dimension(220, 0));
         side.setBorder(new EmptyBorder(28, 16, 20, 16));
-        JPanel upper = transparent(new BorderLayout(0, 28));
         JPanel brand = transparent(new BorderLayout(12, 0));
         JLabel mark = new JLabel("L", SwingConstants.CENTER);
         mark.setOpaque(true); mark.setBackground(BLUE); mark.setForeground(Color.WHITE);
@@ -174,7 +177,6 @@ public final class ServerDashboardPanel extends JPanel {
         JLabel name = new JLabel("LANDrop"); name.setForeground(Color.WHITE); name.setFont(FONT.deriveFont(Font.BOLD, 21));
         JLabel product = new JLabel("Không gian quản lý"); product.setFont(FONT.deriveFont(12f)); product.setForeground(new Color(0xA7B8D0));
         brandText.add(name); brandText.add(product); brand.add(mark, BorderLayout.WEST); brand.add(brandText);
-        upper.add(brand, BorderLayout.NORTH);
         JPanel nav = transparent(new GridLayout(11, 1, 0, 5));
         nav.add(navCaption("QUẢN LÝ HẰNG NGÀY"));
         String[][] entries = {{"overview", "Tổng quan", "home"}, {"users", "Người dùng", "users"},
@@ -191,7 +193,11 @@ public final class ServerDashboardPanel extends JPanel {
             item.putClientProperty("JButton.buttonType", "roundRect");
             item.addActionListener(e -> showPage(entry[0])); group.add(item); navigation.add(item); nav.add(item);
         }
-        upper.add(nav, BorderLayout.CENTER); side.add(upper, BorderLayout.NORTH);
+        side.add(brand, BorderLayout.NORTH);
+        JScrollPane navigationScroll = scroll(nav);
+        navigationScroll.setBorder(new EmptyBorder(24, 0, 16, 0));
+        navigationScroll.setHorizontalScrollBarPolicy(ScrollPaneConstants.HORIZONTAL_SCROLLBAR_NEVER);
+        side.add(navigationScroll, BorderLayout.CENTER);
         JPanel lower = transparent(new GridLayout(4, 1, 0, 10));
         JLabel local = new JLabel("MÁY CHỦ CỤC BỘ"); local.setForeground(new Color(0x7185A4)); local.setFont(FONT.deriveFont(Font.BOLD, 10));
         sidebarStatus.setForeground(new Color(0xCFDAEC)); sidebarStatus.setFont(FONT.deriveFont(Font.BOLD, 13));
@@ -365,11 +371,17 @@ public final class ServerDashboardPanel extends JPanel {
         JPanel basics = surface(new BorderLayout(0, 14));
         basics.add(sectionTitle("Cài đặt thường dùng", "settings"), BorderLayout.NORTH);
         JPanel simple = transparent(new GridLayout(0, 1, 0, 12));
+        JPanel access = transparent(new BorderLayout(18, 0));
+        JLabel accessLabel = label("Ai có thể kết nối?", 14, true, false); accessLabel.setLabelFor(accessMode);
+        access.add(accessLabel, BorderLayout.WEST); accessMode.setFont(FONT); access.add(accessMode); simple.add(access);
         minimizeTray.setFont(FONT); minimizeTray.setOpaque(false); simple.add(minimizeTray);
         simple.add(label("Máy chủ vẫn hoạt động khi cửa sổ được thu nhỏ xuống khay hệ thống.", 12, false, true));
         JPanel links = transparent(new FlowLayout(FlowLayout.LEFT, 8, 0));
-        links.add(button("Lưu cài đặt cửa sổ", "settings", BLUE, () -> {
-            var next = new DesktopServerSettings(settings.bindHost(), settings.httpPort(), settings.wsPort(),
+        links.add(button("Lưu cài đặt", "settings", BLUE, () -> {
+            String host = accessMode.getSelectedIndex() == 1 ? "127.0.0.1"
+                    : settings.bindHost().equals("127.0.0.1") || settings.bindHost().equalsIgnoreCase("localhost")
+                    ? "0.0.0.0" : settings.bindHost();
+            var next = new DesktopServerSettings(host, settings.httpPort(), settings.wsPort(),
                     settings.externalClient(), settings.clientPort(), minimizeTray.isSelected()); actions.applySettings(next);
         }));
         links.add(button("Thông tin & dịch vụ nâng cao", "server", null, () -> showPage("server")));
@@ -440,6 +452,7 @@ public final class ServerDashboardPanel extends JPanel {
 
     public void setSettings(DesktopServerSettings settings) {
         this.settings = settings; hostField.setText(settings.bindHost()); httpField.setText(String.valueOf(settings.httpPort()));
+        accessMode.setSelectedIndex(settings.bindHost().equals("127.0.0.1") || settings.bindHost().equalsIgnoreCase("localhost") ? 1 : 0);
         wsField.setText(String.valueOf(settings.wsPort())); clientMode.setSelectedIndex(settings.externalClient() ? 1 : 0);
         clientPortField.setText(String.valueOf(settings.clientPort())); clientPortField.setEnabled(settings.externalClient());
         minimizeTray.setSelected(settings.minimizeToTray());
@@ -603,6 +616,10 @@ public final class ServerDashboardPanel extends JPanel {
         String navPage = switch (page) { case "administration", "sessions" -> "users"; case "audit" -> "logs";
             case "server" -> "settings"; default -> page; };
         navigation.stream().filter(item -> item.getActionCommand().equals(navPage)).findFirst().ifPresent(item -> item.setSelected(true));
+        updateNavigationColors();
+    }
+
+    private void updateNavigationColors() {
         for (JToggleButton item : navigation) {
             item.setBackground(item.isSelected() ? new Color(0x263E64) : NAVY);
             item.setForeground(item.isSelected() ? Color.WHITE : new Color(0x9BAFCB));
@@ -616,7 +633,7 @@ public final class ServerDashboardPanel extends JPanel {
         FlatLaf.updateUI(); SwingUtilities.updateComponentTreeUI(this); applyPalette();
         setLifecycle(lifecycleState, lifecycleMessage, activeRuntime); applyHealthColors();
         themeButton.setText(dark ? "Giao diện sáng" : "Giao diện tối");
-        showPage(selectedPage); setActivity(activity); repaint();
+        updateNavigationColors(); setActivity(activity); repaint();
     }
     private void applyPalette() { for (Runnable binding : themeBindings) binding.run(); administration.setDark(dark); }
     private Color textColor() { return DesktopUi.text(dark); }
@@ -636,6 +653,7 @@ public final class ServerDashboardPanel extends JPanel {
         JButton button = new JButton(name, new LineIcon(icon)); button.setFont(FONT.deriveFont(Font.BOLD, 12));
         button.setIconTextGap(7); button.setMargin(new Insets(9, 12, 9, 12)); button.setFocusPainted(true);
         button.putClientProperty("JButton.buttonType", "roundRect"); button.addActionListener(e -> action.run());
+        button.getAccessibleContext().setAccessibleName(name);
         themeBindings.add(() -> { button.setBackground(fill != null ? fill : dark ? new Color(0x202E43) : new Color(0xF3F6FB));
             button.setForeground(fill != null ? Color.WHITE : textColor()); }); return button;
     }
@@ -740,6 +758,7 @@ public final class ServerDashboardPanel extends JPanel {
                     g.drawOval(5, 2, 4, 4); g.drawOval(10, 7, 4, 4); g.drawOval(4, 12, 4, 4); }
                 case "link", "arrow" -> { g.drawLine(4, 14, 14, 4); g.drawPolyline(new int[]{6, 14, 14}, new int[]{4, 4, 12}, 3); }
                 case "restart" -> { g.drawArc(3, 3, 12, 12, 30, 290); g.drawPolyline(new int[]{10, 15, 15}, new int[]{2, 3, 8}, 3); }
+                case "help" -> { g.drawOval(2, 2, 14, 14); g.drawArc(6, 4, 6, 6, 0, 210); g.drawLine(9, 9, 9, 11); g.fillOval(8, 13, 2, 2); }
                 default -> { g.drawOval(3, 3, 12, 12); g.fillArc(3, 3, 12, 12, 90, 180); }
             }
             g.dispose();
