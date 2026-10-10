@@ -332,6 +332,7 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
                      ProtocolConstants.EVENT_WEBRTC_CANDIDATE_ALIAS,
                      ProtocolConstants.EVENT_WEBRTC_CONNECTION_STATUS ->
                         signalingHandler.handle(connection, type, root.path("payload"), requestId);
+                case "peer.list", "peers.list" -> handlePeerList(connection, requestId);
                 case "channel.join" -> handleChannelJoin(connection, root.path("payload"), requestId);
                 case "channel.leave" -> handleChannelLeave(connection, root.path("payload"), requestId);
                 default -> {
@@ -583,6 +584,22 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
 
     private void notifyDisconnectedPeerTransfers(String disconnectedConnId) {
         signalingHandler.disconnected(disconnectedConnId);
+    }
+
+    private void handlePeerList(ClientConnection connection, String requestId) {
+        List<Map<String, Object>> peers = new ArrayList<>();
+        for (ClientConnection other : clientRegistry.activeConnections()) {
+            if (!other.connectionId().equals(connection.connectionId()) && other.isOpen()) {
+                Map<String, Object> p = new LinkedHashMap<>();
+                p.put("connectionId", other.connectionId());
+                p.put("userId", other.userId() != null ? other.userId().toString() : null);
+                p.put("displayName", other.username() != null ? other.username() : (other.deviceName() != null ? other.deviceName() : "Thiết bị LAN"));
+                p.put("deviceName", other.deviceName() != null ? other.deviceName() : "Thiết bị LAN");
+                p.put("platform", other.platform() != null ? other.platform() : "browser");
+                peers.add(p);
+            }
+        }
+        sendEnvelope(connection.socket(), EventEnvelope.event("peer.list", requestId, Map.of("peers", peers)));
     }
 
     private void handleAuth(ClientConnection connection, JsonNode root, String requestId) {

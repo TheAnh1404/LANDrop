@@ -134,8 +134,9 @@ class LandropServerFoundationTest {
                 .GET()
                 .build();
         HttpResponse<String> adminTargetRes = noRedirectClient.send(adminTargetReq, HttpResponse.BodyHandlers.ofString());
-        assertEquals(302, adminTargetRes.statusCode());
-        assertEquals("/admin", adminTargetRes.headers().firstValue("Location").orElse(null));
+        assertEquals(410, adminTargetRes.statusCode());
+        assertTrue(adminTargetRes.body().contains("ADMIN_WEB_REMOVED"));
+        assertTrue(adminTargetRes.headers().firstValue("Location").isEmpty());
 
         HttpRequest apiReq = HttpRequest.newBuilder()
                 .uri(URI.create("http://127.0.0.1:" + httpPort + "/api"))
