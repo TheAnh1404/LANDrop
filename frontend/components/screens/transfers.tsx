@@ -1179,13 +1179,14 @@ export function TransfersScreen({ id }: { id: string }) {
                               }`}
                             >
                               {msg.text}
+                              {msg.storageError && <div className="mt-1 text-[10px] text-amber-200">Chưa lưu được lịch sử: {msg.storageError}</div>}
 
                               {/* Message Delivery Checkmark & Copy Action */}
                               <div className="flex items-center justify-end gap-1 text-[10px] mt-1 opacity-75">
                                 {isMe && !msg.ack && msg.status !== 'cancelled' && <><button onClick={() => void retryMessage(msg.id).catch(err => setTransferError(errorMessage(err)))} className="underline">Gửi lại</button><button onClick={() => void cancelMessage(msg.id).catch(err => setTransferError(errorMessage(err)))} className="ml-2 underline">Hủy</button></>}
                                 {isMe && msg.status === 'cancelled' && <span>Đã hủy gửi</span>}
                                 {isMe && (
-                                  <span title={msg.pending ? 'Đang chờ gửi (Pending)' : (msg.ack ? 'Đã nhận (Delivered)' : 'Đã gửi (Sent)')}>
+                                  <span title={msg.ack ? 'Bên nhận đã lưu lịch sử' : msg.received ? 'Bên nhận đã hiển thị · đang lưu lịch sử' : msg.pending ? 'Đang chờ gửi' : 'Đã gửi qua mạng'}>
                                     {msg.pending ? '🕒' : (msg.ack ? '✓✓' : '✓')}
                                   </span>
                                 )}
@@ -1835,6 +1836,14 @@ export function TransfersScreen({ id }: { id: string }) {
                 <dd className="font-mono text-emerald-400 font-bold">
                   {diagnostics.roundTripLatencyMs !== null ? `${diagnostics.roundTripLatencyMs} ms` : '—'}
                 </dd>
+              </div>
+              <div>
+                <dt className="text-slate-400">Chat nhận · RTT</dt>
+                <dd className="font-mono text-emerald-400">{diagnostics.chatReceiveRttMs === undefined ? '—' : `${diagnostics.chatReceiveRttMs.toFixed(2)} ms`}</dd>
+              </div>
+              <div>
+                <dt className="text-slate-400">Chat lưu bền · RTT</dt>
+                <dd className="font-mono text-slate-200">{diagnostics.chatDurableRttMs === undefined ? '—' : `${diagnostics.chatDurableRttMs.toFixed(2)} ms`}</dd>
               </div>
             </dl>
           </div>

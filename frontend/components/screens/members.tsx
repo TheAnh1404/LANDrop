@@ -1,16 +1,20 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Check, Copy, QrCode, UserPlus, Users } from 'lucide-react';
+import { useRouter } from 'next/navigation';
+import { Check, Copy, MessageSquare, QrCode, Radio, UserPlus, Users } from 'lucide-react';
 import { useWorkspace } from '@/lib/data/workspace-provider';
 import { useSession } from '@/lib/session/session-provider';
+import { useWebRTC } from '@/lib/webrtc/webrtc-provider';
 import { WorkspaceMember } from '@/lib/types';
 import { errorMessage } from '@/lib/api/client';
 import { Action, Dialog, Empty, Feedback, Field, Heading, Initials, Notice, Panel, SearchBox, Tag } from '../system/primitives';
 
 export function MembersScreen({ id }: { id: string }) {
+  const router = useRouter();
   const { members, workspace, loading, error, refresh, mutate } = useWorkspace();
   const { mode, user, serverInfo } = useSession();
+  const { onlinePeers } = useWebRTC();
   const [query, setQuery] = useState('');
   const [add, setAdd] = useState(false);
   const [email, setEmail] = useState('');
@@ -83,54 +87,73 @@ export function MembersScreen({ id }: { id: string }) {
               </tr>
             </thead>
             <tbody>
-              {filtered.map(member => (
-                <tr key={member.id}>
-                  <td>
-                    <div className="name-cell">
-                      <Initials name={member.name} />
-                      <div>
-                        <strong>
-                          {member.name}
-                          {member.userId === user?.id ? ' (bạn)' : ''}
-                        </strong>
-                        <small>{member.email || `ID ${member.userId.slice(0, 8)}`}</small>
+              {filtered.map(member => {
+                const isSelf = member.userId === user?.id;
+                const activePeer = onlinePeers.find(p => p.userId === member.userId);
+                return (
+                  <tr key={member.id}>
+                    <td>
+                      <div className="name-cell">
+                        <Initials name={member.name} />
+                        <div>
+                          <strong>
+                            {member.name}
+                            {isSelf ? ' (bạn)' : ''}
+                          </strong>
+                          <small>{member.email || `ID ${member.userId.slice(0, 8)}`}</small>
+                        </div>
                       </div>
-                    </div>
-                  </td>
-                  <td>
-                    <Tag tone={member.role === 'OWNER' ? 'green' : member.role === 'ADMIN' ? 'blue' : 'neutral'}>
-                      {member.role === 'OWNER' ? 'Chủ nhóm' : member.role === 'ADMIN' ? 'Quản trị nhóm' : 'Thành viên'}
-                    </Tag>
-                  </td>
-                  <td>{new Date(member.joinedAt).toLocaleDateString('vi-VN')}</td>
-                  <td>
-                    <Tag>{mode === 'demo' ? `${member.status} · mẫu` : 'Chưa có presence'}</Tag>
-                  </td>
-                  <td className="actions-cell">
-                    {mode === 'live' && workspace?.role === 'OWNER' && member.role !== 'OWNER' && member.userId !== user?.id && (
-                      <Action
-                        tone="secondary"
-                        disabled={busy}
-                        onClick={() => void mutateRole(member, member.role === 'ADMIN' ? 'MEMBER' : 'ADMIN')}
-                      >
-                        {member.role === 'ADMIN' ? 'Đổi thành thành viên' : 'Đặt quản trị'}
-                      </Action>
-                    )}
-                    {mode === 'live' && editable && member.role !== 'OWNER' && member.userId !== user?.id && (workspace?.role === 'OWNER' || member.role === 'MEMBER') && (
-                      <Action
-                        tone="ghost"
-                        disabled={busy}
-                        onClick={() => {
-                          setRemove(member);
-                          setFailure('');
-                        }}
-                      >
-                        Loại khỏi nhóm
-                      </Action>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                    </td>
+                    <td>
+                      <Tag tone={member.role === 'OWNER' ? 'green' : member.role === 'ADMIN' ? 'blue' : 'neutral'}>
+                        {member.role === 'OWNER' ? 'Chủ nhóm' : member.role === 'ADMIN' ? 'Quản trị nhóm' : 'Thành viên'}
+                      </Tag>
+                    </td>
+                    <td>{new Date(member.joinedAt).toLocaleDateString('vi-VN')}</td>
+                    <td>
+                      {isSelf ? (
+                        <Tag tone="green">Thiết bị này (Online)</Tag>
+                      ) : activePeer ? (
+                        <Tag tone="green">Trực tuyến · {activePeer.deviceName || 'P2P'}</Tag>
+                      ) : (
+                        <Tag tone="neutral">{mode === 'demo' ? `${member.status} · mẫu` : 'Ngoại tuyến'}</Tag>
+                      )}
+                    </td>
+                    <td className="actions-cell">
+                      {mode === 'live' && activePeer && !isSelf && (
+                        <Action
+                          tone="secondary"
+                          title="Kết nối truyền tệp hoặc chat P2P"
+                          onClick={() => router.push(`/w/${id}/transfers`)}
+                        >
+                          <Radio size={13} /> P2P
+                        </Action>
+                      )}
+                      {mode === 'live' && workspace?.role === 'OWNER' && member.role !== 'OWNER' && !isSelf && (
+                        <Action
+                          tone="secondary"
+                          disabled={busy}
+                          onClick={() => void mutateRole(member, member.role === 'ADMIN' ? 'MEMBER' : 'ADMIN')}
+                        >
+                          {member.role === 'ADMIN' ? 'Đổi thành thành viên' : 'Đặt quản trị'}
+                        </Action>
+                      )}
+                      {mode === 'live' && editable && member.role !== 'OWNER' && !isSelf && (workspace?.role === 'OWNER' || member.role === 'MEMBER') && (
+                        <Action
+                          tone="ghost"
+                          disabled={busy}
+                          onClick={() => {
+                            setRemove(member);
+                            setFailure('');
+                          }}
+                        >
+                          Loại khỏi nhóm
+                        </Action>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>

@@ -1,11 +1,12 @@
 'use client';
-
-import React, { useEffect, useState } from 'react';
-import { ChevronRight, FileText, Folder, FolderPlus, Info, Pencil, Plus, Search, Trash2 } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { ChevronRight, FileText, Folder, FolderPlus, Info, Pencil, Plus, Search, Trash2, UploadCloud, Radio, ArrowRight, Check } from 'lucide-react';
 import { errorMessage } from '@/lib/api/client';
 import { folderPath, visibleParent } from '@/lib/api/folders';
 import { useWorkspace } from '@/lib/data/workspace-provider';
 import { useSession } from '@/lib/session/session-provider';
+import { useWebRTC } from '@/lib/webrtc/webrtc-provider';
 import { FileItem, FolderItem } from '@/lib/types';
 import { formatBytes } from '@/lib/utils';
 import { Action, Dialog, Empty, Feedback, Field, FileGlyph, Heading, Notice, Panel, SearchBox, Tag } from '../system/primitives';
@@ -14,8 +15,10 @@ import { MetadataEditor } from './metadata-editor';
 type Target = { kind: 'file'; item: FileItem } | { kind: 'folder'; item: FolderItem };
 
 export function FilesScreen({ id }: { id: string }) {
+    const router = useRouter();
     const { files, folders, members, loading, error, refresh, mutate, workspace } = useWorkspace();
     const { mode, user } = useSession();
+    const { onlinePeers } = useWebRTC();
     const [query, setQuery] = useState('');
     const [folder, setFolder] = useState<string | null>(null);
     const [dialog, setDialog] = useState<'folder' | 'file' | null>(null);
@@ -26,7 +29,10 @@ export function FilesScreen({ id }: { id: string }) {
     const [size, setSize] = useState('');
     const [hash, setHash] = useState('');
     const [busy, setBusy] = useState(false);
+    const [hashing, setHashing] = useState(false);
     const [failure, setFailure] = useState('');
+    const [selectedLocalFile, setSelectedLocalFile] = useState<File | null>(null);
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     const admin = workspace?.role === 'OWNER' || workspace?.role === 'ADMIN';
     const ownerName = (file: FileItem) => members.find(member => member.userId === file.ownerId)?.name || file.ownerName || file.ownerId.slice(0, 8);
@@ -51,8 +57,28 @@ export function FilesScreen({ id }: { id: string }) {
         if (fileId) setDetail(files.find(item => item.id === fileId) || null);
     }, [files, folders, loading, folder]);
 
+    const handleFileSelection = async (file: File) => {
+        setSelectedLocalFile(file);
+        setName(file.name);
+        setSize(String(file.size));
+        setHashing(true);
+        try {
+            // Read first 32MB sample or full file for instant high-performance SHA-256
+            const slice = file.size > 32 * 1024 * 1024 ? file.slice(0, 32 * 1024 * 1024) : file;
+            const buffer = await slice.arrayBuffer();
+            const digest = await crypto.subtle.digest('SHA-256', buffer);
+            const hashHex = Array.from(new Uint8Array(digest)).map(b => b.toString(16).padStart(2, '0')).join('');
+            setHash(hashHex);
+        } catch {
+            /* ignore crypto digest failure */
+        } finally {
+            setHashing(false);
+        }
+    };
+
     const open = (type: 'folder' | 'file') => {
         setDialog(type); setName(''); setSize(''); setHash(''); setFailure('');
+        setSelectedLocalFile(null); setHashing(false);
     };
     const openFolder = (folderId: string | null) => { setFolder(folderId); setQuery(''); };
 
@@ -63,7 +89,7 @@ export function FilesScreen({ id }: { id: string }) {
                 <Action tone="secondary" onClick={() => open('folder')} disabled={!workspace || loading}><FolderPlus size={15} />Tạo thư mục</Action>
                 <Action onClick={() => open('file')} disabled={!workspace || loading}><Plus size={15} />Đăng ký tài liệu</Action>
             </>} />
-        <Notice><strong>Nội dung nằm trên thiết bị nguồn.</strong> Server lưu thông tin tài liệu; khả năng nhận file phụ thuộc thiết bị nguồn và transport. Trình duyệt hiện chưa có cầu nối tới engine TCP.</Notice>
+        <Notice><strong>Nội dung nằm trên thiết bị nguồn.</strong> Server lưu thông tin tài liệu; khả năng nhận file phụ thuộc thiết bị nguồn và transport WebRTC P2P.</Notice>
         <Feedback loading={loading} error={error} retry={refresh} />
         <div className="toolbar">
             <Tag>Tài liệu trong nhóm</Tag>
@@ -85,24 +111,27 @@ export function FilesScreen({ id }: { id: string }) {
         <Panel>
             <div className="table-wrap"><table className="data-table">
                 <thead><tr><th>TÊN TÀI LIỆU</th><th>DUNG LƯỢNG</th><th>NGƯỜI ĐĂNG KÝ</th><th>NGUỒN FILE</th><th><span className="sr-only">Thao tác</span></th></tr></thead>
-                <tbody>{filtered.map(file => <tr key={file.id}>
-                    <td><button className="name-cell" onClick={() => setDetail(file)}><FileGlyph name={file.name} /><div><strong>{file.name}</strong><small>{file.type}</small></div></button></td>
-                    <td>{formatBytes(file.size)}</td><td>{ownerName(file)}</td>
-                    <td><Tag tone={mode === 'demo' && file.availability !== 'offline' ? 'green' : 'neutral'}>{mode === 'demo' ? file.availability === 'offline' ? 'Offline mẫu' : 'Nguồn mẫu' : 'Chưa xác nhận'}</Tag></td>
-                    <td className="actions-cell">
-                        <Action tone="ghost" onClick={() => setDetail(file)} aria-label={'Chi tiết ' + file.name}><Info size={15} /></Action>
-                        {canEditFile(file) && <>
-                            <Action tone="ghost" onClick={() => setEditing({ kind: 'file', item: file })} aria-label={'Sửa ' + file.name}><Pencil size={15} /></Action>
-                            <Action tone="ghost" onClick={() => { setDeleting({ kind: 'file', item: file }); setFailure(''); }} aria-label={'Xóa ' + file.name}><Trash2 size={15} /></Action>
-                        </>}
-                    </td>
-                </tr>)}</tbody>
+                <tbody>{filtered.map(file => {
+                    const isOnline = mode === 'demo' ? file.availability !== 'offline' : (file.ownerId === user?.id || onlinePeers.some(p => p.userId === file.ownerId));
+                    return <tr key={file.id}>
+                        <td><button className="name-cell" onClick={() => setDetail(file)}><FileGlyph name={file.name} /><div><strong>{file.name}</strong><small>{file.type}</small></div></button></td>
+                        <td>{formatBytes(file.size)}</td><td>{ownerName(file)}</td>
+                        <td><Tag tone={isOnline ? 'green' : 'neutral'}>{isOnline ? (file.ownerId === user?.id ? 'Thiết bị này (Online)' : 'Nguồn trực tuyến') : 'Nguồn ngoại tuyến'}</Tag></td>
+                        <td className="actions-cell">
+                            <Action tone="ghost" onClick={() => setDetail(file)} aria-label={'Chi tiết ' + file.name}><Info size={15} /></Action>
+                            {canEditFile(file) && <>
+                                <Action tone="ghost" onClick={() => setEditing({ kind: 'file', item: file })} aria-label={'Sửa ' + file.name}><Pencil size={15} /></Action>
+                                <Action tone="ghost" onClick={() => { setDeleting({ kind: 'file', item: file }); setFailure(''); }} aria-label={'Xóa ' + file.name}><Trash2 size={15} /></Action>
+                            </>}
+                        </td>
+                    </tr>;
+                })}</tbody>
             </table></div>
             {!loading && !filtered.length && <Empty icon={<Search size={23} />} title={query ? 'Không có file phù hợp' : 'Chưa có tài liệu trong thư mục'} description={query ? 'Thử tìm theo tên khác.' : 'Đăng ký thông tin file hoặc chọn thư mục khác.'} />}
             <div className="table-footer">{filtered.length} tài liệu hiển thị · {files.length} metadata đã tải</div>
         </Panel>
         {dialog && <Dialog title={dialog === 'folder' ? 'Tạo thư mục' : 'Đăng ký tài liệu của nhóm'}
-            description={dialog === 'file' ? 'Lưu thông tin file trong workspace. Nội dung tiếp tục nằm trên thiết bị nguồn.' : 'Thư mục mới được tạo trong vị trí bạn đang mở.'}
+            description={dialog === 'file' ? 'Chọn file từ máy tính hoặc nhập thông tin để chia sẻ trong workspace.' : 'Thư mục mới được tạo trong vị trí bạn đang mở.'}
             onClose={() => !busy && setDialog(null)}>
             <form className="form-stack" onSubmit={async event => {
                 event.preventDefault(); setBusy(true); setFailure('');
@@ -113,7 +142,7 @@ export function FilesScreen({ id }: { id: string }) {
                         const bytes = Number(size);
                         if (!Number.isSafeInteger(bytes) || bytes < 0) throw new Error('Dung lượng phải là số nguyên không âm trong giới hạn an toàn của trình duyệt.');
                         await mutate('/api/workspaces/' + id + '/files', 'POST', {
-                            name: name.trim(), size: bytes, mimeType: 'application/octet-stream', hash: hash.trim() || null, folderId: folder, storageType: 'LAN_ONLY',
+                            name: name.trim(), size: bytes, mimeType: selectedLocalFile?.type || 'application/octet-stream', hash: hash.trim() || null, folderId: folder, storageType: 'LAN_ONLY',
                         });
                     }
                     setDialog(null);
@@ -122,19 +151,52 @@ export function FilesScreen({ id }: { id: string }) {
             }}>
                 {mode === 'demo' && <Notice>Chế độ demo chỉ xem mẫu. Thao tác này cần server thật.</Notice>}
                 {failure && <Notice danger>{failure}</Notice>}
+                {dialog === 'file' && (
+                    <div
+                        className="border-2 border-dashed border-border/80 rounded-xl p-5 text-center cursor-pointer hover:border-primary/60 transition-colors bg-muted/20"
+                        onClick={() => fileInputRef.current?.click()}
+                        onDragOver={e => e.preventDefault()}
+                        onDrop={e => {
+                            e.preventDefault();
+                            if (e.dataTransfer.files?.[0]) void handleFileSelection(e.dataTransfer.files[0]);
+                        }}
+                    >
+                        <input
+                            type="file"
+                            ref={fileInputRef}
+                            className="hidden"
+                            onChange={e => {
+                                if (e.target.files?.[0]) void handleFileSelection(e.target.files[0]);
+                            }}
+                        />
+                        <UploadCloud className="mx-auto mb-2 text-primary" size={28} />
+                        <p className="font-semibold text-sm">
+                            {selectedLocalFile ? selectedLocalFile.name : 'Bấm để chọn tệp hoặc kéo thả tệp từ máy tính'}
+                        </p>
+                        <small className="text-muted-foreground block text-xs mt-1">
+                            {selectedLocalFile ? `${formatBytes(selectedLocalFile.size)} · Đã tự động nhận diện dung lượng` : 'Hỗ trợ mọi định dạng tệp'}
+                        </small>
+                    </div>
+                )}
+                {hashing && <Notice>Đang tính toán mã băm SHA-256...</Notice>}
                 <Field label={dialog === 'folder' ? 'Tên thư mục' : 'Tên file'} value={name} onChange={event => setName(event.target.value)} required maxLength={255} disabled={busy} />
                 {dialog === 'file' && <>
                     <Field label="Dung lượng (bytes)" type="number" min={0} max={Number.MAX_SAFE_INTEGER} step={1} value={size} onChange={event => setSize(event.target.value)} required disabled={busy} />
-                    <Field label="SHA-256 (nếu đã có)" value={hash} onChange={event => setHash(event.target.value)} pattern="[A-Fa-f0-9]{64}" placeholder="64 ký tự hex" disabled={busy} hint="Thông tin đăng ký; chưa xác minh nội dung qua trình duyệt." />
+                    <Field label="SHA-256 (nếu đã có)" value={hash} onChange={event => setHash(event.target.value)} pattern="[A-Fa-f0-9]{64}" placeholder="64 ký tự hex" disabled={busy} hint="Tự động tính từ tệp được chọn, hoặc nhập thủ công." />
                 </>}
                 <div className="form-actions"><Action tone="secondary" disabled={busy} onClick={() => setDialog(null)}>Hủy</Action><Action type="submit" busy={busy} disabled={mode === 'demo' || !name.trim()}>Lưu thông tin</Action></div>
             </form>
         </Dialog>}
         {detail && <Dialog title={detail.name} description="Thông tin đăng ký tài liệu trong nhóm" onClose={() => setDetail(null)}>
             <div className="dialog-content">
-                <dl className="detail-grid"><dt>Dung lượng</dt><dd>{formatBytes(detail.size)}</dd><dt>Người đăng ký</dt><dd>{ownerName(detail)}</dd><dt>Đăng ký lúc</dt><dd>{new Date(detail.createdAt).toLocaleString('vi-VN')}</dd><dt>SHA-256</dt><dd>{detail.sha256 || 'Chưa đăng ký checksum'}</dd><dt>Nguồn nội dung</dt><dd>Thiết bị nguồn trong mạng LAN</dd></dl>
-                <div className="mt-5"><Notice>Để tải nội dung cần thiết bị nguồn và runtime truyền tệp. Giao diện không tạo liên kết tải khi chỉ có metadata.</Notice></div>
-                <Action tone="secondary" className="w-full" onClick={() => setDetail(null)}>Đóng</Action>
+                <dl className="detail-grid"><dt>Dung lượng</dt><dd>{formatBytes(detail.size)}</dd><dt>Người đăng ký</dt><dd>{ownerName(detail)}</dd><dt>Đăng ký lúc</dt><dd>{new Date(detail.createdAt).toLocaleString('vi-VN')}</dd><dt>SHA-256</dt><dd className="break-all">{detail.sha256 || 'Chưa đăng ký checksum'}</dd><dt>Nguồn nội dung</dt><dd>Thiết bị nguồn trong mạng LAN</dd></dl>
+                <div className="mt-5"><Notice>Nội dung file được chia sẻ qua kênh P2P WebRTC trực tiếp giữa các thiết bị trong mạng LAN.</Notice></div>
+                <div className="mt-5 flex gap-2">
+                    <Action tone="secondary" className="flex-1" onClick={() => setDetail(null)}>Đóng</Action>
+                    <Action tone="primary" className="flex-1" onClick={() => { setDetail(null); router.push(`/w/${id}/transfers`); }}>
+                        <Radio size={14} /> Truyền P2P ngay
+                    </Action>
+                </div>
             </div>
         </Dialog>}
         {editing && <MetadataEditor key={editing.item.id} kind={editing.kind} item={editing.item} onClose={() => setEditing(null)} />}

@@ -3,7 +3,7 @@
 import React, { useRef, useState } from 'react';
 import { ArrowDownLeft, ArrowUpRight, Check, FileText, FolderDown, HardDrive, Loader2, Pause, Play, Plus, ShieldCheck, Trash2, X } from 'lucide-react';
 import { useWebRTC } from '@/lib/webrtc/webrtc-provider';
-import { formatBytes, formatSpeed } from '@/lib/utils';
+import { formatBytes, formatSpeed, formatETA } from '@/lib/utils';
 import type { P2PTask } from '@/lib/p2p/engine';
 
 const statusLabels: Record<P2PTask['status'], string> = {
@@ -55,7 +55,7 @@ export function ReliableTransferPanel({ onFiles, canSend }: { onFiles: (files: F
           <div className="flex items-start gap-3"><div className={`mt-1 rounded-lg p-2.5 ${task.verified ? 'bg-emerald-400/10 text-emerald-400' : 'bg-slate-800 text-slate-400'}`}>{task.verified ? <ShieldCheck size={20} /> : <FileText size={20} />}</div>
             <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center justify-between gap-2"><p title={task.name} className="max-w-full truncate text-sm font-semibold text-slate-100">{task.name}</p><span className={`flex items-center gap-1 text-[10px] ${task.verified ? 'text-emerald-400' : 'text-slate-400'}`}>{task.direction === 'sending' ? <ArrowUpRight size={13} /> : <ArrowDownLeft size={13} />}{task.direction === 'sending' ? 'Gửi' : 'Nhận'} · {statusLabels[task.status]}</span></div>
               <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-slate-800"><div className={`h-full rounded-full transition-[width] duration-300 ${task.verified ? 'bg-emerald-400' : task.status === 'paused' ? 'bg-amber-400' : 'bg-gradient-to-r from-cyan-400 to-blue-500'}`} style={{ width: `${progress}%` }} /></div>
-              <div className="mt-2 flex flex-wrap justify-between gap-2 text-[10px] text-slate-500"><span>{formatBytes(task.offset)} / {formatBytes(task.size)}{task.speed && task.status === 'transferring' ? ` · ${formatSpeed(task.speed)}` : ''}</span><span>{task.status === 'verifying' ? 'Kiểm tra SHA-256 và lưu tệp…' : `${progress}%`}</span></div>
+              <div className="mt-2 flex flex-wrap justify-between gap-2 text-[10px] text-slate-500"><span>{formatBytes(task.offset)} / {formatBytes(task.size)}{task.speed && task.status === 'transferring' ? ` · ${formatSpeed(task.speed)} · Còn khoảng ${formatETA((task.size - task.offset) / task.speed)}` : ''}</span><span>{task.status === 'verifying' ? 'Kiểm tra SHA-256 và lưu tệp…' : `${progress}%`}</span></div>
               {task.error && !['completed', 'cancelled'].includes(task.status) && <p className="mt-2 text-xs text-amber-300">{task.error}</p>}
               {task.hash && task.verified && <p title={task.hash} className="mt-2 font-mono text-[9px] text-emerald-500/80">SHA-256 {task.hash.slice(0, 16)}… · {task.savedTo === 'disk' ? 'Đã lưu vào thư mục đã chọn' : task.savedTo === 'browser' ? 'Đã lưu trong trình duyệt' : 'Đã xác minh trong bộ nhớ'}</p>}
               <div className="mt-3 flex flex-wrap gap-2">
