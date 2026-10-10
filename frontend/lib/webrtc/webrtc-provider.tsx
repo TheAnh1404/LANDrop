@@ -9,6 +9,10 @@ import type {
   WebRTCDiagnostics,
   WebRTCPeerState,
   WebRTCRole,
+  FileTransferProgress,
+  ReceivedFileItem,
+  QuickTextMessage,
+  OnlinePeerItem,
 } from './types';
 
 interface WebRTCContextValue {
@@ -19,6 +23,10 @@ interface WebRTCContextValue {
   incomingRequest: IncomingTransferRequest | null;
   testResult: PeerTestResult | null;
   localConnectionId: string | null;
+  transferProgress: FileTransferProgress | null;
+  receivedFiles: ReceivedFileItem[];
+  quickMessages: QuickTextMessage[];
+  onlinePeers: OnlinePeerItem[];
   requestP2P: (params: {
     workspaceId: string;
     receiverConnectionId: string;
@@ -31,6 +39,11 @@ interface WebRTCContextValue {
   rejectIncomingRequest: (reason?: string, transferId?: string) => void;
   cancelConnection: (reason?: string) => void;
   resetToIdle: () => void;
+  sendFile: (file: File) => Promise<void>;
+  sendQuickText: (text: string) => void;
+  fetchOnlinePeers: () => void;
+  clearReceivedFiles: () => void;
+  clearQuickMessages: () => void;
 }
 
 const WebRTCContext = createContext<WebRTCContextValue | null>(null);
@@ -60,6 +73,10 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
   const [incomingRequest, setIncomingRequest] = useState<IncomingTransferRequest | null>(null);
   const [testResult, setTestResult] = useState<PeerTestResult | null>(null);
   const [localConnectionId, setLocalConnectionId] = useState<string | null>(() => client.getConnectionId());
+  const [transferProgress, setTransferProgress] = useState<FileTransferProgress | null>(null);
+  const [receivedFiles, setReceivedFiles] = useState<ReceivedFileItem[]>([]);
+  const [quickMessages, setQuickMessages] = useState<QuickTextMessage[]>([]);
+  const [onlinePeers, setOnlinePeers] = useState<OnlinePeerItem[]>([]);
 
   // Instantiate or update WebRTCPeerService bound to the single RealtimeClient
   useEffect(() => {
@@ -70,12 +87,24 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
     const unsubDiag = service.onDiagnostics(dg => setDiagnostics(dg));
     const unsubReq = service.onIncomingRequest(req => setIncomingRequest(req));
     const unsubTest = service.onTestResult(res => setTestResult(res));
+    const unsubProgress = service.onTransferProgress(prog => setTransferProgress(prog ? { ...prog } : null));
+    const unsubFile = service.onFileReceived(file => {
+      setReceivedFiles(prev => [file, ...prev]);
+    });
+    const unsubQuick = service.onQuickText(msg => {
+      setQuickMessages(prev => [msg, ...prev]);
+    });
+    const unsubPeers = service.onOnlinePeers(peers => setOnlinePeers([...peers]));
 
     return () => {
       unsubState();
       unsubDiag();
       unsubReq();
       unsubTest();
+      unsubProgress();
+      unsubFile();
+      unsubQuick();
+      unsubPeers();
       service.destroy();
       serviceRef.current = null;
     };
@@ -122,6 +151,33 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
     serviceRef.current?.resetToIdle();
   };
 
+  const sendFile = async (file: File) => {
+    if (!serviceRef.current) throw new Error('WebRTC service not initialized');
+    await serviceRef.current.sendFile(file);
+  };
+
+  const sendQuickText = (text: string) => {
+    if (!serviceRef.current) throw new Error('WebRTC service not initialized');
+    serviceRef.current.sendQuickText(text);
+  };
+
+  const fetchOnlinePeers = () => {
+    serviceRef.current?.fetchOnlinePeers();
+  };
+
+  const clearReceivedFiles = () => {
+    setReceivedFiles(prev => {
+      prev.forEach(f => {
+        try { URL.revokeObjectURL(f.blobUrl); } catch { /* ignore */ }
+      });
+      return [];
+    });
+  };
+
+  const clearQuickMessages = () => {
+    setQuickMessages([]);
+  };
+
   const value = useMemo<WebRTCContextValue>(() => ({
     service: serviceRef.current,
     state: peerState,
@@ -130,12 +186,21 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
     incomingRequest,
     testResult,
     localConnectionId,
+    transferProgress,
+    receivedFiles,
+    quickMessages,
+    onlinePeers,
     requestP2P,
     acceptIncomingRequest,
     rejectIncomingRequest,
     cancelConnection,
     resetToIdle,
-  }), [peerState, diagnostics, incomingRequest, testResult, localConnectionId]);
+    sendFile,
+    sendQuickText,
+    fetchOnlinePeers,
+    clearReceivedFiles,
+    clearQuickMessages,
+  }), [peerState, diagnostics, incomingRequest, testResult, localConnectionId, transferProgress, receivedFiles, quickMessages, onlinePeers]);
 
   return <WebRTCContext.Provider value={value}>{children}</WebRTCContext.Provider>;
 }
