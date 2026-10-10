@@ -111,6 +111,7 @@ export interface P2PChatMessage {
   };
   ack?: boolean;
   pending?: boolean;
+  status?: string;
 }
 
 export type TechnicalDataMessage =
@@ -130,6 +131,7 @@ export interface IncomingTransferRequest {
   senderUserId: string;
   senderConnectionId: string;
   senderDeviceName?: string;
+  senderDeviceId?: string;
   fileName: string;
   fileSize: number;
   receivedAt: number;
@@ -175,6 +177,7 @@ export interface QuickTextMessage {
 export interface OnlinePeerItem {
   connectionId: string;
   userId?: string | null;
+  deviceId?: string | null;
   displayName: string;
   deviceName: string;
   platform: string;

@@ -330,7 +330,8 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
                      ProtocolConstants.EVENT_WEBRTC_ANSWER,
                      ProtocolConstants.EVENT_WEBRTC_CANDIDATE,
                      ProtocolConstants.EVENT_WEBRTC_CANDIDATE_ALIAS,
-                     ProtocolConstants.EVENT_WEBRTC_CONNECTION_STATUS ->
+                     ProtocolConstants.EVENT_WEBRTC_CONNECTION_STATUS,
+                     "transfer.renew", "webrtc.restart" ->
                         signalingHandler.handle(connection, type, root.path("payload"), requestId);
                 case "peer.list", "peers.list" -> handlePeerList(connection, requestId);
                 case "channel.join" -> handleChannelJoin(connection, root.path("payload"), requestId);
@@ -593,6 +594,7 @@ public class FoundationRealtimeServer extends WebSocketServer implements Channel
                 Map<String, Object> p = new LinkedHashMap<>();
                 p.put("connectionId", other.connectionId());
                 p.put("userId", other.userId() != null ? other.userId().toString() : null);
+                p.put("deviceId", other.deviceId());
                 p.put("username", other.username());
                 p.put("displayName", other.username() != null ? other.username() : (other.deviceName() != null ? other.deviceName() : "Thiết bị LAN"));
                 p.put("deviceName", other.deviceName() != null ? other.deviceName() : "Thiết bị LAN");

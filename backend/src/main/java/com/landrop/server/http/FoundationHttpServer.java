@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.net.InetSocketAddress;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.Executors;
 
 /**
@@ -142,6 +143,7 @@ public class FoundationHttpServer {
         server.createContext("/", this::handleRoot);
         server.createContext("/connect", this::handleClientUi);
         server.createContext("/client", this::handleClientUi);
+        server.createContext("/p2p/", this::handleP2pAsset);
         server.createContext("/auth/login", this::handleClientUi);
         server.createContext("/auth/register", this::handleClientUi);
         server.createContext("/api", this::handleApiRoot);
@@ -411,6 +413,26 @@ public class FoundationHttpServer {
         exchange.sendResponseHeaders(200, bytes.length);
         try (OutputStream os = exchange.getResponseBody()) {
             os.write(bytes);
+        }
+    }
+
+    private void handleP2pAsset(HttpExchange exchange) throws IOException {
+        String path = exchange.getRequestURI().getPath();
+        if (!"GET".equals(exchange.getRequestMethod()) && !"HEAD".equals(exchange.getRequestMethod())) {
+            exchange.sendResponseHeaders(405, -1); exchange.close(); return;
+        }
+        if (!Set.of("/p2p/engine.js", "/p2p/file-worker.js").contains(path)) {
+            exchange.sendResponseHeaders(404, -1); exchange.close(); return;
+        }
+        try (java.io.InputStream input = getClass().getResourceAsStream("/client" + path)) {
+            if (input == null) { exchange.sendResponseHeaders(404, -1); exchange.close(); return; }
+            byte[] bytes = input.readAllBytes();
+            exchange.getResponseHeaders().set("Content-Type", "text/javascript; charset=UTF-8");
+            exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+            exchange.getResponseHeaders().set("Cache-Control", "no-cache");
+            exchange.sendResponseHeaders(200, "HEAD".equals(exchange.getRequestMethod()) ? -1 : bytes.length);
+            if (!"HEAD".equals(exchange.getRequestMethod())) exchange.getResponseBody().write(bytes);
+            exchange.close();
         }
     }
 

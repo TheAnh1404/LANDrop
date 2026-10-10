@@ -16,6 +16,7 @@
 import { RealtimeClient } from '../realtime/realtime-client';
 import type { RealtimeEnvelope } from '../realtime/types';
 import { getRtcConfiguration, WebRTCConfigurationOptions } from './config';
+import { ReliablePeer, P2PTask, uuid } from '../p2p/engine';
 import type {
   ChatAckMessage,
   ChatDataMessage,
@@ -56,6 +57,50 @@ const BUFFER_HIGH_WATER_MARK = 1_048_576; // 1 MB high-water backpressure thresh
 const BUFFERED_AMOUNT_LOW_THRESHOLD = 262_144; // 256 KB low-water drain threshold
 
 export class WebRTCPeerService {
+  private reliable: ReliablePeer | null = null;
+  private reliableScope = '';
+  private fileChannel: RTCDataChannel | null = null;
+  private targetDeviceId: string | null = null;
+  private generation = 0;
+  private coordinatedConnected = false;
+  private leaseDeadline = 0;
+  private iceRecoveryTimer: ReturnType<typeof setTimeout> | null = null;
+  private iceRestartPending = false;
+  private readonly taskListeners = new Set<(tasks: P2PTask[]) => void>();
+  private tasks: P2PTask[] = [];
+
+  public onTasks(listener: (tasks: P2PTask[]) => void): () => void { this.taskListeners.add(listener); listener(this.tasks); return () => this.taskListeners.delete(listener); }
+  public getTasks(): P2PTask[] { return this.tasks; }
+  public clearQuickMessages(): void { this.quickMessages = []; }
+  private updateLease(expiresAt: unknown, serverTimestamp?: string): void {
+    if (typeof expiresAt !== 'string') return;
+    const deadline = Date.parse(expiresAt), serverTime = serverTimestamp ? Date.parse(serverTimestamp) : NaN;
+    if (Number.isFinite(deadline)) this.leaseDeadline = Number.isFinite(serverTime) ? Date.now() + Math.max(0, deadline - serverTime) : deadline;
+  }
+  public getReliable(): ReliablePeer | null { return this.reliable; }
+  public getDataChannel(): RTCDataChannel | null { return this.dataChannel; }
+  public getPeerConnection(): RTCPeerConnection | null { return this.pc; }
+  public receiveIncomingRequest(payload: Record<string, any>): void { this.handleTransferRequestReceived(payload); }
+  public suspend(): void { this.setState('DISCONNECTED'); this.cleanupPeerResources(); }
+
+  private ensureReliable(): ReliablePeer | null {
+    if (!this.configOptions?.localUserId || !this.targetUserId || !this.workspaceId) return null;
+    const scope = JSON.stringify([this.configOptions.serverUrl, this.configOptions.localUserId, this.workspaceId, this.targetUserId, this.targetDeviceId || this.targetUserId]);
+    if (scope === this.reliableScope && this.reliable) return this.reliable;
+    this.reliable?.dispose(); this.reliableScope = scope; this.chatMessages = []; this.tasks = [];
+    this.reliable = new ReliablePeer({
+      scope, localName: this.configOptions.localName, remoteName: this.targetDeviceName || 'Peer',
+      maxMessageSize: this.pc?.sctp?.maxMessageSize || 65536,
+      onChat: message => { if (message.direction === 'received') this.handleChatTyping({ type: 'CHAT_TYPING', isTyping: false }); const index = this.chatMessages.findIndex(item => item.id === message.id); if (index < 0) this.chatMessages.push(message); else this.chatMessages[index] = message; this.emitChatMessage(message); },
+      onTasks: tasks => { this.tasks = tasks; this.taskListeners.forEach(listener => listener(tasks)); },
+      onError: message => { this.lastError = message; this.emitDiagnostics(); },
+      onReceived: task => {
+        const item: ReceivedFileItem = { id: task.id, fileName: task.name, fileSize: task.size, mimeType: task.mime, blobUrl: task.blobUrl, receivedAt: Date.now(), senderName: this.targetDeviceName || 'Peer' };
+        this.receivedFiles = [item, ...this.receivedFiles]; this.emitFileReceived(item);
+      },
+    });
+    return this.reliable;
+  }
   private pc: RTCPeerConnection | null = null;
   private dataChannel: RTCDataChannel | null = null;
   private state: WebRTCPeerState = 'IDLE';
@@ -140,6 +185,7 @@ export class WebRTCPeerService {
       this.unsubscribeEnvelope = null;
     }
     this.cleanupPeerResources();
+    this.reliable?.dispose(); this.reliable = null; this.taskListeners.clear();
     this.stateListeners.clear();
     this.diagnosticsListeners.clear();
     this.incomingRequestListeners.clear();
@@ -335,6 +381,7 @@ export class WebRTCPeerService {
     workspaceId: string;
     receiverConnectionId: string;
     targetUserId?: string;
+    targetDeviceId?: string;
     targetDeviceName?: string;
     fileName?: string;
     fileSize?: number;
@@ -348,22 +395,27 @@ export class WebRTCPeerService {
     this.workspaceId = params.workspaceId;
     this.targetConnectionId = params.receiverConnectionId;
     this.targetUserId = params.targetUserId || null;
+    const selected = this.onlinePeers.find(peer => peer.connectionId === params.receiverConnectionId);
+    this.targetUserId = params.targetUserId || selected?.userId || null;
+    this.targetDeviceId = params.targetDeviceId || selected?.deviceId || null;
     this.targetDeviceName = params.targetDeviceName || 'Peer Browser';
     this.lastError = null;
     this.testResult = null;
     this.loadChatHistory();
+    const reliable = this.ensureReliable(); if (reliable) await reliable.initialized;
 
     this.setState('REQUESTING');
     this.startSignalingTimeout();
 
     const sent = this.realtimeClient.sendEnvelope({
       type: 'transfer.request',
-      requestId: `req-${Date.now()}`,
+      requestId: `req-${uuid()}`,
       payload: {
+        protocolVersion: 2,
         workspaceId: params.workspaceId,
         receiverConnectionId: params.receiverConnectionId,
         fileName: params.fileName || 'landrop-p2p.dat',
-        fileSize: params.fileSize || 1024,
+        fileSize: params.fileSize ?? 1024,
       },
     });
 
@@ -393,9 +445,11 @@ export class WebRTCPeerService {
     this.workspaceId = this.incomingRequest.workspaceId;
     this.targetConnectionId = this.incomingRequest.senderConnectionId;
     this.targetUserId = this.incomingRequest.senderUserId;
+    this.targetDeviceId = this.incomingRequest.senderDeviceId || null;
     this.targetDeviceName = this.incomingRequest.senderDeviceName || 'Peer Browser';
     this.incomingRequest = null;
     this.loadChatHistory();
+    const reliable = this.ensureReliable(); if (reliable) await reliable.initialized;
     this.emitIncomingRequest();
 
     this.setState('SIGNALING');
@@ -497,6 +551,16 @@ export class WebRTCPeerService {
   private handleIncomingEnvelope(envelope: RealtimeEnvelope) {
     const type = envelope.type;
     const payload = (envelope.payload || {}) as Record<string, any>;
+    if (type === 'transfer.renew_ack') {
+      if (payload.transferId === this.transferId) this.updateLease(payload.expiresAt, envelope.timestamp);
+      return;
+    }
+    if (type === 'error' && this.transferId && (envelope.requestId?.startsWith(`renew-${this.transferId}-`) || envelope.requestId?.startsWith(`restart-${this.transferId}-`))) {
+      this.setState('FAILED', envelope.error?.message || 'Peer authorization could not be renewed.'); this.cleanupPeerResources(); return;
+    }
+    if (type.startsWith('webrtc.')
+        && (payload.transferId !== this.transferId || (payload.generation ?? 0) !== this.generation)
+        && !['webrtc.restart', 'webrtc.restart_ack'].includes(type)) return;
 
     switch (type) {
       case 'peer.list':
@@ -506,11 +570,12 @@ export class WebRTCPeerService {
       }
 
       case 'transfer.status': {
-        this.handleTransferStatus(payload);
+        this.handleTransferStatus(payload, envelope.timestamp);
         break;
       }
 
       case 'transfer.request': {
+        if (this.configOptions?.managed) break;
         this.handleTransferRequestReceived(payload);
         break;
       }
@@ -550,6 +615,21 @@ export class WebRTCPeerService {
         this.handlePeerConnectionStatusReceived(payload);
         break;
       }
+      case 'webrtc.restart': {
+        if (payload.transferId === this.transferId && this.role === 'answerer' && payload.generation === this.generation + 1) {
+          this.generation = payload.generation; this.earlyCandidatesQueue = []; this.coordinatedConnected = false; this.startSignalingTimeout();
+          this.updateLease(payload.expiresAt, envelope.timestamp);
+        }
+        break;
+      }
+      case 'webrtc.restart_ack': {
+        if (payload.transferId === this.transferId && this.role === 'offerer' && payload.generation === this.generation + 1) {
+          this.generation = payload.generation; this.earlyCandidatesQueue = []; this.coordinatedConnected = false;
+          this.iceRestartPending = false; this.updateLease(payload.expiresAt, envelope.timestamp);
+          void this.startOffererNegotiation(true);
+        }
+        break;
+      }
 
       default:
         break;
@@ -570,18 +650,21 @@ export class WebRTCPeerService {
     }
   }
 
-  private handleTransferStatus(payload: Record<string, any>) {
+  private handleTransferStatus(payload: Record<string, any>, serverTimestamp?: string) {
     const id = payload.transferId;
     const status = payload.status;
 
     if (!id) return;
 
-    if (this.role === 'offerer' && this.state === 'REQUESTING') {
+    if (this.role === 'offerer' && this.state === 'REQUESTING' && (!this.targetConnectionId || !payload.receiverConnectionId || payload.receiverConnectionId === this.targetConnectionId)) {
       this.transferId = id;
       if (status === 'REQUESTED' || status === 'PENDING') {
         this.setState('WAITING_ACCEPT');
       }
     }
+    if (id === this.transferId && status === 'P2P_CONNECTED') this.coordinatedConnected = true;
+    if (id === this.transferId) this.updateLease(payload.expiresAt, serverTimestamp);
+    if (id === this.transferId && status === 'EXPIRED') { this.setState('TIMEOUT', 'Phiên kết nối hết hạn. Kết nối lại để tiếp tục.'); this.cleanupPeerResources(); }
 
     if (status === 'REJECTED') {
       if (this.transferId === id) {
@@ -611,6 +694,7 @@ export class WebRTCPeerService {
       senderUserId: payload.senderUserId,
       senderConnectionId: payload.senderConnectionId,
       senderDeviceName: payload.senderDeviceName || 'Peer Browser',
+      senderDeviceId: payload.senderDeviceId,
       fileName: payload.fileName || 'landrop-p2p.dat',
       fileSize: payload.fileSize || 1024,
       receivedAt: Date.now(),
@@ -622,7 +706,7 @@ export class WebRTCPeerService {
 
   private handleTransferAcceptReceived(payload: Record<string, any>) {
     const id = payload.transferId;
-    if (this.role === 'offerer' && (this.transferId === id || !this.transferId)) {
+    if (this.role === 'offerer' && (this.transferId === id || (!this.transferId && payload.receiverConnectionId === this.targetConnectionId))) {
       this.transferId = id;
       this.clearSignalingTimeout();
       this.setState('SIGNALING');
@@ -655,23 +739,28 @@ export class WebRTCPeerService {
     this.clearSignalingTimeout();
     this.setState('CONNECTING');
 
+    const pc = this.initializePeerConnection(), transferId = this.transferId, generation = this.generation;
+    const current = () => this.pc === pc && this.transferId === transferId && this.generation === generation;
     try {
-      const pc = this.initializePeerConnection();
       await pc.setRemoteDescription(new RTCSessionDescription({
         type: 'offer',
         sdp: payload.sdp.sdp,
       }));
 
       await this.drainEarlyCandidates();
+      if (!current()) return;
 
       const answer = await pc.createAnswer();
+      if (!current()) return;
       await pc.setLocalDescription(answer);
+      if (!current()) return;
 
       this.realtimeClient.sendEnvelope({
         type: 'webrtc.answer',
         requestId: `ans-${Date.now()}`,
         payload: {
           transferId: this.transferId,
+          generation: this.generation,
           toConnectionId: this.targetConnectionId,
           sdp: {
             type: answer.type,
@@ -682,6 +771,7 @@ export class WebRTCPeerService {
 
       this.startSignalingTimeout();
     } catch (err: any) {
+      if (!current()) return;
       this.setState('FAILED', `Lỗi xử lý Offer: ${err?.message || err}`);
       this.cleanupPeerResources();
     }
@@ -694,14 +784,18 @@ export class WebRTCPeerService {
     this.clearSignalingTimeout();
     this.setState('CONNECTING');
 
+    const pc = this.pc, transferId = this.transferId, generation = this.generation;
+    const current = () => this.pc === pc && this.transferId === transferId && this.generation === generation;
     try {
-      await this.pc.setRemoteDescription(new RTCSessionDescription({
+      await pc.setRemoteDescription(new RTCSessionDescription({
         type: 'answer',
         sdp: payload.sdp.sdp,
       }));
+      if (!current()) return;
 
       await this.drainEarlyCandidates();
     } catch (err: any) {
+      if (!current()) return;
       this.setState('FAILED', `Lỗi xử lý Answer: ${err?.message || err}`);
       this.cleanupPeerResources();
     }
@@ -709,15 +803,15 @@ export class WebRTCPeerService {
 
   private async handleIceCandidateReceived(payload: Record<string, any>) {
     const candidateInit = payload.candidate as RTCIceCandidateInit | null;
-    if (!candidateInit) return;
+    if (!Object.prototype.hasOwnProperty.call(payload, 'candidate')) return;
 
     if (!this.pc || !this.pc.remoteDescription) {
-      this.earlyCandidatesQueue.push(candidateInit);
+      this.earlyCandidatesQueue.push(candidateInit as RTCIceCandidateInit);
       return;
     }
 
     try {
-      await this.pc.addIceCandidate(new RTCIceCandidate(candidateInit));
+      await this.pc.addIceCandidate(candidateInit === null ? undefined : new RTCIceCandidate(candidateInit));
     } catch (err) {
       console.warn('[WebRTCPeerService] Bỏ qua candidate không hợp lệ', err);
     }
@@ -745,18 +839,19 @@ export class WebRTCPeerService {
     this.pc = pc;
 
     pc.onicecandidate = event => {
-      if (event.candidate && this.transferId && this.targetConnectionId) {
+      if (this.transferId && this.targetConnectionId) {
         this.realtimeClient.sendEnvelope({
           type: 'webrtc.candidate',
           payload: {
             transferId: this.transferId,
+            generation: this.generation,
             toConnectionId: this.targetConnectionId,
-            candidate: {
+            candidate: event.candidate ? {
               candidate: event.candidate.candidate,
               sdpMid: event.candidate.sdpMid,
               sdpMLineIndex: event.candidate.sdpMLineIndex,
               usernameFragment: event.candidate.usernameFragment,
-            },
+            } : null,
           },
         });
       }
@@ -765,6 +860,7 @@ export class WebRTCPeerService {
     pc.oniceconnectionstatechange = () => {
       this.emitDiagnostics();
       if (pc.iceConnectionState === 'failed') {
+        if (this.configOptions?.localUserId) { this.recoverIce(); return; }
         this.setState('FAILED', 'ICE kết nối thất bại (Direct LAN / STUN không thể thiết lập).');
         this.notifyConnectionStatus('failed');
       }
@@ -773,17 +869,21 @@ export class WebRTCPeerService {
     pc.onconnectionstatechange = () => {
       this.emitDiagnostics();
       if (pc.connectionState === 'connected') {
+        if (this.iceRecoveryTimer) clearTimeout(this.iceRecoveryTimer); this.iceRecoveryTimer = null;
         this.notifyConnectionStatus('connected');
       } else if (pc.connectionState === 'failed') {
+        if (this.configOptions?.localUserId) { this.recoverIce(); return; }
         this.setState('FAILED', 'Kết nối ngang hàng WebRTC thất bại.');
         this.notifyConnectionStatus('failed');
       } else if (pc.connectionState === 'disconnected') {
+        if (this.configOptions?.localUserId) { this.recoverIce(); return; }
         this.setState('DISCONNECTED', 'Kết nối ngang hàng bị ngắt.');
         this.notifyConnectionStatus('disconnected');
       }
     };
 
     pc.ondatachannel = event => {
+      if (event.channel.label === 'landrop-file-v2') { this.setupFileChannel(event.channel); return; }
       this.dataChannel = event.channel;
       this.setupDataChannel(event.channel);
     };
@@ -791,23 +891,30 @@ export class WebRTCPeerService {
     return pc;
   }
 
-  private async startOffererNegotiation() {
+  private async startOffererNegotiation(restart = false) {
+    const pc = this.initializePeerConnection(), transferId = this.transferId, generation = this.generation;
+    const current = () => this.pc === pc && this.transferId === transferId && this.generation === generation;
     try {
-      const pc = this.initializePeerConnection();
 
+      if (!restart) {
       this.dataChannel = pc.createDataChannel('landrop-p2p', {
         ordered: true,
       });
       this.setupDataChannel(this.dataChannel);
+      if (this.configOptions?.localUserId) this.setupFileChannel(pc.createDataChannel('landrop-file-v2', { ordered: true }));
+      }
 
-      const offer = await pc.createOffer();
+      const offer = await pc.createOffer(restart ? { iceRestart: true } : undefined);
+      if (!current()) return;
       await pc.setLocalDescription(offer);
+      if (!current()) return;
 
       this.realtimeClient.sendEnvelope({
         type: 'webrtc.offer',
         requestId: `off-${Date.now()}`,
         payload: {
           transferId: this.transferId,
+          generation: this.generation,
           toConnectionId: this.targetConnectionId,
           sdp: {
             type: offer.type,
@@ -818,6 +925,7 @@ export class WebRTCPeerService {
 
       this.startSignalingTimeout();
     } catch (err: any) {
+      if (!current()) return;
       this.setState('FAILED', `Khởi tạo Offer thất bại: ${err?.message || err}`);
       this.cleanupPeerResources();
     }
@@ -828,6 +936,7 @@ export class WebRTCPeerService {
     channel.bufferedAmountLowThreshold = BUFFERED_AMOUNT_LOW_THRESHOLD;
 
     channel.onopen = () => {
+      this.ensureReliable()?.attach(channel, this.fileChannel);
       this.clearSignalingTimeout();
       this.emitDiagnostics();
 
@@ -839,19 +948,25 @@ export class WebRTCPeerService {
     };
 
     channel.onmessage = event => {
+      if (this.reliable?.receive(event.data)) return;
       if (typeof event.data === 'string') {
         try {
           const msg = JSON.parse(event.data) as TechnicalDataMessage;
+          if (this.reliable && ['FILE_START', 'FILE_END', 'FILE_CANCEL', 'CHAT_MESSAGE', 'CHAT_ACK'].includes(msg.type)) {
+            this.lastError = 'Peer uses an older P2P protocol. Update both clients.'; this.emitDiagnostics(); return;
+          }
           this.handleDataChannelMessage(msg);
         } catch (err) {
           console.warn('[WebRTCPeerService] Non-JSON technical data channel message received', err);
         }
       } else if (event.data instanceof ArrayBuffer) {
+        if (this.reliable) return;
         this.handleBinaryChunk(event.data);
       }
     };
 
     channel.onclose = () => {
+      this.reliable?.detach();
       this.stopHeartbeat();
       this.handleChatTyping({ type: 'CHAT_TYPING', isTyping: false });
       this.emitDiagnostics();
@@ -868,6 +983,27 @@ export class WebRTCPeerService {
     };
   }
 
+  private setupFileChannel(channel: RTCDataChannel) {
+    this.fileChannel = channel; channel.binaryType = 'arraybuffer';
+    channel.onopen = () => this.ensureReliable()?.setFileChannel(channel);
+    channel.onmessage = event => { this.reliable?.receive(event.data); };
+    channel.onclose = () => { this.reliable?.detach(); };
+  }
+
+  public restartIce(): void {
+    if (this.transferId && this.role === 'offerer' && !this.iceRestartPending) {
+      this.iceRestartPending = true;
+      this.realtimeClient.sendEnvelope({ type: 'webrtc.restart', requestId: `restart-${this.transferId}-${Date.now()}`, payload: { transferId: this.transferId, generation: this.generation + 1 } });
+    }
+  }
+
+  private recoverIce(): void {
+    if (this.iceRecoveryTimer || this.iceRestartPending || !this.transferId) return;
+    this.setState('CONNECTING', 'Network interrupted. Recovering the peer connection.');
+    this.notifyConnectionStatus('disconnected'); this.startSignalingTimeout();
+    if (this.role === 'offerer') this.iceRecoveryTimer = setTimeout(() => { this.iceRecoveryTimer = null; this.restartIce(); }, 3000);
+  }
+
   private async drainEarlyCandidates() {
     if (!this.pc || !this.pc.remoteDescription) return;
     const queued = [...this.earlyCandidatesQueue];
@@ -875,7 +1011,7 @@ export class WebRTCPeerService {
 
     for (const cand of queued) {
       try {
-        await this.pc.addIceCandidate(new RTCIceCandidate(cand));
+        await this.pc.addIceCandidate(cand === null ? undefined : new RTCIceCandidate(cand));
       } catch (err) {
         console.warn('[WebRTCPeerService] Lỗi thêm candidate trong hàng đợi', err);
       }
@@ -1231,6 +1367,8 @@ export class WebRTCPeerService {
   }
 
   public async sendFile(file: File): Promise<void> {
+    const reliable = this.ensureReliable();
+    if (reliable) { await reliable.enqueueFile(file); return; }
     if (!this.dataChannel || this.dataChannel.readyState !== 'open') {
       throw new Error('Kênh dữ liệu WebRTC chưa mở. Vui lòng kết nối với thiết bị trước.');
     }
@@ -1397,7 +1535,8 @@ export class WebRTCPeerService {
     this.emitQuickText(item);
   }
 
-  public sendChatMessage(text: string, replyToId?: string): P2PChatMessage {
+  public sendChatMessage(text: string, replyToId?: string): P2PChatMessage | Promise<P2PChatMessage> {
+    const reliable = this.ensureReliable(); if (reliable) { this.sendChatTyping(false); return reliable.sendChat(text, replyToId); }
     if (this.dataChannel && this.dataChannel.readyState === 'closed') {
       throw new Error('Kênh dữ liệu WebRTC đã đóng.');
     }
@@ -1467,6 +1606,8 @@ export class WebRTCPeerService {
   private startHeartbeat() {
     this.stopHeartbeat();
     this.pingIntervalTimer = setInterval(() => {
+      if (this.leaseDeadline && Date.now() >= this.leaseDeadline) { this.setState('TIMEOUT', 'Peer authorization lease expired. Reconnect to continue.'); this.cleanupPeerResources(); return; }
+      if (this.coordinatedConnected && this.transferId) this.realtimeClient.sendEnvelope({ type: 'transfer.renew', requestId: `renew-${this.transferId}-${Date.now()}`, payload: { transferId: this.transferId } });
       if (this.dataChannel && this.dataChannel.readyState === 'open') {
         this.sendTechnicalPing();
       }
@@ -1515,6 +1656,7 @@ export class WebRTCPeerService {
   }
 
   private saveChatHistory() {
+    if (this.configOptions?.localUserId) return;
     if (typeof localStorage === 'undefined') return;
     try {
       const key = this.getStorageKey();
@@ -1529,6 +1671,7 @@ export class WebRTCPeerService {
   }
 
   public loadChatHistory(): void {
+    if (this.configOptions?.localUserId) return;
     if (typeof localStorage === 'undefined') return;
     try {
       const key = this.getStorageKey();
@@ -1561,6 +1704,7 @@ export class WebRTCPeerService {
   }
 
   public clearChatMessages(): void {
+    if (this.reliable) { void this.reliable.clearChat().catch(error => { this.lastError = String(error); this.emitDiagnostics(); }); }
     this.chatMessages = [];
     if (typeof localStorage !== 'undefined') {
       try {
@@ -1575,6 +1719,7 @@ export class WebRTCPeerService {
         type: 'webrtc.connection-status',
         payload: {
           transferId: this.transferId,
+          generation: this.generation,
           status,
         },
       });
@@ -1619,6 +1764,10 @@ export class WebRTCPeerService {
   }
 
   private cleanupPeerResources() {
+    if (this.iceRecoveryTimer) clearTimeout(this.iceRecoveryTimer); this.iceRecoveryTimer = null;
+    this.iceRestartPending = false; this.leaseDeadline = 0;
+    this.reliable?.detach(); this.generation = 0; this.coordinatedConnected = false;
+    if (this.fileChannel) { this.fileChannel.onclose = null; this.fileChannel.onmessage = null; this.fileChannel.onopen = null; this.fileChannel.close(); this.fileChannel = null; }
     this.clearSignalingTimeout();
     this.clearPingTimeout();
     this.stopHeartbeat();

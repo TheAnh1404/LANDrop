@@ -5,9 +5,10 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import { build } from 'esbuild';
 
 const folder = path.dirname(fileURLToPath(import.meta.url));
-const output = path.resolve(folder, '../../tmp/frontend-webrtc-tests');
+const output = path.resolve(folder, '../node_modules/.cache/webrtc-tests');
 fs.mkdirSync(output, { recursive: true });
 
 const require = createRequire(import.meta.url);
@@ -15,6 +16,10 @@ const require = createRequire(import.meta.url);
 // Transpile dependencies to CommonJS in scratch directory preserving relative paths
 fs.mkdirSync(path.join(output, 'realtime'), { recursive: true });
 fs.mkdirSync(path.join(output, 'webrtc'), { recursive: true });
+fs.mkdirSync(path.join(output, 'p2p'), { recursive: true });
+await build({ entryPoints: [path.resolve(folder, '../lib/p2p/engine.js')], outfile: path.join(output, 'p2p/engine.js'), bundle: true, platform: 'node', format: 'cjs' });
+await build({ entryPoints: [path.resolve(folder, '../lib/p2p/browser-adapter.ts')], outfile: path.join(output, 'p2p/browser-adapter.js'), bundle: true, platform: 'node', format: 'cjs' });
+const { BrowserPeerManager } = require(path.join(output, 'p2p/browser-adapter.js'));
 
 for (const file of [
   { src: '../lib/realtime/config.ts', dest: 'realtime/config.js' },
@@ -275,6 +280,60 @@ test('WebRTCPeerService starts in IDLE state with clear diagnostics', () => {
   assert.equal(diag.roundTripLatencyMs, null);
   assert.equal(diag.lastError, null);
   assert.ok(!('sdp' in diag), 'Diagnostics must not expose raw SDP');
+});
+
+test('generation isolates stale candidates and renewal ACK remains valid after ICE restart', () => {
+  const { client } = createConnectedRealtimeClient('conn-self'), service = createService(client);
+  service.transferId = 'session-a'; service.generation = 2;
+  service.handleIncomingEnvelope({ type: 'webrtc.candidate', payload: { transferId: 'session-b', generation: 2, candidate: { candidate: 'other' } } });
+  service.handleIncomingEnvelope({ type: 'webrtc.candidate', payload: { transferId: 'session-a', generation: 1, candidate: { candidate: 'stale' } } });
+  assert.equal(service.earlyCandidatesQueue.length, 0);
+  service.handleIncomingEnvelope({ type: 'webrtc.candidate', payload: { transferId: 'session-a', generation: 2, candidate: null } });
+  assert.deepEqual(service.earlyCandidatesQueue, [null]);
+  const deadline = new Date(Date.now() + 120000).toISOString();
+  service.handleIncomingEnvelope({ type: 'transfer.renew_ack', payload: { transferId: 'session-a', expiresAt: deadline } });
+  assert.equal(service.leaseDeadline, Date.parse(deadline));
+  const clockSkew = Date.now() - 300000;
+  service.handleIncomingEnvelope({ type: 'transfer.renew_ack', timestamp: new Date(clockSkew).toISOString(), payload: { transferId: 'session-a', expiresAt: new Date(clockSkew + 120000).toISOString() } });
+  assert.ok(Math.abs(service.leaseDeadline - Date.now() - 120000) < 1000, 'Server/client clock skew must not expire a renewed lease early');
+});
+
+test('renew authorization failure tears down only the matching peer session', () => {
+  const { client } = createConnectedRealtimeClient('conn-self'), service = createService(client);
+  service.transferId = 'session-a';
+  service.handleIncomingEnvelope({ type: 'error', requestId: 'renew-session-b-1', error: { code: 'FORBIDDEN', message: 'Other peer' } });
+  assert.equal(service.getState(), 'IDLE');
+  service.handleIncomingEnvelope({ type: 'error', requestId: 'renew-session-a-1', error: { code: 'FORBIDDEN', message: 'Membership ended' } });
+  assert.equal(service.getState(), 'FAILED'); assert.equal(service.getDiagnostics().lastError, 'Membership ended');
+});
+
+test('late offer creation after cancellation cannot send SDP or resurrect negotiation timers', async () => {
+  const { client, ws } = createConnectedRealtimeClient('conn-self'), service = createService(client);
+  service.transferId = 'session-a'; service.role = 'offerer';
+  const pc = service.initializePeerConnection(); let resolveOffer;
+  pc.createOffer = () => new Promise(resolve => { resolveOffer = resolve; });
+  const operation = service.startOffererNegotiation();
+  service.cancelConnection();
+  resolveOffer({ type: 'offer', sdp: 'late' }); await operation;
+  assert.equal(service.getState(), 'CANCELLED'); assert.equal(service.signalingTimer, null);
+  assert.equal(ws.sent.some(packet => packet.type === 'webrtc.offer'), false);
+});
+
+test('shared browser manager keeps two peers alive when focus changes and refuses a third', async t => {
+  const sent = [];
+  const manager = new BrowserPeerManager({ userId: 'alice', name: 'Alice', serverUrl: 'https://lan.test', send: packet => { sent.push(packet); return true; }, connectionId: () => 'alice-connection', onChat() {}, onTasks() {}, onState() {}, onReceived() {}, onError() {} });
+  t.after(() => manager.dispose());
+  const peer = name => ({ connectionId: `${name}-connection`, userId: name, deviceId: `${name}-device`, displayName: name, deviceName: name, platform: 'browser' });
+  await manager.select(peer('bob'), 'workspace'); const first = manager.getService();
+  first.setState('CONNECTED'); const pc = first.initializePeerConnection();
+  const channel = new MockRTCDataChannel('control'); channel.readyState = 'open'; first.dataChannel = channel;
+  await manager.select(peer('carol'), 'workspace'); const second = manager.getService();
+  assert.notEqual(second, first); assert.equal(channel.readyState, 'open'); assert.notEqual(pc.signalingState, 'closed');
+  manager.handle({ type: 'transfer.status', payload: { transferId: 'carol-session', status: 'REQUESTED', receiverConnectionId: 'carol-connection' } });
+  assert.equal(second.getDiagnostics().transferId, 'carol-session'); assert.equal(first.getDiagnostics().transferId, null);
+  await assert.rejects(manager.select(peer('dave'), 'workspace'), /Two peer connections/);
+  await manager.select(peer('bob'), 'workspace'); assert.equal(manager.getService(), first);
+  assert.equal(sent.filter(packet => packet.type === 'transfer.request').length, 2);
 });
 
 function createChatPeer(connectionId) {

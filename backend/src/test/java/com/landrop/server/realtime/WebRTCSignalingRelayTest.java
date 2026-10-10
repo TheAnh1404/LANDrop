@@ -399,6 +399,54 @@ class WebRTCSignalingRelayTest {
         assertTrue(registry.get(b.connectionId()).isPresent());
     }
 
+    @Test void versionTwoRequestsAreIdempotentAndConflictingRetriesAreRejected() throws Exception {
+        Peer a = peer(), b = peer();
+        Map<String, Object> payload = requestPayload(b.connectionId()); payload.put("protocolVersion", 2);
+        command(a, "transfer.request", payload);
+        String id = event(a, "transfer.status").path("payload").path("transferId").asText();
+        event(b, "transfer.request");
+        command(a, "transfer.request", payload);
+        assertEquals(id, event(a, "transfer.status").path("payload").path("transferId").asText());
+        assertEquals(1, coordinator.size()); assertNull(b.socket().receive(100));
+        payload.put("fileName", "changed.txt"); error(a, "INVALID_PAYLOAD", "transfer.request", payload);
+    }
+
+    @Test void repeatedCancelReturnsTheSameTerminalStateWithoutDuplicateNotifications() throws Exception {
+        Peer a = peer(), b = peer(); String id = request(a, b); accept(a, b, id);
+        command(a, "transfer.cancel", Map.of("transferId", id)); event(a, "transfer.status"); event(b, "transfer.cancel");
+        command(a, "transfer.cancel", Map.of("transferId", id));
+        assertEquals("CANCELLED", event(a, "transfer.status").path("payload").path("status").asText());
+        assertNull(b.socket().receive(100));
+    }
+
+    @Test void connectedLeaseRenewsBeyondInitialDeadlineAndRechecksMembership() throws Exception {
+        Peer a = peer(), b = peer(); String id = request(a, b); accept(a, b, id); offer(a, b, id); answer(b, a, id);
+        relay(a, b, id, "webrtc.connection-status", "status", "connected");
+        relay(b, a, id, "webrtc.connection-status", "status", "connected"); event(a, "transfer.status"); event(b, "transfer.status");
+        now.updateAndGet(time -> time.plusSeconds(110));
+        command(a, "transfer.renew", Map.of("transferId", id));
+        assertEquals(now.get().plusSeconds(120).toString(), event(a, "transfer.renew_ack").path("payload").path("expiresAt").asText());
+        now.updateAndGet(time -> time.plusSeconds(20)); coordinator.sweepExpired();
+        assertEquals(TransferStatus.P2P_CONNECTED, coordinator.getTransfer(id).orElseThrow().status());
+        auth.members.remove(b.identity().user().id());
+        command(a, "transfer.renew", Map.of("transferId", id));
+        assertEquals("FAILED", event(a, "transfer.status").path("payload").path("status").asText());
+        assertEquals("FORBIDDEN", event(a, "error").path("error").path("code").asText());
+    }
+
+    @Test void iceRestartRequiresSenderAndRejectsStaleGenerationBeforeRelaying() throws Exception {
+        Peer a = peer(), b = peer(); String id = request(a, b); accept(a, b, id); offer(a, b, id); answer(b, a, id);
+        error(b, "FORBIDDEN", "webrtc.restart", Map.of("transferId", id, "generation", 1));
+        command(a, "webrtc.restart", Map.of("transferId", id, "generation", 1));
+        assertEquals(1, event(a, "webrtc.restart_ack").path("payload").path("generation").asInt());
+        assertEquals(1, event(b, "webrtc.restart").path("payload").path("generation").asInt());
+        error(a, "STALE_NEGOTIATION", "webrtc.candidate", Map.of("transferId", id, "candidate", candidate(), "generation", 0));
+        command(a, "webrtc.offer", Map.of("transferId", id, "generation", 1, "sdp", Map.of("type", "offer", "sdp", "v=0")));
+        event(a, "webrtc.offer_ack");
+        assertEquals(1, event(b, "webrtc.offer").path("payload").path("generation").asInt());
+        event(a, "transfer.status"); event(b, "transfer.status");
+    }
+
     @Test void acceptedTransferCannotBeRejectedAndReceiverMayCancel() throws Exception {
         Peer a = peer(), b = peer();
         String id = request(a, b);

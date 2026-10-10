@@ -1,5 +1,7 @@
 # Browser P2P chat and files
 
+**Protocol v1 reference.** The current authenticated Next.js and bundled clients use the shared [P2P v2 engine](P2P_DATA_CHANNEL_V2.md), including durable chat, consent, receiver completion receipts, SHA-256, OPFS and resume. The message formats and RAM-based file behavior below describe the legacy compatibility implementation; they are not the v2 transfer guarantee.
+
 The bundled `/client` page and Next.js transfer screen use an ordered WebRTC
 DataChannel for chat and file contents. Authenticate on the existing gateway and
 coordinate the connection through [REALTIME-02](REALTIME_02_SIGNALING_CONTRACT.md).

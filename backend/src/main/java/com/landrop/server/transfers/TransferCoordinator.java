@@ -11,6 +11,7 @@ import java.util.*;
 public class TransferCoordinator {
     private final ClientRegistry registry;
     private final Map<String, TransferRecord> transfers = new HashMap<>();
+    private final Map<String, Integer> generations = new HashMap<>();
     private final Clock clock;
     private final Duration lifetime;
     private final Duration retention;
@@ -53,6 +54,10 @@ public class TransferCoordinator {
     }
 
     public synchronized TransferRecord requireParticipant(String id, ClientConnection actor) {
+        return requireParticipant(id, actor, false);
+    }
+
+    public synchronized TransferRecord requireParticipant(String id, ClientConnection actor, boolean allowCancelled) {
         TransferRecord record = transfers.get(id);
         if (record == null) throw error("TRANSFER_NOT_FOUND", "Transfer does not exist.");
         boolean sender = record.senderConnectionId().equals(actor.connectionId())
@@ -60,6 +65,7 @@ public class TransferCoordinator {
         boolean receiver = record.receiverConnectionId().equals(actor.connectionId())
                 && Objects.equals(record.receiverUserId(), actor.userId()) && Objects.equals(record.receiverSessionId(), actor.sessionId());
         if (!sender && !receiver) throw error("FORBIDDEN", "Only the bound transfer participants may signal.");
+        if (allowCancelled && record.status() == TransferStatus.CANCELLED) return record;
         if (record.status() == TransferStatus.EXPIRED || !clock.instant().isBefore(record.expiresAt())) {
             throw error("TRANSFER_EXPIRED", "Signaling session expired; create a new transfer.");
         }
@@ -80,7 +86,26 @@ public class TransferCoordinator {
     }
 
     public synchronized TransferRecord cancelTransfer(TransferRecord record, String reason) {
+        if (record.status() == TransferStatus.CANCELLED) return record;
         return terminate(record, TransferStatus.CANCELLED, reason);
+    }
+
+    /** Authorization of both peers is rechecked by the gateway before extending a connected lease. */
+    public synchronized TransferRecord renew(TransferRecord record) {
+        requireState(record.status() == TransferStatus.P2P_CONNECTED);
+        return store(record.withExpiry(clock.instant().plus(lifetime), clock.instant()));
+    }
+
+    public synchronized int generation(String id) { return generations.getOrDefault(id, 0); }
+
+    public synchronized TransferRecord restart(TransferRecord record, ClientConnection actor, int nextGeneration) {
+        if (!record.senderConnectionId().equals(actor.connectionId())) throw error("FORBIDDEN", "Only the offerer may restart ICE.");
+        requireState(record.answerRelayed()
+                && (record.status() == TransferStatus.P2P_CONNECTED || record.status() == TransferStatus.CONNECTING)
+                && nextGeneration == generation(record.transferId()) + 1);
+        generations.put(record.transferId(), nextGeneration);
+        return store(record.withSignaling(TransferStatus.ACCEPTED, false, false, false, false)
+                .withExpiry(clock.instant().plus(lifetime), clock.instant()));
     }
 
     /** Gateway validates payload and both sessions/memberships before calling this method. */
@@ -132,7 +157,7 @@ public class TransferCoordinator {
         return affected;
     }
 
-    /** Fixed expiry includes P2P_CONNECTED; terminal tombstones have bounded retention. */
+    /** Expire unrenewed leases, including connected peers; retain terminal tombstones briefly. */
     public synchronized List<TransferRecord> sweepExpired() {
         Instant now = clock.instant();
         List<TransferRecord> expired = new ArrayList<>();
@@ -141,6 +166,7 @@ public class TransferCoordinator {
                 expired.add(terminate(record, TransferStatus.EXPIRED, "SIGNALING_TIMEOUT"));
             } else if (record.status().isTerminal() && !now.isBefore(record.updatedAt().plus(retention))) {
                 transfers.remove(record.transferId());
+                generations.remove(record.transferId());
             }
         }
         return expired;
@@ -152,7 +178,7 @@ public class TransferCoordinator {
     }
     public synchronized long countActiveTransfers() { return activeTransfers().size(); }
     public synchronized int size() { return transfers.size(); }
-    public synchronized void clear() { transfers.clear(); }
+    public synchronized void clear() { transfers.clear(); generations.clear(); }
 
     private TransferRecord terminate(TransferRecord record, TransferStatus status, String reason) {
         return store(new TransferRecord(record.transferId(), record.senderConnectionId(), record.receiverConnectionId(),

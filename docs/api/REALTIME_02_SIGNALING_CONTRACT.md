@@ -3,6 +3,8 @@
 Status: **AGREED**. Scope: REALTIME-02A backend signaling and temporary session coordination.
 Date: 2026-10-09. The user accepted the proposed Client contract before implementation in this session.
 
+**2026-10-10 extension:** [P2P v2](P2P_DATA_CHANNEL_V2.md) adds opt-in request idempotency (`payload.protocolVersion:2`), renewable connected leases, idempotent cancel and generation-checked ICE restart. Initial negotiation still expires; connected v2 clients renew rather than terminating at the original deadline. Gateway envelope version remains 1. Statements about fixed lifetime/no deduplication below describe clients that do not opt into the extension.
+
 This extends [REALTIME-01](REALTIME_01_CONTRACT.md) on `FoundationRealtimeServer`.
 Use the same socket, protocolVersion 1, `hello`, `auth`, `auth_ack`, heartbeat,
 Origin allowlist and authenticated session binding. No second gateway or protocol.

@@ -38,6 +38,7 @@ import {
 import { useDemoTransfers } from '@/lib/transfer/demo-provider';
 import { useSession } from '@/lib/session/session-provider';
 import { useWebRTC } from '@/lib/webrtc/webrtc-provider';
+import { ReliableTransferPanel } from './reliable-transfer-panel';
 import type { OnlinePeerItem, WebRTCPeerState } from '@/lib/webrtc/types';
 import type { WireMember } from '@/lib/api/models';
 import { errorMessage } from '@/lib/api/client';
@@ -183,6 +184,8 @@ export function TransfersScreen({ id }: { id: string }) {
     fetchOnlinePeers,
     clearReceivedFiles,
     clearQuickMessages,
+    retryMessage,
+    cancelMessage,
   } = useWebRTC();
 
   // Navigation tab: 'chat' (Dual-Pane Web App), 'send' (File Drop), 'text' (Quick Text), 'received' (Inbox), 'lookup' (UUID Audit)
@@ -232,6 +235,16 @@ export function TransfersScreen({ id }: { id: string }) {
   const pendingFileToSendRef = useRef<File | null>(null);
   const pendingChatToSendRef = useRef<string | null>(null);
 
+  useEffect(() => {
+    if (mode !== 'live' || !diagnostics.targetConnectionId) return;
+    setManualConnectionId(diagnostics.targetConnectionId);
+    setSelectedPeer(onlinePeers.find(peer => peer.connectionId === diagnostics.targetConnectionId) || {
+      connectionId: diagnostics.targetConnectionId, userId: diagnostics.targetUserId,
+      displayName: diagnostics.targetDeviceName || 'Thiết bị LAN', deviceName: diagnostics.targetDeviceName || 'Thiết bị LAN', platform: 'browser',
+    });
+    setShowMobilePeerList(false);
+  }, [mode, diagnostics.targetConnectionId]);
+
   // Periodic peer scan in live mode
   useEffect(() => {
     if (mode !== 'live') return;
@@ -260,7 +273,7 @@ export function TransfersScreen({ id }: { id: string }) {
       const msg = pendingChatToSendRef.current;
       pendingChatToSendRef.current = null;
       try {
-        sendChatMessage(msg);
+        void sendChatMessage(msg).catch(err => setTransferError(errorMessage(err)));
       } catch (err) {
         setTransferError(errorMessage(err));
       }
@@ -311,24 +324,18 @@ export function TransfersScreen({ id }: { id: string }) {
   };
 
   // Send Chat Message Action
-  const handleSendChat = (e?: React.FormEvent) => {
+  const handleSendChat = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const text = chatInput.trim();
     if (!text) return;
 
-    if (peerState !== 'CONNECTED') {
+    if (peerState !== 'CONNECTED' || diagnostics.targetConnectionId !== (selectedPeer?.connectionId || manualConnectionId.trim())) {
       const targetConnId = selectedPeer?.connectionId || manualConnectionId.trim();
       if (!targetConnId) {
         setTransferError('Vui lòng chọn thiết bị nhận từ Radar trước khi gửi tin nhắn.');
         return;
       }
-      pendingChatToSendRef.current = text;
-      setChatInput('');
-      setTransferError('');
-      if (peerState === 'IDLE' || peerState === 'DISCONNECTED') {
-        void handleConnectPeer();
-      }
-      return;
+      if (!await handleConnectPeer()) return;
     }
 
     try {
@@ -336,7 +343,7 @@ export function TransfersScreen({ id }: { id: string }) {
         clearTimeout(typingTimeoutRef.current);
         sendChatTyping(false);
       }
-      sendChatMessage(text);
+      await sendChatMessage(text);
       setChatInput('');
       setTransferError('');
     } catch (err) {
@@ -355,10 +362,9 @@ export function TransfersScreen({ id }: { id: string }) {
     setTransferError('');
     setIsSending(true);
     try {
-      if (peerState === 'CONNECTED') {
+      if (peerState === 'CONNECTED' && diagnostics.targetConnectionId === targetConnId) {
         await sendFile(file);
       } else {
-        pendingFileToSendRef.current = file;
         await requestP2P({
           workspaceId: id,
           receiverConnectionId: targetConnId,
@@ -366,6 +372,7 @@ export function TransfersScreen({ id }: { id: string }) {
           fileName: file.name,
           fileSize: file.size,
         });
+        await sendFile(file);
       }
     } catch (err) {
       pendingFileToSendRef.current = null;
@@ -388,14 +395,14 @@ export function TransfersScreen({ id }: { id: string }) {
     e.preventDefault();
     setIsChatDragging(false);
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
-      await handleSendFileDirect(e.dataTransfer.files[0]);
+      for (const file of Array.from(e.dataTransfer.files)) await handleSendFileDirect(file);
     }
   };
 
   // Manual connect trigger
   const handleConnectPeer = async () => {
     const targetConnId = selectedPeer?.connectionId || manualConnectionId.trim();
-    if (!targetConnId) return;
+    if (!targetConnId) return false;
     try {
       setTransferError('');
       await requestP2P({
@@ -403,8 +410,10 @@ export function TransfersScreen({ id }: { id: string }) {
         receiverConnectionId: targetConnId,
         targetDeviceName: selectedPeer?.deviceName || 'Thiết bị đối phương',
       });
+      return true;
     } catch (err) {
       setTransferError(errorMessage(err));
+      return false;
     }
   };
 
@@ -436,28 +445,24 @@ export function TransfersScreen({ id }: { id: string }) {
     if (diagnostics.targetConnectionId && diagnostics.targetConnectionId !== peer.connectionId) {
       pendingFileToSendRef.current = null;
       pendingChatToSendRef.current = null;
-      cancelConnection('Chuyển sang thiết bị khác');
-      clearChatMessages();
       setChatInput('');
     }
     setSelectedPeer(peer);
     setManualConnectionId(peer.connectionId);
     setShowMobilePeerList(false);
     setTransferError('');
-    if (peerState === 'IDLE' || peerState === 'DISCONNECTED') {
+    {
       void requestP2P({
         workspaceId: id,
         receiverConnectionId: peer.connectionId,
         targetDeviceName: peer.deviceName || 'Thiết bị đối phương',
-      });
+      }).catch(err => setTransferError(errorMessage(err)));
     }
   };
 
   const handleManualConnectionChange = (value: string) => {
     if (diagnostics.targetConnectionId && diagnostics.targetConnectionId !== value.trim()) {
       pendingFileToSendRef.current = null;
-      cancelConnection('Thay đổi thiết bị nhận');
-      clearChatMessages();
       setChatInput('');
     }
     setManualConnectionId(value);
@@ -509,7 +514,6 @@ export function TransfersScreen({ id }: { id: string }) {
         await sendFile(selectedFile);
       } else {
         // Need to initiate P2P handshake first: queue file to auto-send on open
-        pendingFileToSendRef.current = selectedFile;
         await requestP2P({
           workspaceId: id,
           receiverConnectionId: targetConnId,
@@ -517,6 +521,7 @@ export function TransfersScreen({ id }: { id: string }) {
           fileName: selectedFile.name,
           fileSize: selectedFile.size,
         });
+        await sendFile(selectedFile);
       }
     } catch (err) {
       pendingFileToSendRef.current = null;
@@ -555,7 +560,7 @@ export function TransfersScreen({ id }: { id: string }) {
   );
 
   return (
-    <div className="space-y-6 max-w-7xl mx-auto px-1 sm:px-2 pb-12">
+    <div className="p2p-screen space-y-6 max-w-7xl mx-auto rounded-3xl bg-slate-950 p-4 sm:p-6 pb-8 text-slate-100 shadow-xl">
       {/* ========================================================================= */}
       {/* 1. Header & Quick Status Strip */}
       {/* ========================================================================= */}
@@ -566,10 +571,10 @@ export function TransfersScreen({ id }: { id: string }) {
             <span>WebRTC LAN High-Speed Engine</span>
           </div>
           <h1 className="text-2xl sm:text-3xl font-extrabold text-slate-100 tracking-tight mt-1">
-            Truyền tệp & Ghi nhớ Realtime
+            Chat LAN. Tệp trọn vẹn.
           </h1>
           <p className="text-sm text-slate-400 mt-1">
-            Chia sẻ tệp ngang hàng (P2P) dung lượng không giới hạn và văn bản tức thì không cần internet.
+            Chat trực tiếp và chuyển tệp trong LAN, có xác minh nội dung và tiếp tục khi gián đoạn.
           </p>
         </div>
 
@@ -597,6 +602,7 @@ export function TransfersScreen({ id }: { id: string }) {
       {/* ========================================================================= */}
       {/* 2. Incoming Transfer Request Banner (Instant Glass Banner) */}
       {/* ========================================================================= */}
+      {mode === 'live' && <ReliableTransferPanel canSend={!!(selectedPeer?.connectionId || manualConnectionId.trim())} onFiles={async files => { for (const file of files) await handleSendFileDirect(file); }} />}
       {incomingRequest && (
         <div className="p-4 sm:p-5 border border-cyan-500/40 bg-gradient-to-r from-cyan-950/40 to-slate-900/60 backdrop-blur-lg rounded-2xl shadow-xl space-y-3 animate-in fade-in slide-in-from-top-4 duration-300">
           <div className="flex items-center justify-between">
@@ -717,8 +723,8 @@ export function TransfersScreen({ id }: { id: string }) {
       {/* ========================================================================= */}
       {/* 4. Navigation Tabs */}
       {/* ========================================================================= */}
-      <div className="flex items-center justify-between border-b border-slate-800 pb-2 overflow-x-auto">
-        <div className="flex items-center gap-2 p-1 bg-slate-900/70 border border-slate-800/80 rounded-xl">
+      <div className="flex min-w-0 items-center justify-between border-b border-slate-800 pb-2 overflow-x-auto">
+        <div className="flex shrink-0 items-center gap-2 p-1 bg-slate-900/70 border border-slate-800/80 rounded-xl whitespace-nowrap [&_button]:shrink-0">
           <button
             type="button"
             onClick={() => setActiveTab('chat')}
@@ -1008,7 +1014,7 @@ export function TransfersScreen({ id }: { id: string }) {
                     Phòng Trò Chuyện & Truyền Tệp P2P Trực Tiếp
                   </strong>
                   <p className="text-xs sm:text-sm text-slate-400 leading-relaxed">
-                    Chọn một thiết bị từ danh sách Radar bên trái để bắt đầu nhắn tin tức thì, chia sẻ liên kết và kéo thả tệp tin không giới hạn dung lượng.
+                    Chọn một thiết bị để nhắn tin trực tiếp và gửi tệp. Người nhận xác nhận trước khi truyền; nội dung được kiểm tra trước khi hoàn tất.
                   </p>
                 </div>
                 <div className="pt-2 flex flex-wrap justify-center gap-2.5 text-xs text-slate-400">
@@ -1040,8 +1046,8 @@ export function TransfersScreen({ id }: { id: string }) {
                 )}
 
                 {/* 1. Chat Header */}
-                <div className="p-3.5 sm:p-4 bg-slate-950/70 border-b border-slate-800/80 flex items-center justify-between gap-3 shrink-0">
-                  <div className="flex items-center gap-2.5 min-w-0">
+                <div className="p-3.5 sm:p-4 bg-slate-950/70 border-b border-slate-800/80 flex flex-wrap items-center justify-between gap-3 shrink-0">
+                  <div className="flex flex-1 items-center gap-2.5 min-w-0">
                     <button
                       type="button"
                       onClick={() => setShowMobilePeerList(true)}
@@ -1070,7 +1076,7 @@ export function TransfersScreen({ id }: { id: string }) {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
+                  <div className="flex w-full sm:w-auto flex-wrap items-center gap-2 shrink-0">
                     <Tag tone={peerStateTone[peerState]}>{peerStateLabel[peerState]}</Tag>
 
                     {chatMessages.length > 0 && (
@@ -1176,6 +1182,8 @@ export function TransfersScreen({ id }: { id: string }) {
 
                               {/* Message Delivery Checkmark & Copy Action */}
                               <div className="flex items-center justify-end gap-1 text-[10px] mt-1 opacity-75">
+                                {isMe && !msg.ack && msg.status !== 'cancelled' && <><button onClick={() => void retryMessage(msg.id).catch(err => setTransferError(errorMessage(err)))} className="underline">Gửi lại</button><button onClick={() => void cancelMessage(msg.id).catch(err => setTransferError(errorMessage(err)))} className="ml-2 underline">Hủy</button></>}
+                                {isMe && msg.status === 'cancelled' && <span>Đã hủy gửi</span>}
                                 {isMe && (
                                   <span title={msg.pending ? 'Đang chờ gửi (Pending)' : (msg.ack ? 'Đã nhận (Delivered)' : 'Đã gửi (Sent)')}>
                                     {msg.pending ? '🕒' : (msg.ack ? '✓✓' : '✓')}

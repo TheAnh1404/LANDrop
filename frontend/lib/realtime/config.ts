@@ -12,6 +12,8 @@ export function resolveWebSocketUrl(serverHttpUrl: string): string {
     const url = new URL(raw);
     const isSecure = url.protocol === 'https:';
     const wsProtocol = isSecure ? 'wss:' : 'ws:';
+    // HTTPS is served through the secure LAN proxy on the same origin, including custom ports.
+    if (isSecure) return `${wsProtocol}//${url.host}/ws`;
 
     // Reverse-proxy / same-origin production deployment without port
     if (!url.port || url.port === '80' || url.port === '443') {

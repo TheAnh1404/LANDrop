@@ -7,6 +7,10 @@
 export interface WebRTCConfigurationOptions {
   iceServers?: RTCIceServer[];
   iceCandidatePoolSize?: number;
+  localUserId?: string;
+  localName?: string;
+  serverUrl?: string;
+  managed?: boolean;
 }
 
 export function getDefaultIceServers(): RTCIceServer[] {

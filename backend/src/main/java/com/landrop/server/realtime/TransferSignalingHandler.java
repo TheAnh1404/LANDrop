@@ -21,6 +21,7 @@ public final class TransferSignalingHandler {
     private final Predicate<ClientConnection> validSession;
     private final BiPredicate<ClientConnection, EventEnvelope> send;
     private volatile WorkspaceRepository workspaceRepository;
+    private final Map<String, String> requestIds = new HashMap<>();
 
     public TransferSignalingHandler(ClientRegistry registry, TransferCoordinator coordinator,
                                      Predicate<ClientConnection> validSession,
@@ -44,11 +45,35 @@ public final class TransferSignalingHandler {
                     return;
                 }
                 String id = text(payload, "transferId");
-                TransferRecord record = coordinator.requireParticipant(id, actor);
+                TransferRecord record = coordinator.requireParticipant(id, actor, EVENT_TRANSFER_CANCEL.equals(type));
                 if (payload.has("toConnectionId") && !peerId(record, actor).equals(text(payload, "toConnectionId"))) {
                     throw error("FORBIDDEN", "Destination must be the bound peer.");
                 }
+                if (EVENT_TRANSFER_CANCEL.equals(type)) {
+                    if (!member(record.workspaceId(), actor.userId())) throw error("FORBIDDEN", "Workspace access is no longer available.");
+                    TransferRecord cancelled = coordinator.cancelTransfer(record, reason(payload, "Cancelled by peer"));
+                    status(actor, cancelled, requestId);
+                    ClientConnection target = registry.get(peerId(record, actor)).orElse(null);
+                    if (record.status() != TransferStatus.CANCELLED && canNotify(cancelled, target)) {
+                        send.test(target, EventEnvelope.event(type, requestId, metadata(cancelled)));
+                    }
+                    return;
+                }
                 ClientConnection peer = authorizePeers(record, actor);
+                if ("transfer.renew".equals(type)) {
+                    TransferRecord renewed = coordinator.renew(record);
+                    send.test(actor, EventEnvelope.event("transfer.renew_ack", requestId, metadata(renewed)));
+                    return;
+                }
+                if ("webrtc.restart".equals(type)) {
+                    int generation = generation(payload);
+                    TransferRecord restarted = coordinator.restart(record, actor, generation);
+                    Map<String, Object> info = new LinkedHashMap<>(metadata(restarted));
+                    info.put("generation", generation);
+                    if (!send.test(peer, EventEnvelope.event(type, requestId, info))) { deliveryFailed(restarted); return; }
+                    send.test(actor, EventEnvelope.event("webrtc.restart_ack", requestId, info));
+                    return;
+                }
                 TransferRecord updated;
                 switch (type) {
                     case EVENT_TRANSFER_ACCEPT -> updated = coordinator.acceptTransfer(record, actor);
@@ -83,7 +108,21 @@ public final class TransferSignalingHandler {
         }
         JsonNode size = payload.path("fileSize");
         if (!size.isIntegralNumber() || !size.canConvertToLong()) throw error(ERR_INVALID_PAYLOAD, "fileSize must be an integer.");
+        String key = sender.connectionId() + ":" + requestId;
+        boolean deduplicate = payload.path("protocolVersion").asInt() == 2 && requestId != null && !requestId.isBlank() && requestId.length() <= 128;
+        if (deduplicate && requestIds.containsKey(key)) {
+            TransferRecord previous = coordinator.getTransfer(requestIds.get(key)).orElse(null);
+            if (previous != null) {
+                if (!previous.receiverConnectionId().equals(target) || !previous.workspaceId().equals(workspace)
+                        || previous.fileSize() != size.longValue() || !previous.fileName().equals(text(payload, "fileName"))) {
+                    throw error(ERR_INVALID_PAYLOAD, "requestId conflicts with another transfer request.");
+                }
+                status(sender, previous, requestId);
+                return;
+            }
+        }
         TransferRecord record = coordinator.requestTransfer(sender, receiver, workspace, text(payload, "fileName"), size.longValue());
+        if (deduplicate) requestIds.put(key, record.transferId());
         if (!send.test(receiver, EventEnvelope.event(EVENT_TRANSFER_REQUEST, requestId, metadata(record)))) {
             deliveryFailed(record);
             throw error(ERR_RECEIVER_NOT_FOUND, "Receiver disconnected before delivery.");
@@ -96,6 +135,9 @@ public final class TransferSignalingHandler {
         String kind;
         Map<String, Object> forwarded = new LinkedHashMap<>();
         String connectionStatus = null;
+        int generation = generation(payload);
+        if (generation != coordinator.generation(record.transferId())) throw error("STALE_NEGOTIATION", "Discard signaling from an older negotiation.");
+        if (payload.has("generation")) forwarded.put("generation", generation);
         switch (event) {
             case EVENT_WEBRTC_OFFER, EVENT_WEBRTC_ANSWER -> {
                 kind = EVENT_WEBRTC_OFFER.equals(event) ? "offer" : "answer";
@@ -184,6 +226,7 @@ public final class TransferSignalingHandler {
 
     public void sweep() {
         synchronized (coordinator) {
+            requestIds.entrySet().removeIf(entry -> coordinator.getTransfer(entry.getValue()).isEmpty());
             for (TransferRecord record : coordinator.sweepExpired()) notifyStatus(record);
             for (TransferRecord record : coordinator.activeTransfers()) {
                 ClientConnection sender = registry.get(record.senderConnectionId()).orElse(null);
@@ -226,7 +269,7 @@ public final class TransferSignalingHandler {
     private void status(ClientConnection c, TransferRecord r, String requestId) {
         send.test(c, EventEnvelope.event(EVENT_TRANSFER_STATUS, requestId, metadata(r)));
     }
-    private static Map<String, Object> metadata(TransferRecord r) {
+    private Map<String, Object> metadata(TransferRecord r) {
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("transferId", r.transferId());
         result.put("workspaceId", r.workspaceId().toString());
@@ -234,6 +277,8 @@ public final class TransferSignalingHandler {
         result.put("senderConnectionId", r.senderConnectionId());
         result.put("receiverUserId", r.receiverUserId().toString());
         result.put("receiverConnectionId", r.receiverConnectionId());
+        registry.get(r.senderConnectionId()).ifPresent(peer -> { result.put("senderDeviceId", peer.deviceId()); result.put("senderDeviceName", peer.deviceName()); });
+        registry.get(r.receiverConnectionId()).ifPresent(peer -> { result.put("receiverDeviceId", peer.deviceId()); result.put("receiverDeviceName", peer.deviceName()); });
         result.put("fileName", r.fileName());
         result.put("fileSize", r.fileSize());
         result.put("status", r.status().name());
@@ -251,6 +296,12 @@ public final class TransferSignalingHandler {
             throw error(ERR_INVALID_PAYLOAD, "A valid " + field + " is required.");
         }
         return value.textValue();
+    }
+    private static int generation(JsonNode payload) {
+        JsonNode value = payload.get("generation");
+        if (value == null) return 0;
+        if (!value.isIntegralNumber() || !value.canConvertToInt() || value.intValue() < 0) throw error(ERR_INVALID_PAYLOAD, "Invalid negotiation generation.");
+        return value.intValue();
     }
     private static String reason(JsonNode payload, String fallback) {
         return payload.has("reason") ? text(payload, "reason") : fallback;

@@ -1,6 +1,6 @@
 # Kế hoạch nâng cấp P2P chat và chuyển tệp trong LAN
 
-Ngày: 2026-10-10. Trạng thái: đề xuất triển khai; các giao thức dưới đây chưa được áp dụng.
+Ngày: 2026-10-10. Trạng thái: đã triển khai các hạng mục P1–P5; xem [báo cáo triển khai và kiểm chứng](P2P_IMPLEMENTATION_REPORT.md). Nội dung đề xuất ban đầu bên dưới được giữ để đối chiếu; tên message/giới hạn thực tế tại [contract v2](../api/P2P_DATA_CHANNEL_V2.md). Nghiệm thu hai máy LAN, 30 phút và 10 GiB còn chờ đo thực tế.
 Phạm vi người dùng chọn: **LAN trước — ổn định, tệp lớn, resume**.
 
 ## Kết quả cần đạt

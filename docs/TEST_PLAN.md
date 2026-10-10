@@ -1,5 +1,15 @@
 # Kế hoạch kiểm thử LANDrop
 
+## Browser P2P v2
+
+- `npm --prefix frontend test`: API/realtime/WebRTC và contract engine v2; kiểm tra outbox 100 tin, ACK thất lạc, lưu trữ lỗi, consent/reject, cancel hai đầu, block lỗi, COMPLETE replay, pause ACK, file nguồn thay đổi và offset >4 GiB.
+- `npm run p2p:check`: bundle và worker của Next.js/Java phải khớp source.
+- `npm run test:p2p:browser`: hai Chrome context cô lập, WebRTC/IndexedDB/OPFS thật, pause/reload/resume, full hash, tải lại tệp sau reload và ACK chat khi truyền. Chọn `LANDROP_TEST_MIB`; mặc định 128 MiB.
+- `npm run test:p2p:live`: Next.js ↔ `/client`, gateway/PostgreSQL test thật, HTTPS/WSS, consent, so byte tải xuống, renew vượt TTL ban đầu và screenshot desktop/mobile. Cần backend/database test riêng; cấu hình tại [P2P_LAN](guides/P2P_LAN.md).
+- TLS proxy integration trong `npm test` cần `LANDROP_TEST_CERT`/`LANDROP_TEST_KEY`; báo skip khi thiếu fixture.
+
+Kết quả đã chạy tại [P2P_IMPLEMENTATION_REPORT](architecture/P2P_IMPLEMENTATION_REPORT.md). Nghiệm thu hai máy vật lý, Chrome ↔ Edge, 30 phút và 10 GiB phải có số đo riêng; loopback không thay thế bài LAN.
+
 Repository gồm backend Maven và frontend Next.js. Không dùng số test hoặc bảng PASS của giai đoạn JavaFX làm trạng thái nghiệm thu hiện tại.
 
 ## Kiểm tra tự động

@@ -32,6 +32,11 @@ public record TransferRecord(
     boolean senderConnected,
     boolean receiverConnected
 ) {
+    public TransferRecord withExpiry(Instant deadline, Instant now) {
+        return new TransferRecord(transferId, senderConnectionId, receiverConnectionId, fileName, fileSize,
+                sha256, status, createdAt, now, errorMessage, workspaceId, senderUserId, senderSessionId,
+                receiverUserId, receiverSessionId, deadline, offerRelayed, answerRelayed, senderConnected, receiverConnected);
+    }
     public TransferRecord withStatus(TransferStatus newStatus, String error) {
         return new TransferRecord(
             transferId,

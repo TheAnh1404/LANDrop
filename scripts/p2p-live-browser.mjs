@@ -1,0 +1,80 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import { once } from 'node:events';
+import { createRequire } from 'node:module';
+import { createLanProxy } from './lan-proxy.mjs';
+
+const { chromium } = createRequire(new URL('../frontend/package.json', import.meta.url))('playwright');
+const backend = process.env.LANDROP_TEST_BACKEND;
+assert.ok(backend, 'Set LANDROP_TEST_BACKEND to an isolated, running test backend');
+assert.ok(process.env.LANDROP_TEST_CERT && process.env.LANDROP_TEST_KEY, 'Set test TLS certificate paths');
+const status = await (await fetch(`${backend}/status`)).json();
+const proxy = createLanProxy({ cert: await fs.readFile(process.env.LANDROP_TEST_CERT), key: await fs.readFile(process.env.LANDROP_TEST_KEY), backend, websocket: `http://127.0.0.1:${status.wsPort || status.websocketPort}`, frontend: process.env.LANDROP_TEST_FRONTEND || 'http://127.0.0.1:3333' });
+proxy.listen(0, '127.0.0.1'); await once(proxy, 'listening');
+const origin = `https://127.0.0.1:${proxy.address().port}`;
+const browser = await chromium.launch({ ...(process.env.CHROME_PATH ? { executablePath: process.env.CHROME_PATH } : { channel: 'chrome' }), headless: true });
+const errors = [], gatewayErrors = [], connected = new Set(); let renewals = 0;
+const suffix = Date.now().toString(36), ownerName = `p2p_o_${suffix}`, memberName = `p2p_n_${suffix}`;
+const password = 'LAN-test-only-Password-123!';
+const artifact = new URL('../output/p2p/', import.meta.url); await fs.mkdir(artifact, { recursive: true });
+try {
+  const owner = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 1440, height: 1000 } });
+  const member = await browser.newPage({ ignoreHTTPSErrors: true, viewport: { width: 1440, height: 1000 }, acceptDownloads: true });
+  for (const [page, label] of [[owner, 'bundled'], [member, 'next']]) {
+    page.on('pageerror', error => errors.push(error.message));
+    page.on('websocket', socket => socket.on('framereceived', ({ payload }) => {
+      const packet = JSON.parse(payload.toString());
+      if (packet.type === 'error') console.log(label, packet.type, packet.error?.code || '');
+      if (packet.type === 'error') gatewayErrors.push(packet.error?.code);
+      if (packet.type === 'transfer.renew_ack') renewals++;
+      if (packet.type === 'transfer.status' && packet.payload?.status === 'P2P_CONNECTED') connected.add(label);
+    }));
+  }
+  await owner.goto(`${origin}/client`); await owner.locator('#auth-switch').click();
+  await owner.locator('#login-identifier').fill(ownerName); await owner.locator('#register-email').fill(`${ownerName}@example.test`);
+  await owner.locator('#register-name').fill('LAN Desktop'); await owner.locator('#login-password').fill(password); await owner.locator('#auth-submit').click();
+  await owner.waitForFunction(() => authenticated && workspaceId, null, { timeout: 30000 });
+  console.log('Bundled registration and workspace ready');
+  await member.goto(`${origin}/connect`); await member.locator('input[autocomplete="url"]').fill(origin);
+  await member.getByRole('button', { name: 'Kết nối server' }).click(); await member.waitForURL('**/auth/login');
+  await member.getByRole('link', { name: 'Tạo tài khoản', exact: true }).click();
+  await member.locator('input[autocomplete="name"]').fill('LAN Laptop'); await member.locator('input[autocomplete="username"]').fill(memberName);
+  await member.locator('input[autocomplete="email"]').fill(`${memberName}@example.test`); await member.locator('input[autocomplete="new-password"]').fill(password);
+  await member.getByRole('button', { name: 'Tạo tài khoản', exact: true }).click(); await member.waitForURL('**/workspaces');
+  const workspace = await owner.evaluate(() => workspaceId);
+  await owner.evaluate(async email => apiRequest(`/api/workspaces/${workspaceId}/members`, { method: 'POST', body: JSON.stringify({ email }) }), `${memberName}@example.test`);
+  await member.goto(`${origin}/w/${workspace}/transfers`);
+  await member.evaluate(() => { window.showSaveFilePicker = undefined; }); // Exercise real OPFS; an OS picker needs human input.
+  await owner.evaluate(() => refreshPeers());
+  await owner.waitForFunction(name => peersList.some(peer => peer.displayName === name || peer.username === name), memberName, { timeout: 30000 });
+  await owner.evaluate(name => selectPeerConversation(peersList.find(peer => peer.displayName === name || peer.username === name)), memberName);
+  await member.getByRole('button', { name: 'Chấp nhận & Nhận tệp' }).click();
+  await owner.waitForFunction(() => rtcDataChannel?.readyState === 'open');
+  await owner.locator('#composer-textarea').fill('Chat LAN: Next.js ↔ client Java'); await owner.locator('#btn-composer-send').click();
+  await member.getByText('Chat LAN: Next.js ↔ client Java', { exact: true }).waitFor();
+  console.log('Cross-client WebRTC chat received');
+  const bytes = Buffer.from('LAN integrity test\n'.repeat(20000));
+  await owner.locator('#composer-file-input').setInputFiles({ name: 'LAN kiểm tra.txt', mimeType: 'text/plain', buffer: bytes });
+  await member.getByRole('button', { name: 'Nhận và lưu', exact: true }).click();
+  await owner.waitForFunction(() => reliableTasks.some(task => task.status === 'completed' && task.verified));
+  await member.getByRole('button', { name: 'Tất cả', exact: true }).click();
+  const downloading = member.waitForEvent('download'); await member.getByRole('button', { name: 'Tải tệp đã xác minh', exact: true }).click();
+  assert.deepEqual(await fs.readFile(await (await downloading).path()), bytes);
+  const leaseSeconds = Number(process.env.LANDROP_TEST_LEASE_SECONDS || 135);
+  console.log(`Cross-client file integrity passed. Keeping the session for ${leaseSeconds}s to cross its initial lease.`);
+  await new Promise(resolve => setTimeout(resolve, leaseSeconds * 1000));
+  await owner.locator('#composer-textarea').fill('Chat sau khi vượt lease ban đầu'); await owner.locator('#btn-composer-send').click();
+  await member.getByText('Chat sau khi vượt lease ban đầu', { exact: true }).waitFor();
+  assert.equal(connected.size, 2); assert.deepEqual(gatewayErrors, []); assert.deepEqual(errors, []);
+  await owner.evaluate(() => window.scrollTo(0, 0)); await member.evaluate(() => window.scrollTo(0, 0));
+  await owner.screenshot({ path: new URL('bundled-desktop.png', artifact).pathname.replace(/^\/(\w:)/, '$1'), fullPage: true });
+  await member.screenshot({ path: new URL('next-desktop.png', artifact).pathname.replace(/^\/(\w:)/, '$1'), fullPage: true });
+  await member.setViewportSize({ width: 390, height: 844 });
+  await member.evaluate(() => window.scrollTo(0, 0)); await member.waitForTimeout(250);
+  assert.equal(await member.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true, 'Mobile page must not overflow horizontally');
+  await member.screenshot({ path: new URL('next-mobile.png', artifact).pathname.replace(/^\/(\w:)/, '$1'), fullPage: true });
+  const report = { browser: browser.version(), cases: ['HTTPS same-origin API and WSS proxy', 'Real PostgreSQL registration and workspace permissions', 'Next.js ↔ bundled shared-engine chat', 'File consent and verified completion', 'Downloaded bytes exactly match source', leaseSeconds >= 120 ? 'Connected session survives initial lease and delivers another message' : 'Connected session remains usable through lease renewal', 'Desktop and mobile screenshots'], bytes: bytes.length, leaseSeconds, renewals, browserErrors: errors, gatewayErrors, physicalLan: false };
+  await fs.writeFile(new URL('live-browser-report.json', artifact), JSON.stringify(report, null, 2));
+  await fs.writeFile(new URL(`live-browser-report-${leaseSeconds}s.json`, artifact), JSON.stringify(report, null, 2));
+  console.log(JSON.stringify(report, null, 2));
+} finally { await browser.close(); proxy.closeAllConnections(); await new Promise(resolve => proxy.close(resolve)); }
