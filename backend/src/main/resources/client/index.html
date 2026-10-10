@@ -2,15 +2,15 @@
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>LANDrop - Giao Diện Người Dùng & Truyền Tệp P2P</title>
   <style>
     :root {
-      --bg-main: #0a0f1d;
-      --bg-card: #111827;
-      --bg-card-hover: #1e293b;
-      --border: #1f2937;
-      --border-focus: #0284c7;
+      --bg-main: #070b14;
+      --bg-card: rgba(15, 23, 42, 0.75);
+      --bg-card-hover: rgba(30, 41, 59, 0.85);
+      --border: rgba(255, 255, 255, 0.08);
+      --border-focus: #38bdf8;
       --text-main: #f8fafc;
       --text-muted: #94a3b8;
       --accent-primary: #0284c7;
@@ -19,11 +19,16 @@
       --accent-success: #10b981;
       --accent-danger: #ef4444;
       --accent-warning: #f59e0b;
+      --accent-violet: #8b5cf6;
       --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
     }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     body {
       background-color: var(--bg-main);
+      background-image: 
+        radial-gradient(ellipse at 50% -20%, rgba(56, 189, 248, 0.15), transparent 70%),
+        radial-gradient(ellipse at 80% 100%, rgba(139, 92, 246, 0.1), transparent 60%);
+      background-attachment: fixed;
       color: var(--text-main);
       font-family: var(--font-family);
       line-height: 1.5;
@@ -32,9 +37,11 @@
       flex-direction: column;
     }
     header {
-      background-color: var(--bg-card);
+      background-color: rgba(11, 17, 32, 0.85);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       border-bottom: 1px solid var(--border);
-      padding: 0.85rem 1.75rem;
+      padding: 0.85rem 1.25rem;
       display: flex;
       justify-content: space-between;
       align-items: center;
@@ -59,7 +66,8 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      border-radius: 8px;
+      border-radius: 10px;
+      box-shadow: 0 0 15px rgba(56, 189, 248, 0.35);
     }
     .brand-title {
       font-size: 1.25rem;
@@ -70,17 +78,17 @@
     .header-actions {
       display: flex;
       align-items: center;
-      gap: 1rem;
+      gap: 0.75rem;
     }
     .status-pill {
       display: inline-flex;
       align-items: center;
-      gap: 0.4rem;
-      padding: 0.25rem 0.65rem;
+      gap: 0.45rem;
+      padding: 0.3rem 0.75rem;
       border-radius: 9999px;
       font-size: 0.8rem;
       font-weight: 600;
-      background: rgba(16, 185, 129, 0.15);
+      background: rgba(16, 185, 129, 0.12);
       color: var(--accent-success);
       border: 1px solid rgba(16, 185, 129, 0.3);
     }
@@ -89,178 +97,322 @@
       height: 8px;
       border-radius: 50%;
       background: var(--accent-success);
+      box-shadow: 0 0 8px var(--accent-success);
+    }
+    .status-dot.connecting {
+      background: var(--accent-warning);
+      box-shadow: 0 0 8px var(--accent-warning);
+    }
+    .status-dot.offline {
+      background: var(--accent-danger);
+      box-shadow: 0 0 8px var(--accent-danger);
     }
     .main-container {
       flex: 1;
-      max-width: 1080px;
+      max-width: 960px;
       width: 100%;
       margin: 0 auto;
-      padding: 2rem 1.25rem;
+      padding: 1.25rem 1rem 3rem 1rem;
       display: flex;
       flex-direction: column;
-      gap: 1.75rem;
+      gap: 1.5rem;
     }
     .card {
-      background-color: var(--bg-card);
+      background: var(--bg-card);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
       border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 1.5rem;
+      border-radius: 16px;
+      padding: 1.25rem;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.25);
+      position: relative;
+      overflow: hidden;
+    }
+    .card-glow {
+      border-color: rgba(56, 189, 248, 0.3);
+      background: linear-gradient(135deg, rgba(2, 132, 199, 0.1), rgba(15, 23, 42, 0.85));
     }
     .btn {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      gap: 0.45rem;
+      gap: 0.5rem;
       padding: 0.65rem 1.25rem;
-      border-radius: 8px;
-      font-size: 0.9rem;
+      font-size: 0.95rem;
       font-weight: 600;
-      cursor: pointer;
-      transition: all 0.15s ease-in-out;
+      border-radius: 10px;
       border: none;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      user-select: none;
       text-decoration: none;
     }
+    .btn:active { transform: scale(0.97); }
     .btn-primary {
-      background-color: var(--accent-primary);
+      background: linear-gradient(135deg, #0284c7, #0284c7 50%, #38bdf8);
       color: white;
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.35);
     }
     .btn-primary:hover {
-      background-color: var(--accent-hover);
+      background: linear-gradient(135deg, #0369a1, #0284c7 50%, #0ea5e9);
+      box-shadow: 0 6px 20px rgba(2, 132, 199, 0.5);
     }
     .btn-secondary {
-      background-color: var(--bg-card-hover);
+      background: rgba(30, 41, 59, 0.7);
       color: var(--text-main);
       border: 1px solid var(--border);
     }
     .btn-secondary:hover {
-      background-color: #334155;
+      background: rgba(51, 65, 85, 0.9);
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+    .btn-success {
+      background: linear-gradient(135deg, #059669, #10b981);
+      color: white;
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.35);
     }
     .btn-danger {
-      background-color: rgba(239, 68, 68, 0.2);
-      color: var(--accent-danger);
-      border: 1px solid rgba(239, 68, 68, 0.4);
-    }
-    .btn-danger:hover {
-      background-color: var(--accent-danger);
+      background: linear-gradient(135deg, #dc2626, #ef4444);
       color: white;
     }
     .btn-sm {
-      padding: 0.35rem 0.75rem;
-      font-size: 0.8rem;
+      padding: 0.4rem 0.8rem;
+      font-size: 0.825rem;
+      border-radius: 8px;
+    }
+    .btn-lg {
+      padding: 0.85rem 1.5rem;
+      font-size: 1.05rem;
+      border-radius: 12px;
+      width: 100%;
     }
     .form-group {
-      display: flex;
-      flex-direction: column;
-      gap: 0.35rem;
-      margin-bottom: 1rem;
+      margin-bottom: 1.1rem;
     }
     .form-group label {
-      font-size: 0.825rem;
+      display: block;
+      font-size: 0.85rem;
       font-weight: 600;
       color: var(--text-muted);
+      margin-bottom: 0.45rem;
     }
     .form-input {
-      background: #0f172a;
+      width: 100%;
+      padding: 0.75rem 1rem;
+      background: rgba(11, 17, 32, 0.8);
       border: 1px solid var(--border);
+      border-radius: 10px;
       color: var(--text-main);
-      padding: 0.65rem 0.85rem;
-      border-radius: 8px;
-      font-size: 0.925rem;
+      font-size: 0.95rem;
+      font-family: inherit;
       outline: none;
-      transition: border-color 0.15s;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
     .form-input:focus {
       border-color: var(--border-focus);
-      box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.25);
-    }
-    .alert {
-      padding: 0.75rem 1rem;
-      border-radius: 8px;
-      margin-bottom: 1.25rem;
-      font-size: 0.875rem;
-      display: none;
-    }
-    .alert-error {
-      background: rgba(239, 68, 68, 0.15);
-      color: #fca5a5;
-      border: 1px solid rgba(239, 68, 68, 0.4);
-    }
-    .alert-success {
-      background: rgba(16, 185, 129, 0.15);
-      color: #86efac;
-      border: 1px solid rgba(16, 185, 129, 0.4);
+      box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
     }
     .tabs-nav {
       display: flex;
-      gap: 0.5rem;
-      border-bottom: 1px solid var(--border);
-      margin-bottom: 1.5rem;
-      padding-bottom: 0.25rem;
+      background: rgba(11, 17, 32, 0.9);
+      padding: 0.3rem;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      gap: 0.25rem;
+      overflow-x: auto;
+      scrollbar-width: none;
     }
+    .tabs-nav::-webkit-scrollbar { display: none; }
     .tab-btn {
+      flex: 1;
+      min-width: 110px;
       background: none;
       border: none;
       color: var(--text-muted);
-      font-size: 0.95rem;
+      font-size: 0.9rem;
       font-weight: 600;
-      padding: 0.5rem 1rem;
+      padding: 0.6rem 0.85rem;
       cursor: pointer;
-      border-radius: 6px;
+      border-radius: 9px;
       transition: all 0.15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.4rem;
+      white-space: nowrap;
     }
     .tab-btn.active {
       color: var(--text-main);
-      background-color: var(--bg-card-hover);
+      background: rgba(30, 41, 59, 0.9);
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
     }
-    .tab-pane {
+    .tab-pane { display: none; animation: fadeIn 0.2s ease-in-out; }
+    .tab-pane.active { display: block; }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(4px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .radar-box {
+      position: relative;
+      background: radial-gradient(circle at center, rgba(56, 189, 248, 0.08) 0%, rgba(15, 23, 42, 0.6) 70%);
+      border: 1px dashed rgba(56, 189, 248, 0.25);
+      border-radius: 16px;
+      padding: 1.5rem;
+      text-align: center;
+      min-height: 220px;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      overflow: hidden;
+    }
+    .radar-pulse {
+      position: absolute;
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      border: 2px solid rgba(56, 189, 248, 0.4);
+      animation: pulse 2.5s infinite;
+      pointer-events: none;
+    }
+    @keyframes pulse {
+      0% { transform: scale(0.6); opacity: 0.9; }
+      100% { transform: scale(2.8); opacity: 0; }
+    }
+    .peers-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 1rem;
+      width: 100%;
+      margin-top: 1rem;
+      z-index: 2;
+    }
+    .peer-card {
+      background: rgba(17, 24, 39, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 1rem;
+      text-align: left;
+      cursor: pointer;
+      transition: all 0.2s;
+      position: relative;
+    }
+    .peer-card:hover {
+      border-color: var(--accent-sky);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 16px rgba(56, 189, 248, 0.15);
+    }
+    .peer-card.selected {
+      border-color: var(--accent-sky);
+      background: rgba(2, 132, 199, 0.15);
+      box-shadow: 0 0 0 2px var(--accent-sky);
+    }
+    .dropzone {
+      border: 2px dashed rgba(56, 189, 248, 0.35);
+      border-radius: 16px;
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      background: rgba(11, 17, 32, 0.4);
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .dropzone.dragover {
+      border-color: var(--accent-sky);
+      background: rgba(2, 132, 199, 0.15);
+      transform: scale(1.01);
+    }
+    .progress-bar-container {
+      width: 100%;
+      height: 12px;
+      background: rgba(30, 41, 59, 0.8);
+      border-radius: 9999px;
+      overflow: hidden;
+      margin: 1rem 0;
+      border: 1px solid var(--border);
+    }
+    .progress-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #0284c7, #38bdf8, #10b981);
+      transition: width 0.1s linear;
+      border-radius: 9999px;
+    }
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.75rem;
+      margin-top: 1rem;
+      text-align: center;
+    }
+    .metric-cell {
+      background: rgba(11, 17, 32, 0.6);
+      padding: 0.65rem 0.5rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+    }
+    .metric-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; }
+    .metric-value { font-size: 1.05rem; font-weight: 700; color: var(--text-main); font-variant-numeric: tabular-nums; }
+    .received-list {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      margin-top: 1rem;
+    }
+    .received-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0.85rem 1rem;
+      background: rgba(11, 17, 32, 0.7);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      gap: 0.75rem;
+    }
+    .modal-overlay {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.75);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
       display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 100;
+      padding: 1rem;
     }
-    .tab-pane.active {
-      display: block;
-    }
-    .auth-box {
+    .modal-content {
+      background: #0f172a;
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      border-radius: 20px;
       max-width: 440px;
       width: 100%;
-      margin: 2rem auto;
+      padding: 1.75rem;
+      box-shadow: 0 20px 40px rgba(0, 0, 0, 0.6);
+      animation: modalSlide 0.25s ease-out;
     }
-    .app-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-      gap: 1.5rem;
+    @keyframes modalSlide {
+      from { transform: scale(0.95) translateY(10px); opacity: 0; }
+      to { transform: scale(1) translateY(0); opacity: 1; }
     }
-    .conn-badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 0.4rem;
-      background: rgba(2, 132, 199, 0.15);
-      color: var(--accent-sky);
-      border: 1px solid rgba(56, 189, 248, 0.3);
-      padding: 0.3rem 0.65rem;
-      border-radius: 6px;
-      font-family: monospace;
-      font-size: 0.85rem;
+    .alert {
+      padding: 0.75rem 1rem;
+      border-radius: 10px;
+      font-size: 0.9rem;
+      margin-bottom: 1rem;
+      display: none;
     }
-    .list-item {
-      padding: 0.75rem;
-      border-bottom: 1px solid var(--border);
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    .alert-success { background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); }
+    .alert-error { background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3); }
+    @media (max-width: 640px) {
+      .header-actions .conn-id-badge { display: none; }
+      .metrics-grid { grid-template-columns: 1fr 1fr; }
+      .metrics-grid .metric-cell:last-child { grid-column: span 2; }
     }
-    .list-item:last-child { border-bottom: none; }
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 1.25rem;
-      text-align: center;
-      font-size: 0.85rem;
-      color: var(--text-muted);
-    }
-    footer a { color: var(--accent-sky); text-decoration: none; }
-    footer a:hover { text-decoration: underline; }
   </style>
 </head>
 <body>
 
+  <!-- HEADER -->
   <header>
     <a href="/" class="logo-container">
       <div class="brand-mark">L</div>
@@ -268,11 +420,11 @@
     </a>
     <div class="header-actions">
       <div class="status-pill" id="header-status">
-        <span class="status-dot"></span>
-        <span id="header-status-text">Đã kết nối Server</span>
+        <span class="status-dot" id="status-dot"></span>
+        <span id="header-status-text">Đang kết nối...</span>
       </div>
-      <div id="user-pill" style="display: none; align-items: center; gap: 0.75rem;">
-        <span id="user-display-name" style="font-weight: 600; font-size: 0.9rem;"></span>
+      <div id="user-pill" style="display: none; align-items: center; gap: 0.65rem;">
+        <span id="user-display-name" style="font-weight: 600; font-size: 0.85rem; color: var(--accent-sky);"></span>
         <button class="btn btn-secondary btn-sm" onclick="handleLogout()">Đăng xuất</button>
       </div>
     </div>
@@ -280,45 +432,45 @@
 
   <div class="main-container">
 
-    <!-- PHẦN 1: MÀN HÌNH ĐĂNG NHẬP / ĐĂNG KÝ (Hiện khi chưa có token) -->
-    <div id="auth-section" class="card auth-box">
-      <div class="tabs-nav">
+    <!-- PHẦN 1: ĐĂNG NHẬP / ĐĂNG KÝ (HIỆN KHI CHƯA AUTH) -->
+    <div id="auth-section" class="card" style="max-width: 440px; margin: 1.5rem auto; width: 100%;">
+      <div class="tabs-nav" style="margin-bottom: 1.25rem;">
         <button class="tab-btn active" id="tab-login-btn" onclick="switchAuthTab('login')">Đăng Nhập</button>
-        <button class="tab-btn" id="tab-register-btn" onclick="switchAuthTab('register')">Tạo Tài Khoản Mới</button>
+        <button class="tab-btn" id="tab-register-btn" onclick="switchAuthTab('register')">Tạo Tài Khoản</button>
       </div>
 
       <div id="auth-alert" class="alert"></div>
 
-      <!-- Tab Đăng Nhập -->
+      <!-- Form Login -->
       <form id="form-login" class="tab-pane active" onsubmit="submitLogin(event)">
-        <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;">
-          Đăng nhập vào không gian làm việc LANDrop trong mạng LAN.
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
+          Đăng nhập vào không gian làm việc LANDrop trên máy chủ nội bộ.
         </p>
         <div class="form-group">
-          <label>Email hoặc Tên đăng nhập</label>
-          <input type="text" id="login-identifier" class="form-input" placeholder="ví dụ: theanh hoặc user@lan.local" required autocomplete="username">
+          <label>Tên đăng nhập hoặc Email</label>
+          <input type="text" id="login-identifier" class="form-input" placeholder="ví dụ: theanh" required autocomplete="username">
         </div>
         <div class="form-group">
           <label>Mật khẩu</label>
           <input type="password" id="login-password" class="form-input" placeholder="••••••••" required autocomplete="current-password">
         </div>
-        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;" id="btn-login-submit">
+        <button type="submit" class="btn btn-primary btn-lg" id="btn-login-submit">
           Đăng Nhập Vào Hệ Thống &rarr;
         </button>
       </form>
 
-      <!-- Tab Tạo Tài Khoản -->
+      <!-- Form Register -->
       <form id="form-register" class="tab-pane" onsubmit="submitRegister(event)">
-        <p style="color: var(--text-muted); font-size: 0.875rem; margin-bottom: 1.25rem;">
-          Tạo tài khoản thành viên để cộng tác và truyền tệp trong mạng nội bộ.
+        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
+          Tạo tài khoản để gửi tệp tin và cộng tác với các thiết bị khác trong mạng LAN.
         </p>
         <div class="form-group">
-          <label>Tên hiển thị</label>
+          <label>Họ và tên</label>
           <input type="text" id="reg-name" class="form-input" placeholder="ví dụ: Nguyễn Thế Anh" required autocomplete="name">
         </div>
         <div class="form-group">
-          <label>Tên đăng nhập</label>
-          <input type="text" id="reg-username" class="form-input" placeholder="3-30 ký tự, không dấu (ví dụ: theanh)" pattern="[A-Za-z0-9_-]{3,30}" required autocomplete="username">
+          <label>Tên đăng nhập (viết liền không dấu)</label>
+          <input type="text" id="reg-username" class="form-input" placeholder="ví dụ: theanh" pattern="[A-Za-z0-9_-]{3,30}" required autocomplete="username">
         </div>
         <div class="form-group">
           <label>Email</label>
@@ -328,76 +480,253 @@
           <label>Mật khẩu (ít nhất 8 ký tự)</label>
           <input type="password" id="reg-password" class="form-input" placeholder="••••••••" minlength="8" required autocomplete="new-password">
         </div>
-        <button type="submit" class="btn btn-primary" style="width: 100%; margin-top: 0.5rem;" id="btn-reg-submit">
-          Tạo Tài Khoản & Đăng Nhập &rarr;
+        <button type="submit" class="btn btn-primary btn-lg" id="btn-reg-submit">
+          Tạo Tài Khoản & Bắt Đầu &rarr;
         </button>
       </form>
     </div>
 
-    <!-- PHẦN 2: MÀN HÌNH CHÍNH CỦA NGƯỜI DÙNG (Hiện khi đã đăng nhập) -->
-    <div id="app-section" style="display: none; flex-direction: column; gap: 1.5rem;">
+    <!-- PHẦN 2: GIAO DIỆN CHÍNH (KHI ĐÃ ĐĂNG NHẬP) -->
+    <div id="app-section" style="display: none; flex-direction: column; gap: 1.25rem;">
 
-      <!-- Welcome Banner -->
-      <div class="card" style="background: linear-gradient(135deg, rgba(2, 132, 199, 0.15), rgba(17, 24, 39, 0.9)); border-color: rgba(56, 189, 248, 0.3);">
+      <!-- BANNER THÔNG TIN THIẾT BỊ CỦA BẠN -->
+      <div class="card card-glow">
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
           <div>
-            <h2 style="font-size: 1.4rem; font-weight: 700;">Xin chào, <span id="welcome-name" style="color: var(--accent-sky);"></span> 👋</h2>
-            <p style="color: var(--text-muted); font-size: 0.9rem;">
-              Thiết bị của bạn đã kết nối an toàn vào mạng LANDrop. Sẵn sàng chat và truyền tệp P2P.
-            </p>
+            <div style="font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--accent-sky); font-weight: 700; margin-bottom: 0.2rem;">
+              THIẾT BỊ HIỆN TẠI CỦA BẠN
+            </div>
+            <h2 style="font-size: 1.25rem; font-weight: 700; display: flex; align-items: center; gap: 0.5rem;">
+              <span id="my-device-icon">💻</span>
+              <span id="my-device-name">Đang nhận diện...</span>
+            </h2>
+            <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.2rem;">
+              Tài khoản: <strong id="welcome-username" style="color: var(--text-main);"></strong>
+            </div>
           </div>
-          <div>
-            <span class="conn-badge">
-              ID Thiết Bị: <span id="my-conn-id">Đang kết nối...</span>
-            </span>
+          <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 0.4rem;">
+            <div style="font-size: 0.75rem; color: var(--text-muted);">MÃ KẾT NỐI (CONNECTION ID):</div>
+            <div style="display: flex; align-items: center; gap: 0.5rem;">
+              <code id="my-conn-badge" style="background: rgba(0,0,0,0.4); padding: 0.35rem 0.75rem; border-radius: 8px; font-family: monospace; font-size: 0.85rem; border: 1px solid var(--border); color: #38bdf8;">
+                Đang cấp mã...
+              </code>
+              <button class="btn btn-secondary btn-sm" onclick="copyMyConnId()" title="Sao chép ID">📋</button>
+            </div>
           </div>
         </div>
       </div>
 
-      <div class="app-grid">
-        <!-- Thẻ 1: Truyền Tệp P2P WebRTC -->
-        <div class="card">
-          <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 0.75rem; display: flex; align-items: center; gap: 0.5rem;">
-            📁 Truyền Tệp Ngang Hàng P2P (WebRTC)
-          </h3>
-          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
-            Kết nối trực tiếp giữa hai trình duyệt qua WebRTC DataChannel trong cùng mạng WiFi / LAN.
-          </p>
+      <!-- MAIN APP TABS -->
+      <div class="tabs-nav">
+        <button class="tab-btn active" id="btn-tab-radar" onclick="switchAppTab('radar')">
+          <span>📡</span> Thiết Bị Lân Cận
+        </button>
+        <button class="tab-btn" id="btn-tab-transfer" onclick="switchAppTab('transfer')">
+          <span>📁</span> Truyền Tệp P2P
+        </button>
+        <button class="tab-btn" id="btn-tab-text" onclick="switchAppTab('text')">
+          <span>💬</span> Văn Bản Nhanh
+        </button>
+        <button class="tab-btn" id="btn-tab-workspaces" onclick="switchAppTab('workspaces')">
+          <span>🏢</span> Nhóm Làm Việc
+        </button>
+      </div>
 
-          <div class="form-group">
-            <label>ID Thiết Bị Đích (Connection ID bạn bè):</label>
-            <input type="text" id="target-conn-id" class="form-input" placeholder="Dán Connection ID của máy bên kia...">
+      <!-- TAB 1: RADAR DISCOVERY -->
+      <div id="pane-radar" class="tab-pane active">
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+            <div>
+              <h3 style="font-size: 1.15rem; font-weight: 700;">📡 Quét Thiết Bị Trong Mạng LAN</h3>
+              <p style="color: var(--text-muted); font-size: 0.85rem;">
+                Tự động nhận diện điện thoại, máy tính và trình duyệt đang kết nối máy chủ LANDrop.
+              </p>
+            </div>
+            <button class="btn btn-secondary btn-sm" onclick="refreshPeers()">🔄 Làm mới</button>
           </div>
 
-          <div style="display: flex; gap: 0.5rem;">
-            <button class="btn btn-primary" onclick="initiateP2PTest()" id="btn-p2p-test">
-              ⚡ Kiểm Tra Kết Nối P2P (Ping/Pong)
+          <div class="radar-box">
+            <div class="radar-pulse"></div>
+            <div id="peers-empty-hint" style="z-index: 2; color: var(--text-muted); font-size: 0.9rem;">
+              <div style="font-size: 2rem; margin-bottom: 0.5rem;">📡</div>
+              Đang quét các thiết bị trong mạng LAN...<br>
+              <span style="font-size: 0.8rem; color: #64748b;">(Mở thêm một tab hoặc dùng điện thoại quét mã QR từ máy chủ để kết nối cùng mạng)</span>
+            </div>
+            <div id="peers-grid" class="peers-grid"></div>
+          </div>
+
+          <div style="margin-top: 1rem; padding: 0.75rem 1rem; background: rgba(11, 17, 32, 0.6); border-radius: 12px; font-size: 0.85rem; border: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between;">
+            <span style="color: var(--text-muted);">
+              💡 <strong>Mẹo 1-Chạm:</strong> Bấm vào thẻ thiết bị bên trên để chọn nhanh máy nhận tệp!
+            </span>
+            <span id="peers-count-badge" style="color: var(--accent-sky); font-weight: 600;">0 thiết bị online</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 2: TRUYỀN TỆP P2P -->
+      <div id="pane-transfer" class="tab-pane">
+        <div class="card" style="margin-bottom: 1.25rem;">
+          <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 0.25rem;">
+            🚀 Truyền Tệp Ngang Hàng P2P (WebRTC DataChannel)
+          </h3>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.25rem;">
+            Gửi trực tiếp qua mạng WiFi/LAN không qua trung gian máy chủ. Tốc độ tối đa, bảo mật tuyệt đối.
+          </p>
+
+          <!-- TARGET SELECTION -->
+          <div class="form-group">
+            <label>Thiết bị đích nhận tệp:</label>
+            <div style="display: flex; gap: 0.5rem;">
+              <input type="text" id="target-conn-id" class="form-input" placeholder="Chọn thiết bị từ tab 'Thiết Bị Lân Cận' hoặc dán Connection ID..." style="font-family: monospace;">
+              <button class="btn btn-secondary" onclick="switchAppTab('radar')" style="white-space: nowrap;">📡 Chọn máy</button>
+            </div>
+          </div>
+
+          <!-- DROPZONE -->
+          <div id="dropzone" class="dropzone" onclick="triggerFileInput()">
+            <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">📁</div>
+            <div style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.25rem;">
+              Kéo thả tệp vào đây hoặc Bấm để chọn
+            </div>
+            <p style="color: var(--text-muted); font-size: 0.85rem;">
+              Hỗ trợ mọi định dạng: Ảnh, Video, Tài liệu, File Zip... Không giới hạn kích thước trên mạng LAN.
+            </p>
+            <input type="file" id="file-input" style="display: none;" onchange="handleFileSelected(event)">
+          </div>
+
+          <!-- MOBILE FILE BUTTONS -->
+          <div style="display: flex; gap: 0.75rem; margin-top: 1rem;">
+            <button class="btn btn-secondary" style="flex: 1;" onclick="triggerFileInput('image/*,video/*')">
+              📷 Thư viện ảnh / Video
+            </button>
+            <button class="btn btn-secondary" style="flex: 1;" onclick="triggerFileInput('*/*')">
+              📂 Chọn tài liệu từ máy
             </button>
           </div>
 
-          <div id="p2p-status-box" style="margin-top: 1rem; padding: 0.75rem; background: #0f172a; border-radius: 8px; font-size: 0.85rem; border: 1px solid var(--border);">
-            Trạng thái P2P: <strong id="p2p-state-label" style="color: var(--accent-sky);">Sẵn sàng</strong>
+          <!-- SELECTED FILE PREVIEW -->
+          <div id="file-preview-card" style="display: none; margin-top: 1rem; padding: 1rem; background: rgba(11, 17, 32, 0.8); border-radius: 12px; border: 1px solid rgba(56, 189, 248, 0.3);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div style="display: flex; align-items: center; gap: 0.75rem; overflow: hidden;">
+                <div style="font-size: 1.75rem;">📄</div>
+                <div style="overflow: hidden;">
+                  <strong id="selected-file-name" style="display: block; font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></strong>
+                  <span id="selected-file-size" style="font-size: 0.8rem; color: var(--text-muted);"></span>
+                </div>
+              </div>
+              <button class="btn btn-danger btn-sm" onclick="clearSelectedFile()">✕ Xóa</button>
+            </div>
+            <button class="btn btn-primary btn-lg" style="margin-top: 1rem;" onclick="startFileTransfer()" id="btn-start-transfer">
+              🚀 Bắt Đầu Gửi Tệp Ngay
+            </button>
           </div>
+
+          <!-- PROGRESS CARD -->
+          <div id="transfer-progress-box" style="display: none; margin-top: 1.25rem; padding: 1.25rem; background: #0c1322; border-radius: 14px; border: 1px solid rgba(56, 189, 248, 0.4);">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <strong id="progress-title" style="color: var(--accent-sky); font-size: 0.95rem;">Đang truyền tệp P2P...</strong>
+              <span id="progress-percent" style="font-weight: 700; font-size: 1.1rem; color: var(--accent-success);">0%</span>
+            </div>
+
+            <div class="progress-bar-container">
+              <div id="progress-bar-fill" class="progress-bar-fill"></div>
+            </div>
+
+            <div class="metrics-grid">
+              <div class="metric-cell">
+                <div class="metric-label">Tốc độ</div>
+                <div class="metric-value" id="metric-speed">0 MB/s</div>
+              </div>
+              <div class="metric-cell">
+                <div class="metric-label">Đã truyền</div>
+                <div class="metric-value" id="metric-transferred">0 / 0 MB</div>
+              </div>
+              <div class="metric-cell">
+                <div class="metric-label">Thời gian còn lại</div>
+                <div class="metric-value" id="metric-eta">—</div>
+              </div>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; margin-top: 1rem;">
+              <button class="btn btn-danger btn-sm" onclick="cancelCurrentTransfer()">Hủy truyền</button>
+            </div>
+          </div>
+
         </div>
 
-        <!-- Thẻ 2: Không Gian Làm Việc (Workspaces) -->
+        <!-- RECEIVED FILES TRAY -->
+        <div class="card">
+          <h3 style="font-size: 1.1rem; font-weight: 700; margin-bottom: 0.25rem;">
+            📥 Khay Tệp Đã Nhận
+          </h3>
+          <p style="color: var(--text-muted); font-size: 0.85rem;">
+            Các tệp tin được truyền ngang hàng thành công vào thiết bị này.
+          </p>
+
+          <div id="received-list" class="received-list">
+            <div id="received-empty" style="text-align: center; padding: 2rem 1rem; color: var(--text-muted); font-size: 0.85rem;">
+              Chưa nhận tệp nào. Khi có máy khác gửi tệp, tệp sẽ xuất hiện tại đây.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 3: QUICK TEXT / CLIPBOARD DROP -->
+      <div id="pane-text" class="tab-pane">
+        <div class="card">
+          <h3 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 0.25rem;">
+            💬 Chia Sẻ Văn Bản & Clipboard Nhanh
+          </h3>
+          <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1.25rem;">
+            Bắn nhanh đường link, ghi chú, mã OTP hoặc đoạn code sang máy khác mà không cần tạo tệp.
+          </p>
+
+          <div class="form-group">
+            <label>Nội dung văn bản / Đường dẫn liên kết:</label>
+            <textarea id="quick-text-input" class="form-input" rows="4" placeholder="Nhập hoặc dán nội dung văn bản muốn gửi..."></textarea>
+          </div>
+
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: gap; gap: 0.75rem;">
+            <div style="font-size: 0.85rem; color: var(--text-muted);">
+              Gửi tới: <span id="quick-text-target-label" style="color: var(--accent-sky); font-weight: 600;">Chưa chọn thiết bị</span>
+            </div>
+            <button class="btn btn-primary" onclick="sendQuickTextAction()">
+              🚀 Bắn Văn Bản Ngay &rarr;
+            </button>
+          </div>
+
+          <hr style="border: none; border-top: 1px solid var(--border); margin: 1.5rem 0;">
+
+          <h4 style="font-size: 0.95rem; font-weight: 700; margin-bottom: 0.75rem;">
+            📋 Lịch sử văn bản vừa nhận:
+          </h4>
+          <div id="quick-text-history" style="display: flex; flex-direction: column; gap: 0.75rem;">
+            <div id="quick-text-empty" style="text-align: center; padding: 1.5rem; color: var(--text-muted); font-size: 0.85rem;">
+              Chưa nhận được tin nhắn hoặc văn bản nào.
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB 4: WORKSPACES -->
+      <div id="pane-workspaces" class="tab-pane">
         <div class="card">
           <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
             <h3 style="font-size: 1.15rem; font-weight: 700;">🏢 Không Gian Làm Việc</h3>
             <button class="btn btn-secondary btn-sm" onclick="loadWorkspaces()">🔄 Làm mới</button>
           </div>
           <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">
-            Danh sách nhóm làm việc bạn tham gia trên máy chủ này.
+            Các nhóm làm việc nội bộ bạn đang tham gia trên máy chủ LANDrop.
           </p>
 
-          <div id="workspaces-list" style="max-height: 200px; overflow-y: auto; background: #0f172a; border-radius: 8px; border: 1px solid var(--border); padding: 0.5rem;">
-            <div style="text-align: center; padding: 1rem; color: var(--text-muted); font-size: 0.85rem;">Đang tải danh sách...</div>
+          <div id="workspaces-list" style="display: flex; flex-direction: column; gap: 0.5rem; max-height: 250px; overflow-y: auto;">
+            <div style="text-align: center; padding: 1.5rem; color: var(--text-muted); font-size: 0.85rem;">Đang tải...</div>
           </div>
 
-          <!-- Tạo workspace nhanh -->
-          <div style="margin-top: 1rem; display: flex; gap: 0.5rem;">
-            <input type="text" id="new-ws-name" class="form-input" placeholder="Tên nhóm mới..." style="flex: 1;">
-            <button class="btn btn-primary btn-sm" onclick="createWorkspace()">+ Tạo nhóm</button>
+          <div style="margin-top: 1.25rem; display: flex; gap: 0.5rem;">
+            <input type="text" id="new-ws-name" class="form-input" placeholder="Tên nhóm làm việc mới...">
+            <button class="btn btn-primary" onclick="createWorkspace()" style="white-space: nowrap;">+ Tạo nhóm</button>
           </div>
         </div>
       </div>
@@ -406,29 +735,108 @@
 
   </div>
 
-  <footer>
-    <p>
-      LANDrop LAN Hub &bull; 
-      <a href="/admin">Dành cho Quản trị viên máy chủ (/admin)</a>
-    </p>
-  </footer>
+  <!-- INCOMING TRANSFER MODAL -->
+  <div id="incoming-modal" class="modal-overlay">
+    <div class="modal-content">
+      <div style="font-size: 2.25rem; margin-bottom: 0.5rem; text-align: center;">📥</div>
+      <h3 style="font-size: 1.2rem; font-weight: 700; text-align: center; margin-bottom: 0.25rem;">
+        Yêu Cầu Truyền Tệp P2P Mới!
+      </h3>
+      <p style="color: var(--text-muted); font-size: 0.85rem; text-align: center; margin-bottom: 1.25rem;">
+        Một thiết bị trong mạng LAN muốn gửi tệp trực tiếp cho bạn.
+      </p>
+
+      <div style="background: rgba(11, 17, 32, 0.8); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; margin-bottom: 1.25rem;">
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">NGƯỜI GỬI:</div>
+        <div id="modal-sender-name" style="font-weight: 700; color: var(--accent-sky); margin-bottom: 0.75rem;"></div>
+
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.25rem;">TỆP TIN:</div>
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <strong id="modal-file-name" style="font-size: 0.95rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"></strong>
+          <span id="modal-file-size" style="font-size: 0.85rem; color: var(--text-muted); white-space: nowrap;"></span>
+        </div>
+      </div>
+
+      <div style="display: flex; gap: 0.75rem;">
+        <button class="btn btn-success" style="flex: 1;" onclick="acceptIncomingTransfer()">
+          ✅ Chấp Nhận & Tải
+        </button>
+        <button class="btn btn-danger" style="flex: 1;" onclick="rejectIncomingTransfer()">
+          ❌ Từ Chối
+        </button>
+      </div>
+    </div>
+  </div>
 
   <script>
     let authToken = localStorage.getItem('landrop_access_token') || '';
     let currentUser = null;
     let ws = null;
     let myConnectionId = '';
+    let wsHeartbeatTimer = null;
+
+    // WebRTC State
     let rtcPeer = null;
     let rtcDataChannel = null;
+    let activeTransferId = null;
+    let targetConnId = '';
+    let activeRole = null; // 'offerer' | 'answerer'
+
+    // File Transfer State
+    let selectedFile = null;
+    let currentSendingFile = null;
+    let currentIncomingFile = null;
+    let receivedFilesList = [];
+    let quickTextList = [];
+    let peersList = [];
 
     // Khởi tạo trang
     window.addEventListener('DOMContentLoaded', () => {
+      setupDropzone();
+      detectMyDevice();
       if (authToken) {
         verifySession();
       } else {
         showAuth();
       }
     });
+
+    function detectMyDevice() {
+      const ua = navigator.userAgent;
+      let devName = 'Trình duyệt Web';
+      let icon = '💻';
+      if (/iPhone/.test(ua)) { devName = 'Apple iPhone'; icon = '📱'; }
+      else if (/iPad/.test(ua)) { devName = 'Apple iPad'; icon = '📱'; }
+      else if (/Android/.test(ua)) {
+        const m = ua.match(/Android[^;]+; ([^;)]+)/);
+        devName = m && m[1] ? m[1].replace(/Build\/.*/, '').trim() : 'Android Phone';
+        icon = '📱';
+      }
+      else if (/Macintosh/.test(ua)) { devName = 'macOS Browser'; icon = '💻'; }
+      else if (/Windows/.test(ua)) { devName = 'Windows PC Browser'; icon = '🖥️'; }
+      else if (/Linux/.test(ua)) { devName = 'Linux Browser'; icon = '💻'; }
+
+      document.getElementById('my-device-name').textContent = devName;
+      document.getElementById('my-device-icon').textContent = icon;
+      return { devName, icon, isMobile: icon === '📱' };
+    }
+
+    function switchAuthTab(tab) {
+      hideAlert();
+      document.getElementById('tab-login-btn').classList.toggle('active', tab === 'login');
+      document.getElementById('tab-register-btn').classList.toggle('active', tab === 'register');
+      document.getElementById('form-login').classList.toggle('active', tab === 'login');
+      document.getElementById('form-register').classList.toggle('active', tab === 'register');
+    }
+
+    function switchAppTab(tab) {
+      const tabs = ['radar', 'transfer', 'text', 'workspaces'];
+      tabs.forEach(t => {
+        document.getElementById(`btn-tab-${t}`).classList.toggle('active', t === tab);
+        document.getElementById(`pane-${t}`).classList.toggle('active', t === tab);
+      });
+      if (tab === 'radar') refreshPeers();
+    }
 
     function showAlert(msg, isSuccess = false) {
       const box = document.getElementById('auth-alert');
@@ -439,14 +847,6 @@
 
     function hideAlert() {
       document.getElementById('auth-alert').style.display = 'none';
-    }
-
-    function switchAuthTab(tab) {
-      hideAlert();
-      document.getElementById('tab-login-btn').classList.toggle('active', tab === 'login');
-      document.getElementById('tab-register-btn').classList.toggle('active', tab === 'register');
-      document.getElementById('form-login').classList.toggle('active', tab === 'login');
-      document.getElementById('form-register').classList.toggle('active', tab === 'register');
     }
 
     function showAuth() {
@@ -460,8 +860,9 @@
       document.getElementById('auth-section').style.display = 'none';
       document.getElementById('app-section').style.display = 'flex';
       document.getElementById('user-pill').style.display = 'flex';
-      document.getElementById('user-display-name').textContent = currentUser.displayName || currentUser.username;
-      document.getElementById('welcome-name').textContent = currentUser.displayName || currentUser.username;
+      const name = currentUser.displayName || currentUser.username;
+      document.getElementById('user-display-name').textContent = name;
+      document.getElementById('welcome-username').textContent = name;
       loadWorkspaces();
       connectRealtime();
     }
@@ -542,7 +943,7 @@
         showAlert(err.message, false);
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Tạo Tài Khoản & Đăng Nhập \u2192';
+        btn.textContent = 'Tạo Tài Khoản & Bắt Đầu \u2192';
       }
     }
 
@@ -553,41 +954,16 @@
       showAuth();
     }
 
-    let wsHeartbeatTimer = null;
-
-    function getDeviceName() {
-      const ua = navigator.userAgent;
-      if (/iPhone/.test(ua)) return 'Apple iPhone';
-      if (/iPad/.test(ua)) return 'Apple iPad';
-      if (/Android/.test(ua)) {
-        const match = ua.match(/Android[^;]+; ([^;)]+)/);
-        if (match && match[1]) {
-          const model = match[1].replace(/Build\/.*/, '').trim();
-          if (model) return model;
-        }
-        return 'Android Device';
-      }
-      if (/Macintosh/.test(ua)) return 'macOS Browser';
-      if (/Windows/.test(ua)) return 'Windows PC Browser';
-      if (/Linux/.test(ua)) return 'Linux Browser';
-      return 'Web Browser';
-    }
-
-    function getClientInstanceId() {
-      let id = localStorage.getItem('landrop_client_instance_id');
-      if (!id) {
-        id = 'browser-' + Math.random().toString(36).substring(2, 10);
-        localStorage.setItem('landrop_client_instance_id', id);
-      }
-      return id;
+    function copyMyConnId() {
+      if (!myConnectionId) return;
+      navigator.clipboard.writeText(myConnectionId);
+      alert('Đã sao chép Mã kết nối: ' + myConnectionId);
     }
 
     async function resolveWsPort() {
       const urlParams = new URLSearchParams(window.location.search);
       const paramPort = urlParams.get('wsPort');
-      if (paramPort && !isNaN(parseInt(paramPort))) {
-        return parseInt(paramPort);
-      }
+      if (paramPort && !isNaN(parseInt(paramPort))) return parseInt(paramPort);
       try {
         const res = await fetch('/status');
         if (res.ok) {
@@ -604,35 +980,42 @@
       return 3001;
     }
 
-    // Kết nối WebSocket Realtime
+    function getClientInstanceId() {
+      let id = localStorage.getItem('landrop_client_instance_id');
+      if (!id) {
+        id = 'browser-' + Math.random().toString(36).substring(2, 10);
+        localStorage.setItem('landrop_client_instance_id', id);
+      }
+      return id;
+    }
+
+    // WEBSOCKET REALTIME GATEWAY
     async function connectRealtime() {
-      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
-        return;
-      }
-      if (wsHeartbeatTimer) {
-        clearInterval(wsHeartbeatTimer);
-        wsHeartbeatTimer = null;
-      }
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+      if (wsHeartbeatTimer) { clearInterval(wsHeartbeatTimer); wsHeartbeatTimer = null; }
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsPort = await resolveWsPort();
       const wsUrl = protocol + '//' + window.location.hostname + ':' + wsPort;
 
+      const dot = document.getElementById('status-dot');
+      const stText = document.getElementById('header-status-text');
+      dot.className = 'status-dot connecting';
+      stText.textContent = 'Đang kết nối Realtime...';
+
       try {
-        document.getElementById('header-status-text').textContent = 'Đang kết nối Realtime...';
         ws = new WebSocket(wsUrl);
 
         ws.onopen = () => {
-          // Handshake
+          const dev = detectMyDevice();
           ws.send(JSON.stringify({
             type: 'hello',
             protocolVersion: 1,
             clientInstanceId: getClientInstanceId(),
-            deviceName: getDeviceName(),
-            platform: /Mobile|Android|iPhone|iPad/i.test(navigator.userAgent) ? 'mobile' : 'browser'
+            deviceName: dev.devName,
+            platform: dev.isMobile ? 'mobile' : 'browser'
           }));
 
-          // Heartbeat định kỳ mỗi 10s giữ kết nối
           wsHeartbeatTimer = setInterval(() => {
             if (ws && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'heartbeat' }));
@@ -643,51 +1026,590 @@
         ws.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.type === 'welcome') {
-              myConnectionId = data.connectionId;
-              document.getElementById('my-conn-id').textContent = myConnectionId;
-
-              // Xác thực phiên WebSocket
-              if (authToken) {
-                ws.send(JSON.stringify({
-                  type: 'auth',
-                  payload: { accessToken: authToken }
-                }));
-              }
-            } else if (data.type === 'auth.ack' || data.type === 'auth.success') {
-              document.getElementById('header-status-text').textContent = '🟢 Đã kết nối Realtime';
-            } else if (data.type === 'heartbeat.ack') {
-              // Heartbeat ok
-            } else if (data.type === 'webrtc.offer') {
-              handleIncomingOffer(data);
-            } else if (data.type === 'webrtc.answer') {
-              handleIncomingAnswer(data);
-            } else if (data.type === 'webrtc.candidate') {
-              handleIncomingCandidate(data);
-            }
+            handleGatewayMessage(data);
           } catch (e) {}
         };
 
         ws.onclose = () => {
-          if (wsHeartbeatTimer) {
-            clearInterval(wsHeartbeatTimer);
-            wsHeartbeatTimer = null;
-          }
-          document.getElementById('header-status-text').textContent = '⚪ Mất kết nối (Đang thử lại...)';
-          if (authToken) {
-            setTimeout(connectRealtime, 3000);
-          }
+          dot.className = 'status-dot offline';
+          stText.textContent = 'Mất kết nối (Thử lại...)';
+          if (wsHeartbeatTimer) { clearInterval(wsHeartbeatTimer); wsHeartbeatTimer = null; }
+          if (authToken) setTimeout(connectRealtime, 3000);
         };
 
         ws.onerror = () => {
-          document.getElementById('header-status-text').textContent = '⚠️ Lỗi WebSocket';
+          dot.className = 'status-dot offline';
+          stText.textContent = 'Lỗi kết nối';
         };
       } catch (e) {
-        document.getElementById('header-status-text').textContent = 'Không thể mở WebSocket';
+        dot.className = 'status-dot offline';
+        stText.textContent = 'Không thể mở WebSocket';
       }
     }
 
-    // Tải Workspaces
+    function handleGatewayMessage(data) {
+      const dot = document.getElementById('status-dot');
+      const stText = document.getElementById('header-status-text');
+
+      if (data.type === 'welcome') {
+        myConnectionId = data.connectionId;
+        document.getElementById('my-conn-badge').textContent = myConnectionId;
+        if (authToken) {
+          ws.send(JSON.stringify({
+            type: 'auth',
+            payload: { accessToken: authToken }
+          }));
+        }
+      } else if (data.type === 'auth.ack' || data.type === 'auth.success') {
+        dot.className = 'status-dot';
+        stText.textContent = 'LAN Realtime Sẵn Sàng';
+        refreshPeers();
+      } else if (data.type === 'peer.list') {
+        renderPeersList(data.payload?.peers || []);
+      } else if (data.type === 'transfer.request') {
+        handleIncomingTransferRequest(data.payload);
+      } else if (data.type === 'transfer.accept') {
+        // Bên nhận đã chấp nhận -> Khởi tạo WebRTC Offer
+        startWebRTCOffer();
+      } else if (data.type === 'transfer.reject') {
+        alert('Yêu cầu truyền tệp đã bị đối phương từ chối: ' + (data.payload?.reason || ''));
+        resetTransferUI();
+      } else if (data.type === 'transfer.cancel') {
+        alert('Phiên truyền tệp đã bị hủy: ' + (data.payload?.reason || ''));
+        resetTransferUI();
+      } else if (data.type === 'webrtc.offer') {
+        handleIncomingWebRTCOffer(data);
+      } else if (data.type === 'webrtc.answer') {
+        handleIncomingWebRTCAnswer(data);
+      } else if (data.type === 'webrtc.candidate' || data.type === 'webrtc.ice_candidate') {
+        handleIncomingIceCandidate(data);
+      }
+    }
+
+    // PEER DISCOVERY
+    function refreshPeers() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'peer.list' }));
+      }
+    }
+
+    function renderPeersList(peers) {
+      peersList = peers.filter(p => p.connectionId !== myConnectionId);
+      const grid = document.getElementById('peers-grid');
+      const empty = document.getElementById('peers-empty-hint');
+      const count = document.getElementById('peers-count-badge');
+
+      count.textContent = `${peersList.length} thiết bị online`;
+
+      if (peersList.length === 0) {
+        empty.style.display = 'block';
+        grid.innerHTML = '';
+        return;
+      }
+
+      empty.style.display = 'none';
+      grid.innerHTML = peersList.map(p => {
+        const isSelected = p.connectionId === targetConnId;
+        const icon = p.platform === 'mobile' ? '📱' : '💻';
+        return `
+          <div class="peer-card ${isSelected ? 'selected' : ''}" onclick="selectPeer('${escapeHtml(p.connectionId)}', '${escapeHtml(p.displayName || p.deviceName)}')">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">
+              <span style="font-size:1.5rem;">${icon}</span>
+              <span class="status-pill" style="font-size:0.7rem; padding:0.15rem 0.5rem;">🟢 Online</span>
+            </div>
+            <strong style="display:block; font-size:0.95rem; color:var(--text-main); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">
+              ${escapeHtml(p.displayName || 'Thiết bị LAN')}
+            </strong>
+            <div style="font-size:0.8rem; color:var(--text-muted); margin-top:0.2rem;">
+              ${escapeHtml(p.deviceName || 'Trình duyệt')}
+            </div>
+            <button class="btn btn-primary btn-sm" style="margin-top:0.75rem; width:100%;" onclick="event.stopPropagation(); selectAndGoTransfer('${escapeHtml(p.connectionId)}', '${escapeHtml(p.displayName || p.deviceName)}')">
+              🚀 Gửi tệp ngay
+            </button>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function selectPeer(connId, name) {
+      targetConnId = connId;
+      document.getElementById('target-conn-id').value = connId;
+      document.getElementById('quick-text-target-label').textContent = name + ' (' + connId.substring(0, 8) + '...)';
+      renderPeersList(peersList);
+    }
+
+    function selectAndGoTransfer(connId, name) {
+      selectPeer(connId, name);
+      switchAppTab('transfer');
+      triggerFileInput();
+    }
+
+    // DROPZONE & FILE PICKER
+    function setupDropzone() {
+      const dropzone = document.getElementById('dropzone');
+      ['dragenter', 'dragover'].forEach(name => {
+        dropzone.addEventListener(name, (e) => {
+          e.preventDefault();
+          dropzone.classList.add('dragover');
+        });
+      });
+      ['dragleave', 'drop'].forEach(name => {
+        dropzone.addEventListener(name, (e) => {
+          e.preventDefault();
+          dropzone.classList.remove('dragover');
+        });
+      });
+      dropzone.addEventListener('drop', (e) => {
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+          setChosenFile(e.dataTransfer.files[0]);
+        }
+      });
+    }
+
+    function triggerFileInput(accept = '') {
+      const input = document.getElementById('file-input');
+      input.accept = accept;
+      input.click();
+    }
+
+    function handleFileSelected(e) {
+      if (e.target.files && e.target.files[0]) {
+        setChosenFile(e.target.files[0]);
+      }
+    }
+
+    function setChosenFile(file) {
+      selectedFile = file;
+      document.getElementById('selected-file-name').textContent = file.name;
+      document.getElementById('selected-file-size').textContent = formatBytes(file.size);
+      document.getElementById('file-preview-card').style.display = 'block';
+    }
+
+    function clearSelectedFile() {
+      selectedFile = null;
+      document.getElementById('file-input').value = '';
+      document.getElementById('file-preview-card').style.display = 'none';
+    }
+
+    // INCOMING REQUEST MODAL
+    let pendingIncomingTransfer = null;
+    function handleIncomingTransferRequest(payload) {
+      pendingIncomingTransfer = payload;
+      document.getElementById('modal-sender-name').textContent = payload.senderDeviceName || payload.senderUserId || 'Thiết bị đối diện';
+      document.getElementById('modal-file-name').textContent = payload.fileName;
+      document.getElementById('modal-file-size').textContent = formatBytes(payload.fileSize);
+      document.getElementById('incoming-modal').style.display = 'flex';
+    }
+
+    function acceptIncomingTransfer() {
+      if (!pendingIncomingTransfer || !ws) return;
+      document.getElementById('incoming-modal').style.display = 'none';
+
+      activeTransferId = pendingIncomingTransfer.transferId;
+      targetConnId = pendingIncomingTransfer.senderConnectionId;
+      activeRole = 'answerer';
+
+      // Setup RTCPeerConnection receiver
+      initPeerConnection();
+
+      ws.send(JSON.stringify({
+        type: 'transfer.accept',
+        payload: { transferId: activeTransferId }
+      }));
+
+      // Switch to transfer tab to see progress
+      switchAppTab('transfer');
+      showProgressUI('Đang chờ đối phương gửi dữ liệu...');
+    }
+
+    function rejectIncomingTransfer() {
+      if (!pendingIncomingTransfer || !ws) return;
+      document.getElementById('incoming-modal').style.display = 'none';
+
+      ws.send(JSON.stringify({
+        type: 'transfer.reject',
+        payload: { transferId: pendingIncomingTransfer.transferId, reason: 'Từ chối bởi người nhận' }
+      }));
+      pendingIncomingTransfer = null;
+    }
+
+    // WEBRTC DATA CHANNEL & FILE TRANSFER ENGINE
+    async function startFileTransfer() {
+      targetConnId = document.getElementById('target-conn-id').value.trim();
+      if (!targetConnId) {
+        alert('Vui lòng chọn thiết bị đích nhận tệp!');
+        switchAppTab('radar');
+        return;
+      }
+      if (!selectedFile) {
+        alert('Vui lòng chọn tệp tin cần gửi!');
+        return;
+      }
+
+      currentSendingFile = selectedFile;
+      activeRole = 'offerer';
+
+      // 1. Send transfer.request to signaling relay
+      showProgressUI('Đang gửi yêu cầu xác nhận tới người nhận...');
+      ws.send(JSON.stringify({
+        type: 'transfer.request',
+        payload: {
+          receiverConnectionId: targetConnId,
+          fileName: currentSendingFile.name,
+          fileSize: currentSendingFile.size,
+          workspaceId: '00000000-0000-0000-0000-000000000000'
+        }
+      }));
+    }
+
+    function initPeerConnection() {
+      if (rtcPeer) {
+        try { rtcPeer.close(); } catch(e){}
+      }
+
+      rtcPeer = new RTCPeerConnection({
+        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+      });
+
+      rtcPeer.onicecandidate = (event) => {
+        if (event.candidate && ws) {
+          ws.send(JSON.stringify({
+            type: 'webrtc.candidate',
+            payload: {
+              targetConnectionId: targetConnId,
+              transferId: activeTransferId,
+              candidate: event.candidate.toJSON()
+            }
+          }));
+        }
+      };
+
+      rtcPeer.ondatachannel = (event) => {
+        setupDataChannel(event.channel);
+      };
+    }
+
+    async function startWebRTCOffer() {
+      initPeerConnection();
+
+      rtcDataChannel = rtcPeer.createDataChannel('landrop-p2p', { ordered: true });
+      setupDataChannel(rtcDataChannel);
+
+      const offer = await rtcPeer.createOffer();
+      await rtcPeer.setLocalDescription(offer);
+
+      ws.send(JSON.stringify({
+        type: 'webrtc.offer',
+        payload: {
+          targetConnectionId: targetConnId,
+          transferId: activeTransferId,
+          sdp: offer.sdp
+        }
+      }));
+    }
+
+    async function handleIncomingWebRTCOffer(data) {
+      if (!rtcPeer) initPeerConnection();
+
+      await rtcPeer.setRemoteDescription(new RTCSessionDescription({
+        type: 'offer',
+        sdp: data.payload.sdp
+      }));
+
+      const answer = await rtcPeer.createAnswer();
+      await rtcPeer.setLocalDescription(answer);
+
+      ws.send(JSON.stringify({
+        type: 'webrtc.answer',
+        payload: {
+          targetConnectionId: data.senderConnectionId || targetConnId,
+          transferId: activeTransferId,
+          sdp: answer.sdp
+        }
+      }));
+    }
+
+    async function handleIncomingWebRTCAnswer(data) {
+      if (rtcPeer) {
+        await rtcPeer.setRemoteDescription(new RTCSessionDescription({
+          type: 'answer',
+          sdp: data.payload.sdp
+        }));
+      }
+    }
+
+    async function handleIncomingIceCandidate(data) {
+      if (rtcPeer && data.payload?.candidate) {
+        try {
+          await rtcPeer.addIceCandidate(new RTCIceCandidate(data.payload.candidate));
+        } catch (e) {}
+      }
+    }
+
+    function setupDataChannel(channel) {
+      rtcDataChannel = channel;
+      channel.binaryType = 'arraybuffer';
+      channel.bufferedAmountLowThreshold = 65536;
+
+      channel.onopen = () => {
+        if (activeRole === 'offerer' && currentSendingFile) {
+          executeSendFileBinary(currentSendingFile);
+        }
+      };
+
+      channel.onmessage = (event) => {
+        if (typeof event.data === 'string') {
+          try {
+            const msg = JSON.parse(event.data);
+            handleDataChannelJsonMessage(msg);
+          } catch(e){}
+        } else if (event.data instanceof ArrayBuffer) {
+          handleDataChannelBinaryChunk(event.data);
+        }
+      };
+
+      channel.onclose = () => {
+        // DataChannel closed
+      };
+    }
+
+    async function executeSendFileBinary(file) {
+      showProgressUI(`Đang truyền: ${file.name}`);
+      const chunkSize = 16384;
+      const totalChunks = Math.ceil(file.size / chunkSize) || 1;
+
+      // Send FILE_START
+      rtcDataChannel.send(JSON.stringify({
+        type: 'FILE_START',
+        fileName: file.name,
+        fileSize: file.size,
+        mimeType: file.type || 'application/octet-stream',
+        chunkSize,
+        totalChunks
+      }));
+
+      const startTime = Date.now();
+      let bytesSent = 0;
+
+      for (let offset = 0; offset < file.size; offset += chunkSize) {
+        if (!rtcDataChannel || rtcDataChannel.readyState !== 'open') break;
+
+        const slice = file.slice(offset, Math.min(file.size, offset + chunkSize));
+        const buffer = await slice.arrayBuffer();
+
+        // Backpressure: chờ nếu buffer bị đầy > 64KB
+        if (rtcDataChannel.bufferedAmount > 65536) {
+          await new Promise(res => {
+            const onLow = () => {
+              if (rtcDataChannel) rtcDataChannel.onbufferedamountlow = null;
+              res();
+            };
+            if (rtcDataChannel) rtcDataChannel.onbufferedamountlow = onLow;
+            setTimeout(res, 200);
+          });
+        }
+
+        rtcDataChannel.send(buffer);
+        bytesSent += buffer.byteLength;
+
+        // Cập nhật giao diện tiến độ
+        updateProgressMetrics(bytesSent, file.size, startTime);
+      }
+
+      // Send FILE_END
+      if (rtcDataChannel && rtcDataChannel.readyState === 'open') {
+        rtcDataChannel.send(JSON.stringify({ type: 'FILE_END', fileName: file.name }));
+      }
+
+      finishProgressUI(true, 'Truyền tệp hoàn tất 100%!');
+      currentSendingFile = null;
+    }
+
+    function handleDataChannelJsonMessage(msg) {
+      if (msg.type === 'FILE_START') {
+        currentIncomingFile = {
+          fileName: msg.fileName,
+          fileSize: msg.fileSize,
+          mimeType: msg.mimeType,
+          totalChunks: msg.totalChunks,
+          chunks: [],
+          receivedBytes: 0,
+          startTime: Date.now()
+        };
+        showProgressUI(`Đang nhận: ${msg.fileName}`);
+      } else if (msg.type === 'FILE_END') {
+        if (!currentIncomingFile) return;
+
+        const blob = new Blob(currentIncomingFile.chunks, { type: currentIncomingFile.mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+
+        const item = {
+          id: 'file-' + Date.now(),
+          fileName: currentIncomingFile.fileName,
+          fileSize: currentIncomingFile.fileSize,
+          blobUrl,
+          receivedAt: new Date().toLocaleTimeString()
+        };
+        receivedFilesList.unshift(item);
+        renderReceivedFiles();
+
+        // Tự động tải xuống
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        a.download = item.fileName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+
+        finishProgressUI(false, `Đã nhận xong: ${item.fileName}!`);
+        currentIncomingFile = null;
+      } else if (msg.type === 'TEXT_MESSAGE') {
+        quickTextList.unshift({
+          text: msg.text,
+          time: new Date().toLocaleTimeString(),
+          isSent: false
+        });
+        renderQuickTextHistory();
+        switchAppTab('text');
+      }
+    }
+
+    function handleDataChannelBinaryChunk(chunk) {
+      if (!currentIncomingFile) return;
+      currentIncomingFile.chunks.push(chunk);
+      currentIncomingFile.receivedBytes += chunk.byteLength;
+
+      updateProgressMetrics(currentIncomingFile.receivedBytes, currentIncomingFile.fileSize, currentIncomingFile.startTime);
+    }
+
+    function updateProgressMetrics(bytes, total, startTime) {
+      const percent = Math.min(100, Math.round((bytes / Math.max(1, total)) * 100));
+      document.getElementById('progress-bar-fill').style.width = percent + '%';
+      document.getElementById('progress-percent').textContent = percent + '%';
+
+      const elapsed = Math.max(0.1, (Date.now() - startTime) / 1000);
+      const speedBytesPerSec = bytes / elapsed;
+      const speedMb = (speedBytesPerSec / (1024 * 1024)).toFixed(1);
+      document.getElementById('metric-speed').textContent = speedMb + ' MB/s';
+
+      const transferredMb = (bytes / (1024 * 1024)).toFixed(1);
+      const totalMb = (total / (1024 * 1024)).toFixed(1);
+      document.getElementById('metric-transferred').textContent = `${transferredMb} / ${totalMb} MB`;
+
+      const remainingBytes = Math.max(0, total - bytes);
+      const etaSec = speedBytesPerSec > 0 ? Math.ceil(remainingBytes / speedBytesPerSec) : 0;
+      document.getElementById('metric-eta').textContent = etaSec > 0 ? etaSec + 's' : '0s';
+    }
+
+    function showProgressUI(title) {
+      document.getElementById('progress-title').textContent = title;
+      document.getElementById('progress-percent').textContent = '0%';
+      document.getElementById('progress-bar-fill').style.width = '0%';
+      document.getElementById('transfer-progress-box').style.display = 'block';
+    }
+
+    function finishProgressUI(isSender, msg) {
+      document.getElementById('progress-title').textContent = msg;
+      document.getElementById('progress-percent').textContent = '100%';
+      document.getElementById('progress-bar-fill').style.width = '100%';
+      setTimeout(() => {
+        document.getElementById('transfer-progress-box').style.display = 'none';
+      }, 4000);
+    }
+
+    function cancelCurrentTransfer() {
+      if (rtcDataChannel && rtcDataChannel.readyState === 'open') {
+        rtcDataChannel.send(JSON.stringify({ type: 'FILE_CANCEL' }));
+      }
+      resetTransferUI();
+    }
+
+    function resetTransferUI() {
+      document.getElementById('transfer-progress-box').style.display = 'none';
+      currentSendingFile = null;
+      currentIncomingFile = null;
+      if (rtcPeer) { try{ rtcPeer.close(); }catch(e){} rtcPeer = null; }
+    }
+
+    function renderReceivedFiles() {
+      const container = document.getElementById('received-list');
+      const empty = document.getElementById('received-empty');
+      if (receivedFilesList.length === 0) {
+        empty.style.display = 'block';
+        return;
+      }
+      empty.style.display = 'none';
+      container.innerHTML = receivedFilesList.map(f => `
+        <div class="received-item">
+          <div style="display:flex; align-items:center; gap:0.75rem; overflow:hidden;">
+            <span style="font-size:1.5rem;">📥</span>
+            <div style="overflow:hidden;">
+              <strong style="display:block; font-size:0.9rem; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(f.fileName)}</strong>
+              <span style="font-size:0.75rem; color:var(--text-muted);">${formatBytes(f.fileSize)} &bull; ${f.receivedAt}</span>
+            </div>
+          </div>
+          <a href="${f.blobUrl}" download="${escapeHtml(f.fileName)}" class="btn btn-primary btn-sm">
+            💾 Tải về
+          </a>
+        </div>
+      `).join('');
+    }
+
+    // QUICK TEXT / CLIPBOARD DROP
+    function sendQuickTextAction() {
+      const input = document.getElementById('quick-text-input');
+      const text = input.value.trim();
+      if (!text) { alert('Vui lòng nhập văn bản muốn gửi!'); return; }
+
+      if (!rtcDataChannel || rtcDataChannel.readyState !== 'open') {
+        alert('Chưa có kết nối P2P tới thiết bị. Vui lòng chọn máy và bấm gửi để mở kết nối!');
+        switchAppTab('radar');
+        return;
+      }
+
+      rtcDataChannel.send(JSON.stringify({
+        type: 'TEXT_MESSAGE',
+        text
+      }));
+
+      quickTextList.unshift({
+        text,
+        time: new Date().toLocaleTimeString(),
+        isSent: true
+      });
+      input.value = '';
+      renderQuickTextHistory();
+    }
+
+    function renderQuickTextHistory() {
+      const container = document.getElementById('quick-text-history');
+      const empty = document.getElementById('quick-text-empty');
+      if (quickTextList.length === 0) {
+        empty.style.display = 'block';
+        return;
+      }
+      empty.style.display = 'none';
+      container.innerHTML = quickTextList.map((m, idx) => `
+        <div style="padding:0.75rem 1rem; background:rgba(11,17,32,0.8); border:1px solid var(--border); border-radius:10px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.35rem;">
+            <span style="font-size:0.75rem; font-weight:700; color:${m.isSent ? 'var(--accent-sky)' : 'var(--accent-success)'};">
+              ${m.isSent ? '📤 ĐÃ GỬI' : '📥 ĐÃ NHẬN'} &bull; ${m.time}
+            </span>
+            <button class="btn btn-secondary btn-sm" onclick="copyTextSnippet(${idx})">📋 Sao chép</button>
+          </div>
+          <p style="font-size:0.9rem; word-break:break-word; white-space:pre-wrap; color:var(--text-main);">${escapeHtml(m.text)}</p>
+        </div>
+      `).join('');
+    }
+
+    function copyTextSnippet(idx) {
+      if (quickTextList[idx]) {
+        navigator.clipboard.writeText(quickTextList[idx].text);
+        alert('Đã sao chép vào bộ nhớ tạm (Clipboard)!');
+      }
+    }
+
+    // WORKSPACES
     async function loadWorkspaces() {
       const container = document.getElementById('workspaces-list');
       try {
@@ -698,12 +1620,12 @@
           const list = await res.json();
           const items = Array.isArray(list) ? list : (list.data || []);
           if (items.length === 0) {
-            container.innerHTML = '<div style="text-align:center; padding:1rem; color:var(--text-muted); font-size:0.85rem;">Chưa có nhóm nào. Hãy tạo nhóm đầu tiên!</div>';
+            container.innerHTML = '<div style="text-align:center; padding:1.5rem; color:var(--text-muted); font-size:0.85rem;">Chưa có nhóm nào. Hãy tạo nhóm đầu tiên!</div>';
           } else {
             container.innerHTML = items.map(w => `
-              <div class="list-item">
+              <div style="padding:0.75rem 1rem; background:rgba(11,17,32,0.8); border:1px solid var(--border); border-radius:10px; display:flex; justify-content:space-between; align-items:center;">
                 <div>
-                  <strong>${escapeHtml(w.name)}</strong>
+                  <strong style="font-size:0.95rem;">${escapeHtml(w.name)}</strong>
                   <div style="font-size:0.75rem; color:var(--text-muted);">${escapeHtml(w.description || 'Không có mô tả')}</div>
                 </div>
                 <span class="btn btn-secondary btn-sm" style="cursor:default;">Đã tham gia</span>
@@ -720,7 +1642,6 @@
       const input = document.getElementById('new-ws-name');
       const name = input.value.trim();
       if (!name) return;
-
       try {
         const res = await fetch('/api/workspaces', {
           method: 'POST',
@@ -737,132 +1658,17 @@
       } catch (e) {}
     }
 
-    // WebRTC DataChannel Ping/Pong Test
-    async function initiateP2PTest() {
-      const targetId = document.getElementById('target-conn-id').value.trim();
-      if (!targetId) {
-        alert('Vui lòng dán Connection ID của máy đích!');
-        return;
-      }
-
-      const stateLabel = document.getElementById('p2p-state-label');
-      stateLabel.textContent = 'Đang khởi tạo WebRTC DataChannel...';
-
-      rtcPeer = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
-
-      rtcDataChannel = rtcPeer.createDataChannel('landrop-p2p', { ordered: true });
-      setupDataChannel(rtcDataChannel);
-
-      rtcPeer.onicecandidate = (event) => {
-        if (event.candidate && ws) {
-          ws.send(JSON.stringify({
-            type: 'webrtc.candidate',
-            payload: {
-              targetConnectionId: targetId,
-              candidate: event.candidate.toJSON()
-            }
-          }));
-        }
-      };
-
-      const offer = await rtcPeer.createOffer();
-      await rtcPeer.setLocalDescription(offer);
-
-      if (ws) {
-        ws.send(JSON.stringify({
-          type: 'webrtc.offer',
-          payload: {
-            targetConnectionId: targetId,
-            sdp: offer.sdp
-          }
-        }));
-      }
-    }
-
-    async function handleIncomingOffer(data) {
-      const stateLabel = document.getElementById('p2p-state-label');
-      stateLabel.textContent = 'Nhận Offer từ ' + data.senderConnectionId + ', đang trả Answer...';
-
-      rtcPeer = new RTCPeerConnection({
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-      });
-
-      rtcPeer.ondatachannel = (event) => {
-        setupDataChannel(event.channel);
-      };
-
-      rtcPeer.onicecandidate = (event) => {
-        if (event.candidate && ws) {
-          ws.send(JSON.stringify({
-            type: 'webrtc.candidate',
-            payload: {
-              targetConnectionId: data.senderConnectionId,
-              candidate: event.candidate.toJSON()
-            }
-          }));
-        }
-      };
-
-      await rtcPeer.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp: data.payload.sdp }));
-      const answer = await rtcPeer.createAnswer();
-      await rtcPeer.setLocalDescription(answer);
-
-      if (ws) {
-        ws.send(JSON.stringify({
-          type: 'webrtc.answer',
-          payload: {
-            targetConnectionId: data.senderConnectionId,
-            sdp: answer.sdp
-          }
-        }));
-      }
-    }
-
-    async function handleIncomingAnswer(data) {
-      if (rtcPeer) {
-        await rtcPeer.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp: data.payload.sdp }));
-      }
-    }
-
-    async function handleIncomingCandidate(data) {
-      if (rtcPeer && data.payload.candidate) {
-        try {
-          await rtcPeer.addIceCandidate(new RTCIceCandidate(data.payload.candidate));
-        } catch (e) {}
-      }
-    }
-
-    function setupDataChannel(channel) {
-      const stateLabel = document.getElementById('p2p-state-label');
-
-      channel.onopen = () => {
-        stateLabel.textContent = '🟢 WebRTC DataChannel ĐÃ MỞ! Đang gửi PING...';
-        channel.send(JSON.stringify({ type: 'PING', timestamp: Date.now() }));
-      };
-
-      channel.onmessage = (event) => {
-        try {
-          const msg = JSON.parse(event.data);
-          if (msg.type === 'PING') {
-            channel.send(JSON.stringify({ type: 'PONG', echo: msg.timestamp }));
-            stateLabel.textContent = '🟢 Nhận PING -> Đã gửi PONG! P2P hoạt động 100%';
-          } else if (msg.type === 'PONG') {
-            const rtt = Date.now() - msg.echo;
-            stateLabel.textContent = `🎉 Kết nối P2P thành công! Round-trip: ${rtt}ms`;
-          }
-        } catch (e) {}
-      };
-
-      channel.onclose = () => {
-        stateLabel.textContent = 'DataChannel đã đóng';
-      };
+    function formatBytes(bytes) {
+      if (!bytes || bytes === 0) return '0 B';
+      const k = 1024;
+      const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+      const i = Math.floor(Math.log(bytes) / Math.log(k));
+      return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + ' ' + sizes[i];
     }
 
     function escapeHtml(str) {
       if (!str) return '';
-      return str.replace(/[&<>"']/g, m => ({
+      return String(str).replace(/[&<>"']/g, m => ({
         '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
       }[m]));
     }
