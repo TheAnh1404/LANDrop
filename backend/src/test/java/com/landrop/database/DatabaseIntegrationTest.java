@@ -18,6 +18,7 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 @TestMethodOrder(MethodOrderer.OrderAnnotation.class)
+@org.junit.jupiter.api.condition.EnabledIfSystemProperty(named = "landrop.test.postgres", matches = "true")
 public class DatabaseIntegrationTest {
 
     private static DatabaseManager dbManager;

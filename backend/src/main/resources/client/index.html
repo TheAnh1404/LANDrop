@@ -1064,7 +1064,7 @@
 
       <!-- Composer Input Row -->
       <div class="chat-composer-container" id="chat-composer" style="display: none;">
-        <input type="file" id="composer-file-input" style="display: none;" onchange="handleFilePicked(event)">
+        <input type="file" id="composer-file-input" multiple style="display: none;" onchange="handleFilePicked(event)">
 
         <button class="btn-composer-action" onclick="triggerFileUpload()" title="Đính kèm tệp hoặc ảnh">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1166,7 +1166,82 @@
   <!-- ========================================================================= -->
   <!-- 4. CORE JAVASCRIPT: WEBSOCKET GATEWAY, WEBRTC ENGINE & CHAT STATE         -->
   <!-- ========================================================================= -->
+  <script src="/p2p/engine.js"></script>
   <script>
+    let p2pManager = null;
+    let p2pManagerUser = '';
+    let reliableTasks = [];
+    function getP2PManager() {
+      if (!window.LANDropP2P || !currentUser) return null;
+      if (p2pManagerUser === currentUser.id && p2pManager) return p2pManager;
+      p2pManager?.dispose(); p2pManagerUser = currentUser.id;
+      p2pManager = new window.LANDropP2P.BrowserPeerManager({
+        userId: currentUser.id, name: currentUser.displayName || currentUser.username, serverUrl: window.location.origin,
+        send: packet => { if (ws?.readyState !== WebSocket.OPEN) return false; ws.send(JSON.stringify(packet)); return true; },
+        connectionId: () => myConnectionId,
+        onChat: (peer, message) => {
+          const list = conversations[peer.connectionId] || (conversations[peer.connectionId] = []);
+          const item = { ...message, isSelf: message.direction === 'sent' };
+          const index = list.findIndex(row => row.id === item.id); if (index < 0) list.push(item); else list[index] = item;
+          if (selectedPeer?.userId === peer.userId && selectedPeer?.deviceId === peer.deviceId) { selectedPeer = peer; renderChatTimeline(); }
+        },
+        onTasks: tasks => { reliableTasks = tasks; renderReliableTasks(); },
+        onState: (peer, service) => {
+          if (!selectedPeer || (selectedPeer.userId === peer.userId && selectedPeer.deviceId === peer.deviceId)) {
+            if (!selectedPeer) {
+              selectedPeer = peer;
+              document.getElementById('empty-chat-welcome').style.display = 'none';
+              for (const id of ['chat-header', 'chat-timeline', 'chat-composer']) document.getElementById(id).style.display = 'flex';
+              document.getElementById('chat-active-name').textContent = peer.displayName || peer.deviceName;
+              document.getElementById('chat-active-avatar').textContent = getPlatformIconString(peer.platform);
+              renderSidebarPeers(peersList); renderChatTimeline();
+            }
+            rtcDataChannel = service.getDataChannel(); rtcPeer = service.getPeerConnection();
+            activeTransferId = service.getDiagnostics().transferId; activePeerConnectionId = peer.connectionId;
+            updateChatHeaderStatus(service.getState() === 'CONNECTED', service.getState() === 'CONNECTED' ? 'P2P đã kết nối · Chat và tệp được xác nhận' : 'Đang kết nối với thiết bị…');
+          }
+        },
+        onReceived: (peer, file) => {
+          const list = conversations[peer.connectionId] || (conversations[peer.connectionId] = []);
+          if (!list.some(row => row.id === file.id)) list.push({ id: file.id, text: file.fileName, timestamp: file.receivedAt, type: 'file', isSelf: false, fileMeta: { name: file.fileName, size: file.fileSize }, transferStatus: 'completed', blobUrl: file.blobUrl });
+          if (selectedPeer?.userId === peer.userId) renderChatTimeline();
+        },
+        onError: message => { document.getElementById('client-feedback').textContent = message; }
+      });
+      return p2pManager;
+    }
+    function renderReliableTasks() {
+      let panel = document.getElementById('p2p-transfer-panel');
+      if (!panel) { panel = document.createElement('section'); panel.id = 'p2p-transfer-panel'; panel.setAttribute('aria-label', 'Hàng đợi tệp có xác minh'); document.getElementById('chat-pane').prepend(panel); }
+      panel.style.cssText = 'flex-shrink:0;max-height:280px;overflow:auto;padding:14px 20px;background:linear-gradient(120deg,#0b172b,#082b34);border-bottom:1px solid #164e63;color:#cbd5e1';
+      const labels = { queued:'Trong hàng đợi', preparing:'Đang kiểm tra tệp', waiting:'Chờ người nhận', offered:'Tệp được gửi đến', transferring:'Đang truyền', paused:'Đã tạm dừng', interrupted:'Chờ kết nối lại', verifying:'Đang xác minh và lưu', completed:'Đã lưu · SHA-256 khớp', cancelled:'Đã hủy', rejected:'Đã từ chối', failed:'Cần thử lại' };
+      panel.innerHTML = '<div style="display:flex;justify-content:space-between;font-weight:700;font-size:12px;color:#67e8f9"><span>TỆP CỦA BẠN · ĐƯỢC LƯU TRỌN VẸN</span><span>' + reliableTasks.filter(task => task.verified).length + ' đã xác minh</span></div>'
+        + (!window.isSecureContext ? '<p style="font-size:11px;color:#fcd34d">HTTPS và Chrome/Edge cần thiết để nhận tệp lớn và tiếp tục sau tải lại.</p>' : '')
+        + (!reliableTasks.length ? '<p style="font-size:12px;color:#64748b;margin:10px 0">Chọn thiết bị và thêm tệp. Người nhận quyết định trước khi truyền.</p>' : reliableTasks.slice().reverse().map(task => {
+          const percent = task.size ? Math.floor(task.offset / task.size * 100) : task.verified ? 100 : 0;
+          const button = (action, label) => '<button class="btn-download-file" style="margin:4px;font-size:11px" onclick="p2pTaskAction(\'' + action + '\',\'' + task.id + '\')">' + label + '</button>';
+          return '<article style="margin-top:12px;border-top:1px solid #1e293b;padding-top:10px"><div style="display:flex;justify-content:space-between;gap:8px;font-size:12px"><strong>' + escapeHtml(task.name) + '</strong><span>' + escapeHtml(labels[task.status] || task.status) + '</span></div><div style="height:4px;background:#1e293b;border-radius:4px;margin:8px 0"><div style="height:100%;border-radius:4px;width:' + percent + '%;background:' + (task.verified ? '#34d399' : '#22d3ee') + '"></div></div><div style="font-size:10px;color:#94a3b8">' + formatBytes(task.offset) + ' / ' + formatBytes(task.size) + ' · ' + escapeHtml(task.peerName || '') + '</div>'
+            + (task.error ? '<p style="font-size:11px;color:#fcd34d">' + escapeHtml(task.error) + '</p>' : '')
+            + (task.status === 'offered' ? button('accept','Nhận và lưu') + button('reject','Từ chối') : '')
+            + (task.status === 'completed' && task.direction === 'receiving' ? button('download','Tải tệp đã xác minh') : '')
+            + (task.direction === 'sending' && ['preparing','waiting','transferring'].includes(task.status) ? button('pause','Tạm dừng') : '')
+            + (task.direction === 'sending' && ['paused','interrupted','failed'].includes(task.status) ? button('resume','Chọn tệp gốc và tiếp tục') : '')
+            + (!['completed','cancelled','rejected'].includes(task.status) ? button('cancel','Hủy tệp') : button('remove','Xóa dữ liệu tạm'))
+            + '</article>';
+        }).join(''));
+    }
+    async function p2pTaskAction(action, id) {
+      try {
+        const core = p2pManager.task(id), task = reliableTasks.find(row => row.id === id);
+        if (action === 'accept') { const destination = window.showSaveFilePicker ? await window.showSaveFilePicker({ suggestedName: task.name }) : undefined; await core.acceptFile(id, destination); }
+        if (action === 'reject') await core.rejectFile(id);
+        if (action === 'pause') await core.pause(id);
+        if (action === 'cancel') await core.cancel(id);
+        if (action === 'remove') await core.removeTask(id);
+        if (action === 'download') { const file = await core.savedFile(id); const link = document.createElement('a'); link.href = file.blobUrl; link.download = task.name; link.click(); }
+        if (action === 'resume') { const input = document.createElement('input'); input.type = 'file'; input.onchange = () => { if (input.files[0]) core.resume(id, input.files[0]).catch(error => document.getElementById('client-feedback').textContent = error.message); }; input.click(); }
+      } catch (error) { if (error.name !== 'AbortError') document.getElementById('client-feedback').textContent = error.message; }
+    }
     // --- STATE MANAGEMENT ---
     let myConnectionId = '';
     let ws = null;
@@ -1224,10 +1299,28 @@
     }
 
     // --- INITIALIZATION ---
-    window.addEventListener('DOMContentLoaded', () => {
+    window.addEventListener('DOMContentLoaded', async () => {
       detectMyDevice();
-      document.getElementById('auth-modal').style.display = 'flex';
       setupDragAndDrop();
+      const savedRefresh = localStorage.getItem('landrop_refresh_token');
+      if (savedRefresh) {
+        try {
+          const data = await apiRequest('/api/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken: savedRefresh }) });
+          authToken = data.accessToken;
+          refreshToken = data.refreshToken;
+          currentUser = data.user;
+          localStorage.setItem('landrop_refresh_token', data.refreshToken);
+          conversations = {};
+          loadConversationsFromStorage();
+          await loadWorkspaces();
+          document.getElementById('auth-modal').style.display = 'none';
+          await connectRealtime();
+          return;
+        } catch (e) {
+          localStorage.removeItem('landrop_refresh_token');
+        }
+      }
+      document.getElementById('auth-modal').style.display = 'flex';
     });
 
     function detectMyDevice() {
@@ -1308,6 +1401,7 @@
         authToken = data.accessToken;
         refreshToken = data.refreshToken;
         currentUser = data.user;
+        localStorage.setItem('landrop_refresh_token', data.refreshToken);
         const device = detectMyDevice();
         await apiRequest('/api/devices/enroll', {
           method: 'POST', body: JSON.stringify({
@@ -1519,6 +1613,7 @@
     }
 
     async function logoutClient() {
+      p2pManager?.dispose(); p2pManager = null; p2pManagerUser = ''; reliableTasks = [];
       const token = refreshToken;
       closePeerConnection(true);
       authenticated = false;
@@ -1528,6 +1623,7 @@
       if (token) {
         try { await apiRequest('/api/auth/logout', { method: 'POST', body: JSON.stringify({ refreshToken: token }) }); } catch { /* local session still closes */ }
       }
+      localStorage.removeItem('landrop_refresh_token');
       authToken = ''; refreshToken = ''; currentUser = null;
       conversations = {}; peersList = []; selectedPeer = null;
       renderSidebarPeers([]); renderChatTimeline();
@@ -1576,7 +1672,7 @@
 
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const wsPort = await resolveWsPort();
-      const wsUrl = protocol + '//' + window.location.hostname + ':' + wsPort;
+      const wsUrl = protocol === 'wss:' ? protocol + '//' + window.location.host + '/ws' : protocol + '//' + window.location.hostname + ':' + wsPort;
 
       const dot = document.getElementById('header-status-dot');
       dot.className = 'status-dot connecting';
@@ -1597,6 +1693,7 @@
           wsHeartbeatTimer = setInterval(() => {
             if (ws && ws.readyState === WebSocket.OPEN) {
               ws.send(JSON.stringify({ type: 'heartbeat' }));
+              if (authenticated) refreshPeers();
             }
           }, 8000);
         };
@@ -1625,6 +1722,8 @@
     }
 
     function handleGatewayMessage(data) {
+      const manager = getP2PManager();
+      if (manager?.handle(data)) return;
       const dot = document.getElementById('header-status-dot');
 
       if (data.type === 'welcome') {
@@ -1763,7 +1862,7 @@
 
     // --- CONVERSATION SELECTION & MOBILE NAVIGATION ---
     function selectPeerConversation(peer) {
-      if (activePeerConnectionId && activePeerConnectionId !== peer.connectionId) closePeerConnection(true);
+      if (!getP2PManager() && activePeerConnectionId && activePeerConnectionId !== peer.connectionId) closePeerConnection(true);
       selectedPeer = peer;
       renderSidebarPeers(peersList);
 
@@ -1784,6 +1883,8 @@
       renderChatTimeline();
 
       hideWorkspaceMemberRequiredBanner();
+      const manager = getP2PManager();
+      if (manager) { manager.select(peer, workspaceId).catch(error => document.getElementById('client-feedback').textContent = error.message); return; }
       // Check / Initiate P2P Connection
       if (!rtcDataChannel || rtcDataChannel.readyState !== 'open') {
         updateChatHeaderStatus(false, 'Đang kết nối P2P...');
@@ -1920,6 +2021,12 @@
       const textarea = document.getElementById('composer-textarea');
       const text = textarea.value.trim();
       if (!text || !selectedPeer) return;
+      const manager = getP2PManager();
+      if (manager) {
+        textarea.value = ''; textarea.style.height = 'auto';
+        manager.select(selectedPeer, workspaceId).then(() => manager.sendChat(text)).catch(error => document.getElementById('client-feedback').textContent = error.message);
+        return;
+      }
 
       const isReady = rtcDataChannel && rtcDataChannel.readyState === 'open';
 
@@ -1982,6 +2089,8 @@
 
     // --- WEBRTC SIGNALING & DIRECT DATA CHANNEL ENGINE ---
     function initiateP2PConnectionToPeer(targetConnId) {
+      const manager = getP2PManager();
+      if (manager) { const peer = peersList.find(item => item.connectionId === targetConnId) || selectedPeer; if (peer) manager.select(peer, workspaceId).catch(error => document.getElementById('client-feedback').textContent = error.message); return; }
       if (!ws || ws.readyState !== WebSocket.OPEN || !authenticated || !workspaceId) {
         updateChatHeaderStatus(false, 'Đăng nhập và chọn nhóm làm việc trước khi kết nối.');
         return;
@@ -2157,6 +2266,7 @@
     }
 
     function closePeerConnection(notify) {
+      if (p2pManager) { if (notify) p2pManager.disconnect(); else p2pManager.suspend(); rtcDataChannel = null; rtcPeer = null; activeTransferId = null; activePeerConnectionId = null; return; }
       if (notify && activeTransferId && ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'transfer.cancel', payload: { transferId: activeTransferId } }));
       if (rtcDataChannel) { rtcDataChannel.onclose = null; rtcDataChannel.onmessage = null; rtcDataChannel.close(); rtcDataChannel = null; }
       if (rtcPeer) { rtcPeer.onicecandidate = null; rtcPeer.ondatachannel = null; rtcPeer.close(); rtcPeer = null; }
@@ -2311,13 +2421,15 @@
       document.getElementById('composer-file-input').click();
     }
 
-    function handleFilePicked(e) {
-      if (e.target.files && e.target.files[0]) {
-        sendFileOverDataChannel(e.target.files[0]);
-      }
+    async function handleFilePicked(e) {
+      const files = Array.from(e.target.files || []); e.target.value = '';
+      try { for (const file of files) await sendFileOverDataChannel(file); }
+      catch (error) { document.getElementById('client-feedback').textContent = error.message; }
     }
 
     async function sendFileOverDataChannel(file) {
+      const manager = getP2PManager();
+      if (manager && selectedPeer) { await manager.select(selectedPeer, workspaceId); await manager.sendFile(file); return; }
       if (!selectedPeer) return;
       if (!rtcDataChannel || rtcDataChannel.readyState !== 'open') {
         pendingOutgoingFile = file;
@@ -2582,9 +2694,7 @@
       pane.addEventListener('drop', (e) => {
         e.preventDefault();
         overlay.style.display = 'none';
-        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-          sendFileOverDataChannel(e.dataTransfer.files[0]);
-        }
+        for (const file of Array.from(e.dataTransfer.files || [])) sendFileOverDataChannel(file).catch(error => document.getElementById('client-feedback').textContent = error.message);
       });
     }
 

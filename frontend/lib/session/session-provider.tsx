@@ -47,12 +47,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     tokens.current = null;
     setUser(null);
     setAuthVersion(v => v + 1);
+    localStorage.removeItem('landrop.refresh');
     sessionStorage.removeItem('landrop.refresh');
     sessionStorage.removeItem('landrop.mode');
   }, []);
 
   const apply = useCallback((auth: AuthResponse) => {
     tokens.current = auth;
+    localStorage.setItem('landrop.refresh', auth.refreshToken);
     sessionStorage.setItem('landrop.refresh', auth.refreshToken);
     sessionStorage.removeItem('landrop.mode');
     setUser(prev => {
@@ -98,12 +100,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       try {
         const saved = localStorage.getItem('landrop.server');
         if (saved) { origin.current = normalizeServerUrl(saved); setServerInfo(s => ({ ...s, serverUrl: origin.current })); }
-        const refreshToken = sessionStorage.getItem('landrop.refresh');
+        const refreshToken = localStorage.getItem('landrop.refresh') || sessionStorage.getItem('landrop.refresh');
         if (!refreshToken && sessionStorage.getItem('landrop.mode') === 'demo') { setMode('demo'); setUser(CURRENT_USER); return; }
         if (refreshToken) {
           const auth = await fetchJson<AuthResponse>(origin.current, '/api/auth/refresh', { method: 'POST', body: JSON.stringify({ refreshToken }), signal: controller.signal });
           if (active && version === generation.current) {
             // Rotation is committed already; retain the replacement before another network operation.
+            localStorage.setItem('landrop.refresh', auth.refreshToken);
             sessionStorage.setItem('landrop.refresh', auth.refreshToken);
             sessionStorage.removeItem('landrop.mode');
             await enrollBrowser(auth, origin.current, controller.signal);
@@ -130,7 +133,6 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setServerInfo(s => ({ ...s, status: 'connecting' }));
     try {
       const nextOrigin = normalizeServerUrl(input);
-      if (typeof location !== 'undefined' && nextOrigin === location.origin) throw new ApiError('Đây là cổng frontend. Hãy nhập cổng backend, mặc định localhost:3100 khi chạy cùng máy.');
       const start = performance.now();
       const health = await fetchJson<{ status: string; serverVersion?: string; protocolVersion?: number; persistenceAvailable?: boolean }>(nextOrigin, '/health');
       if (version !== generation.current) return false;
@@ -151,6 +153,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     try {
       const auth = await fetchJson<AuthResponse>(origin.current, route, { method: 'POST', body: JSON.stringify(body) });
       if (version !== generation.current) return false;
+      localStorage.setItem('landrop.refresh', auth.refreshToken);
       sessionStorage.setItem('landrop.refresh', auth.refreshToken);
       sessionStorage.removeItem('landrop.mode');
       await enrollBrowser(auth, origin.current);
