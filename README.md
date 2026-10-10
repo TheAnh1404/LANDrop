@@ -32,6 +32,7 @@ npm run server
 Lệnh `npm run server` sẽ khởi chạy **LANDrop Server Desktop App** (ứng dụng máy tính có cửa sổ GUI hiện đại):
 - **Cấp URL & Mã QR cho Client:** Hiển thị nổi bật địa chỉ URL trong mạng LAN (ví dụ: `http://192.168.1.15:3000`) cùng mã **QR Code** để các thiết bị khác (điện thoại, máy tính khác) quét hoặc mở trình duyệt truy cập ngay lập tức.
 - **Bảng điều khiển máy chủ:** Bật/Tắt server, xem danh sách client kết nối thời gian thực, tiến trình truyền file P2P, realtime log console, và hỗ trợ thu nhỏ xuống khay hệ thống (System Tray).
+- **Quản trị tích hợp:** quản lý tài khoản/quyền, thu hồi phiên, quản lý workspace/thành viên, xem dữ liệu PostgreSQL và nhật ký ngay trong desktop. Admin web đã được gỡ. Xem [hướng dẫn desktop](docs/guides/SERVER_DESKTOP.md).
 - **Chế độ Headless/CLI:** Dành cho máy chủ Docker / CI / không màn hình:
   ```powershell
   npm run server:headless
@@ -59,8 +60,8 @@ Regression trên không dùng database. Các suite PostgreSQL cần database dà
 ## Cấu trúc
 
 ```text
-backend/                    Java backend, tests, admin HTML, SQL migrations
-frontend/app/               Các route Next.js: auth, workspace, admin
+backend/                    Java backend, desktop server, tests, SQL migrations
+frontend/app/               Các route Next.js: auth, workspace
 frontend/components/        Component giao diện và layout
 frontend/lib/               API adapters, session, workspace data, demo transfer
 scripts/                    Launcher backend và test Node

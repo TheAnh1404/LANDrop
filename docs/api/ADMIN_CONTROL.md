@@ -12,7 +12,7 @@ Key capabilities:
 5. **User & Session Administration**: Enable/disable user accounts with immediate session revocation; selective session termination.
 6. **Connected Client Control**: Real-time registry listing and remote disconnection with standard protocol close codes (`4001`).
 7. **Operational Audit Ring Buffer**: In-memory 1,000-entry logging buffer with filtering, search, and automatic credential sanitization.
-8. **Embedded Web Console**: Single-Page HTML5/CSS/JS administrative dashboard served directly from the server at `/admin`.
+8. **Desktop Administration**: Native Server Desktop tabs manage users, sessions, workspaces, database records and audit logs. The web console has been removed.
 
 ---
 
@@ -39,15 +39,16 @@ System administrative privileges are decoupled from workspace memberships to ens
 
 ### Bootstrapping
 - `AdminBootstrapService` creates or synchronizes the fixed local account on every server start.
-- Username: `admin`; password: `admin123`; email: `admin@landrop.local`.
-- The account is always activated and assigned `SYSTEM_ADMIN`; environment variables do not override it.
-- Password reset tooling is disabled. If its database hash is changed manually, the next server start restores `admin123`.
+- Username: `admin`; email: `admin@landrop.local`.
+- The account is activated and assigned `SYSTEM_ADMIN`; password resolution uses `ADMIN_PASSWORD`, then `landrop.admin.password`, then the configured random/default-password behavior. Production startup requires a non-default password of at least 12 characters.
 
 ---
 
 ### Control Center authentication boundary
 
-The embedded Control Center signs administrators in through `POST /api/admin/auth/login`.
+Local desktop operators call `AdminControlCenterService` directly; permission comes from access to the server's OS desktop session. Desktop actions use audit actor `DESKTOP_OPERATOR` and do not store a web login token.
+
+The retained administrative API signs administrators in through `POST /api/admin/auth/login`.
 The regular Client endpoint `POST /api/auth/login` rejects `SYSTEM_ADMIN` accounts with
 `ADMIN_LOGIN_REQUIRED`; Client refresh, `/api/auth/me`, and authenticated realtime binding
 apply the same boundary. Regular users continue to authenticate through the Client flow.
@@ -70,7 +71,6 @@ apply the same boundary. Regular users continue to authenticate through the Clie
   "host": "0.0.0.0",
   "lanIps": ["192.168.22.206"],
   "lanHealthUrl": "http://192.168.22.206:3000/health",
-  "lanAdminUrl": "http://192.168.22.206:3000/admin",
   "environment": "production"
 }
 ```
@@ -180,25 +180,23 @@ The original owner keeps the `OWNER` role and cannot be removed through the memb
 
 ---
 
-## 9. Embedded Administrative Web Console
+## 9. Native Desktop Administration
 
-Served directly from the HTTP server at `/admin`:
-- Single-page vanilla HTML5, CSS3, and JavaScript app with zero external CDN dependencies.
-- Dark theme inspired by modern enterprise cloud consoles.
-- Embedded JWT storage in `sessionStorage` with interactive login dialog.
-- Responsive live tabs:
-  1. **Dashboard**: Metrics cards, server status, quick action links.
-  2. **Users**: User list, filter, enable/disable toggle.
-  3. **Groups & Data**: Group CRUD and membership editor with database-backed counts.
-  4. **Clients**: Connected devices table, metadata, disconnect button.
-  5. **Sessions**: Active session explorer, revoke action.
-  6. **Server & Network**: Active interfaces, current vs pending configuration editor, restart warning banner.
-  7. **Logs**: Live audit log viewer with search, level filtering, and pagination.
+Backend `/admin` and `/admin/*` return HTTP 410 with `ADMIN_WEB_REMOVED`, including requests accepting HTML. Next.js admin routes, screens, navigation and admin login selection have been removed. Authenticated administrative API endpoints remain available with their existing RBAC checks.
+
+`ServerDashboardPanel` opens `DesktopAdminPanel` through **Quản trị dữ liệu**. Its users, sessions, workspaces and membership forms use the same service/repositories as the retained API. Locking accounts, revoking sessions and deleting records retain service validation and operational audit logging. The final active system administrator cannot be disabled, deleted or demoted, including when the local operator has no acting-user UUID.
+
+The read-only database explorer uses `AdminDataRepository.Dataset` projections for devices, channels, messages, folders, files and transfer history. It applies deterministic `created_at DESC, id` ordering, a maximum page size of 100, query timeouts and a read-only snapshot transaction. It excludes password/token hashes and storage paths; file rows describe metadata rather than downloadable file bytes. SQL is not supplied by the UI.
+
+Database actions are disabled without persistent repositories. Audit/server views remain available in standalone mode. Queries and mutations run on a dedicated worker; stopped/replaced runtime callbacks are discarded. See [Server Desktop](../guides/SERVER_DESKTOP.md) for controls, configuration and screenshots.
 
 ---
 
 ## Verification & Test Matrix
 
 - `AdminControlCenterTest` includes lifecycle and HTTP-route coverage for system-admin group CRUD and membership management.
+- `DesktopAdminPanelTest` covers asynchronous queries, stale runtime results, safe error messages, standalone controls and sorted/filtered identity selection.
+- `DesktopAdministrationServiceTest` covers final-active-admin protection and desktop disable/revoke/disconnect/audit behavior.
+- `AdminDataRepositoryPostgresTest` is opt-in and requires `TEST_DATABASE_URL` or `landrop.test.database.url` naming a dedicated test database; it checks all migrated projections, pagination and pool reset.
 - Targeted validation: `mvn -pl backend "-Dtest=AdminControlCenterTest#testWorkspaceDatabaseManagement,AdminControlCenterTest#testWorkspaceManagementHttpRoutes" test`.
 - The broader legacy WebSocket test suite still needs its unauthenticated test clients migrated to the authenticated realtime contract before it can be treated as a release gate.

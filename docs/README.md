@@ -1,10 +1,6 @@
 # Danh mục tài liệu LANDrop
 
-Bắt đầu từ [README gốc](../README.md) và [báo cáo cấu trúc/file lớn](REPOSITORY_REPORT.md). Tài liệu chia theo chức năng; số phase được bỏ khỏi tên file để dễ tìm, nội dung đặc tả backend được giữ.
-
-## Tích hợp frontend hiện tại
-
-[Báo cáo frontend/backend](reports/FRONTEND_BACKEND_INTEGRATION.md) mô tả cấu trúc UI mới, API đã nối, giới hạn transport và chức năng các file quan trọng.
+Bắt đầu từ [README gốc](../README.md). Tài liệu được chuẩn hóa và tổ chức theo chức năng kỹ thuật của hệ thống.
 
 ## API backend
 
@@ -15,12 +11,10 @@ Bắt đầu từ [README gốc](../README.md) và [báo cáo cấu trúc/file l
 | [WORKSPACES](api/WORKSPACES.md) | Workspace, thành viên và phân quyền |
 | [REALTIME_CHAT](api/REALTIME_CHAT.md) | WebSocket auth/chat harness, lịch sử và retry |
 | [REALTIME_01_CONTRACT](api/REALTIME_01_CONTRACT.md) | Contract duy nhất cho gateway tích hợp và browser realtime chat |
-| [REALTIME_02_SIGNALING_CONTRACT](api/REALTIME_02_SIGNALING_CONTRACT.md) | Contract WebRTC signaling, transfer session, authorization v? cleanup |
+| [REALTIME_02_SIGNALING_CONTRACT](api/REALTIME_02_SIGNALING_CONTRACT.md) | Contract WebRTC signaling, transfer session, authorization và cleanup |
 | [TEAM_CHAT](api/TEAM_CHAT.md) | Kênh, tin nhắn, reply/edit/delete và sự kiện |
 | [FILES_AND_TRANSFERS](api/FILES_AND_TRANSFERS.md) | File/thư mục, metadata và transfer coordination |
 | [ADMIN_CONTROL](api/ADMIN_CONTROL.md) | Quản trị, client/session, cấu hình và log |
-
-Các đặc tả được viết qua nhiều giai đoạn. Khi tích hợp client mới, đối chiếu đúng entrypoint và handler Java; không giả định mọi envelope/event thuộc cùng một server. Chúng chưa chứng nhận Next.js đã hỗ trợ các API này.
 
 ## Kiến trúc và hướng dẫn
 
@@ -37,14 +31,3 @@ Các đặc tả được viết qua nhiều giai đoạn. Khi tích hợp clien
 | [PERFORMANCE](guides/PERFORMANCE.md) | Benchmark TCP loopback lịch sử, không phải tốc độ frontend/WebRTC |
 | [TEST_PLAN](TEST_PLAN.md) | Kiểm tra tự động và thủ công hiện tại |
 
-Báo cáo phase, nghiệm thu và hướng dẫn desktop đã lỗi thời được loại bỏ. Danh sách và lý do nằm trong [REPOSITORY_REPORT](REPOSITORY_REPORT.md); bản gốc đã commit có thể tra bằng Git history.
-
-## Báo cáo backend hiện có
-
-Bộ báo cáo ngày 05/10/2026 được tạo trong một luồng công việc khác khi đang dọn repository, nên được giữ nguyên:
-
-- [Phân tích backend](reports/LANDrop-BACKEND-REPORT-2026-10-05.md)
-- [Danh mục chức năng từng file backend](reports/LANDrop-BACKEND-FILE-CATALOG-2026-10-05.md)
-- [Inventory CSV](reports/LANDrop-BACKEND-FILE-INVENTORY-2026-10-05.csv)
-- [Kết quả test CSV](reports/LANDrop-BACKEND-TEST-RESULTS-2026-10-05.csv) và [log tương ứng](reports/LANDrop-BACKEND-TEST-LOG-2026-10-05.txt)
-- [Bản PDF](../output/pdf/LANDrop-BACKEND-REPORT-2026-10-05.pdf)

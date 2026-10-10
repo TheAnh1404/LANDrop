@@ -15,19 +15,20 @@ Có thể chép [.env.example](.env.example) thành `frontend/.env.local` để 
 | --- | --- |
 | `app/` | Route mỏng, layout gắn session/workspace và kiểm tra quyền |
 | `components/system/` | App shell, responsive navigation, nút/form/modal/bảng và trạng thái chung |
-| `components/screens/` | UI và thao tác từng chức năng: access, workspace, chat, files, members, settings, admin, transfers |
+| `components/screens/` | UI và thao tác từng chức năng: access, workspace, chat, files, members, settings, transfers |
 | `app/theme.css` | Màu sắc, khoảng cách, bố cục và breakpoint dùng chung |
 | `lib/api/` | HTTP JSON, timeout/cancellation, DTO adapters và phân trang |
 | `lib/api/authorized.ts` | Refresh token dùng chung cho request đồng thời; chặn kết quả của phiên cũ |
 | `lib/api/folders.ts` | Breadcrumb, kiểm tra đích di chuyển và payload PATCH metadata |
-| `components/screens/admin-lists.tsx`, `admin-editors.tsx` | Tìm kiếm trên server, CRUD user/workspace và quản lý thành viên |
-| `lib/session/` | Login/register/admin login, refresh/logout; access token trong bộ nhớ, refresh token trong sessionStorage |
+| `lib/session/` | Login/register, refresh/logout; access token trong bộ nhớ, refresh token trong sessionStorage |
 | `lib/data/` | Tải dữ liệu workspace, phân trang, retry và hủy request khi đổi workspace |
 | `lib/transfer/demo-provider.tsx` | Mô phỏng tiến trình chỉ trong demo; không truyền bytes |
 | `lib/mock-data.ts` | Fixture dùng riêng trong demo |
 | `tests/api.test.mjs` | Kiểm tra HTTP/error/DTO/cancellation/origin/phân trang |
 
 Các component, auth context, WebSocket và WebRTC service cũ không còn được dùng đã bị bỏ. Chat hiện đồng bộ REST mỗi 5 giây, hỗ trợ gửi/reply/sửa/xóa và lịch sử cursor. Metadata file chưa cung cấp khả năng tải nội dung; engine TCP cần cầu nối trình duyệt.
+
+Frontend dành cho người dùng/workspace. Route và màn hình admin web đã được gỡ; quản trị máy chủ, người dùng và database nằm trong [LANDrop Server Desktop](../docs/guides/SERVER_DESKTOP.md).
 
 ```powershell
 npm --prefix frontend test

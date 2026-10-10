@@ -33,7 +33,7 @@ Hai server realtime phục vụ các đường khởi chạy và test khác nhau
 | `chat/`, `file/`, `realtime/` | Chat bền vững, metadata file/thư mục, điều phối transfer và sự kiện |
 | `database/` | Cấu hình, pool JDBC, repository, service và migration runner |
 | `discovery/`, `network/`, `peer/`, `protocol/`, `security/`, `transfer/` | LAN discovery, TCP, framing, crypto, chunking, resume, swarm |
-| `src/main/resources/admin/` | Trang admin HTML do backend phục vụ |
+| `server/desktop/` | Giao diện server và quản trị tài khoản/workspace/database tích hợp |
 | `src/main/resources/db/migration/` | SQL migrations V1–V7; giữ tên và thứ tự |
 | `src/test/java/` | Unit/integration test, PostgreSQL suites và benchmark |
 

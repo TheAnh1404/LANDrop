@@ -18,7 +18,7 @@ mvn -pl backend compile exec:java "-Dexec.mainClass=com.landrop.database.Databas
 ## 1. Khởi chạy Server (LANDrop Server Desktop App)
 
 ### Cách A: Chạy độc lập Server & Bảng Điều Khiển Web (Control Center)
-Mặc định server lắng nghe tại cổng `3000` (HTTP) và `3001` (WebSocket). Lệnh dưới mở LANDrop Server Desktop và tự khởi động backend. Chia sẻ URL/QR trên trang Tổng quan để người dùng vào `/client`; nút Quản trị web mở `/admin`. Trang gốc HTTP là portal chọn điểm truy cập. Xem [hướng dẫn bảng điều khiển desktop](SERVER_DESKTOP.md).
+Mặc định server lắng nghe tại cổng `3000` (HTTP) và `3001` (WebSocket). Lệnh dưới mở LANDrop Server Desktop và tự khởi động backend. Chia sẻ URL/QR trên trang Tổng quan để người dùng vào `/client`; nút Quản trị dữ liệu mở các tab quản lý ngay trong desktop. Admin web đã được gỡ. Xem [hướng dẫn bảng điều khiển desktop](SERVER_DESKTOP.md).
 
 ```powershell
 npm run server
@@ -44,7 +44,7 @@ npm run server:backend
 npm run dev
 ```
 
-Mở `http://localhost:3000/connect`, nhập `http://localhost:3100`. Đăng ký/đăng nhập, tạo hoặc chọn workspace server trả về. Không dùng ID fixture như `ws_landrop_dev` với server thật. Admin Next.js tại `/admin` cần tài khoản SYSTEM_ADMIN.
+Mở `http://localhost:3000/connect`, nhập `http://localhost:3100`. Đăng ký/đăng nhập, tạo hoặc chọn workspace server trả về. Không dùng ID fixture như `ws_landrop_dev` với server thật. Quản trị tài khoản, workspace và database trong LANDrop Server Desktop.
 
 Để xem giao diện khi chưa cấu hình database, chọn **Khám phá bản demo**. Dữ liệu mẫu và mô phỏng được gắn nhãn, không gọi API thật.
 
