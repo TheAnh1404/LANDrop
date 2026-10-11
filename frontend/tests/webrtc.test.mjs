@@ -390,6 +390,23 @@ test('cancel during local history restore cannot send a late connection request'
   assert.equal(service.getState(), 'CANCELLED'); assert.equal(ws.sent.some(packet => packet.type === 'transfer.request'), false);
 });
 
+test('late old status and old PC events cannot steal or modify a newly requested peer session', async t => {
+  const { client, ws } = createConnectedRealtimeClient('conn-self');
+  const service = new WebRTCPeerService(client, { localUserId: 'alice', serverUrl: 'https://lan.test' }); t.after(() => service.destroy());
+  service.transferId = 'old-session'; service.role = 'offerer'; service.setState('DISCONNECTED');
+  const oldPc = service.initializePeerConnection(), oldStatus = oldPc.onconnectionstatechange, oldCandidate = oldPc.onicecandidate;
+  await service.requestConnection({ workspaceId: 'workspace', receiverConnectionId: 'bob-connection', targetUserId: 'bob' });
+  const request = ws.sent.find(packet => packet.type === 'transfer.request');
+  service.handleIncomingEnvelope({ type: 'transfer.status', requestId: 'old-cancel', payload: { transferId: 'old-session', status: 'CANCELLED', receiverConnectionId: 'bob-connection' } });
+  assert.equal(service.getState(), 'REQUESTING'); assert.equal(service.transferId, null);
+  service.handleIncomingEnvelope({ type: 'transfer.status', requestId: 'wrong-request', payload: { transferId: 'other-session', status: 'REQUESTED', receiverConnectionId: 'bob-connection' } });
+  assert.equal(service.transferId, null);
+  service.handleIncomingEnvelope({ type: 'transfer.status', requestId: request.requestId, payload: { transferId: 'new-session', status: 'REQUESTED', receiverConnectionId: 'bob-connection' } });
+  assert.equal(service.transferId, 'new-session'); assert.equal(service.getState(), 'WAITING_ACCEPT');
+  const count = ws.sent.length; oldPc.connectionState = 'connected'; oldStatus(); oldCandidate({ candidate: null });
+  assert.equal(ws.sent.length, count); assert.equal(service.getState(), 'WAITING_ACCEPT');
+});
+
 function createChatPeer(connectionId) {
   const { client } = createConnectedRealtimeClient(connectionId);
   const service = createService(client);

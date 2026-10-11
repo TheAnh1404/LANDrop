@@ -79,7 +79,7 @@ export class BrowserPeerManager {
         const entry = this.entry(peer, payload.workspaceId);
         const state = entry.service.getState();
         if (state === 'CONNECTED' || (['REQUESTING', 'WAITING_ACCEPT', 'SIGNALING', 'CONNECTING'].includes(state) && this.options.connectionId() < peer.connectionId)) {
-          this.options.send({ type: 'transfer.reject', payload: { transferId: payload.transferId, reason: 'Use the existing peer session.' } }); return true;
+          this.options.send({ type: 'transfer.reject', requestId: `glare-${payload.transferId}-${uuid()}`, payload: { transferId: payload.transferId, reason: 'Use the existing peer session.' } }); return true;
         }
         if (['REQUESTING', 'WAITING_ACCEPT', 'SIGNALING', 'CONNECTING'].includes(state)) entry.service.cancelConnection('Resolve simultaneous connection requests');
         entry.service.receiveIncomingRequest(payload);

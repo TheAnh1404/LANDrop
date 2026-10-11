@@ -45,9 +45,21 @@ public final class TransferSignalingHandler {
                     return;
                 }
                 String id = text(payload, "transferId");
-                TransferRecord record = coordinator.requireParticipant(id, actor, EVENT_TRANSFER_CANCEL.equals(type));
+                boolean ignoreCancelledSignal = payload.path("protocolVersion").asInt() == 2
+                        && Set.of(EVENT_WEBRTC_CANDIDATE, EVENT_WEBRTC_CANDIDATE_ALIAS, EVENT_WEBRTC_CONNECTION_STATUS).contains(type);
+                TransferRecord record = coordinator.requireParticipant(id, actor,
+                        EVENT_TRANSFER_CANCEL.equals(type) || ignoreCancelledSignal);
                 if (payload.has("toConnectionId") && !peerId(record, actor).equals(text(payload, "toConnectionId"))) {
                     throw error("FORBIDDEN", "Destination must be the bound peer.");
+                }
+                // A cancel can cross an already queued ICE/status frame on the
+                // other socket. V2 explicitly discards that frame, without
+                // relaying data, reviving the session or requiring an online peer.
+                if (ignoreCancelledSignal && record.status() == TransferStatus.CANCELLED) {
+                    if (!member(record.workspaceId(), actor.userId())) throw error("FORBIDDEN", "Workspace access is no longer available.");
+                    send.test(actor, EventEnvelope.event(type + "_ack", requestId,
+                            Map.of("transferId", id, "status", "ignored", "reason", "SESSION_CANCELLED")));
+                    return;
                 }
                 if (EVENT_TRANSFER_CANCEL.equals(type)) {
                     if (!member(record.workspaceId(), actor.userId())) throw error("FORBIDDEN", "Workspace access is no longer available.");

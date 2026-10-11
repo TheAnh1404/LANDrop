@@ -98,7 +98,7 @@ export function WebRTCProvider({ children }: { children: React.ReactNode }) {
         const entry = createEntry({ workspaceId: payload.workspaceId, receiverConnectionId: payload.senderConnectionId, targetUserId: payload.senderUserId, targetDeviceId: payload.senderDeviceId, targetDeviceName: payload.senderDeviceName });
         const state = entry.service.getState();
         if (state === 'CONNECTED' || (['REQUESTING', 'WAITING_ACCEPT', 'SIGNALING', 'CONNECTING'].includes(state) && (client.getConnectionId() || '') < payload.senderConnectionId)) {
-          client.sendEnvelope({ type: 'transfer.reject', payload: { transferId: payload.transferId, reason: 'An existing connection is being used.' } }); return;
+          client.sendEnvelope({ type: 'transfer.reject', requestId: `glare-${payload.transferId}-${Date.now()}`, payload: { transferId: payload.transferId, reason: 'An existing connection is being used.' } }); return;
         }
         if (['REQUESTING', 'WAITING_ACCEPT', 'SIGNALING', 'CONNECTING'].includes(state)) entry.service.cancelConnection('Resolve simultaneous connection requests');
         entry.service.receiveIncomingRequest(payload); pending.current.set(payload.transferId, entry);

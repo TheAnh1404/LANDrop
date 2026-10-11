@@ -21,13 +21,14 @@ Manager giữ tối đa hai peer; đổi cuộc trò chuyện giữ tác vụ �
 
 ## DataChannel
 
-Hai kênh reliable ordered: `landrop-p2p` cho chat/control và `landrop-file-v2` cho block/header/binary/finish/pause/cancel. Cùng chia sẻ SCTP nên không đảm bảo độ trễ bằng việc tách kênh. Một block tệp đang chờ ACK mỗi peer, kiểm soát `bufferedAmount` ở 256 KiB.
+Ba kênh reliable ordered: `landrop-p2p` cho control, `landrop-chat-v2` cho chat/receipt/ACK và `landrop-file-v2` cho block/header/binary/finish/pause/cancel. Chat không đặt maxRetransmits/maxPacketLifeTime: không đổi độ tin cậy lấy tốc độ. Nếu kênh chat chưa mở hoặc đóng riêng, chat dùng control. Cùng chia sẻ SCTP nên không đảm bảo độ trễ chỉ bằng việc tách kênh. Một block tệp đang chờ ACK mỗi peer; sender chờ khi `bufferedAmount` vượt 32 KiB và nhường browser task mỗi 64 KiB. Một frame gửi tiếp có thể vượt ngưỡng thêm tối đa 16 KiB.
 
-Control JSON có `{v:2,type,...}`. `HELLO` trao đổi version, maxMessageSize, blockSize, durableChat và disk. `READY` xác nhận version 2. Client thực không nhận legacy FILE/CHAT qua đường v1; peer cũ cần nâng cấp, không tự công bố checksum/resume.
+Control JSON có `{v:2,type,...}`. `HELLO` trao đổi version, maxMessageSize, blockSize, durableChat, chatReceipt và disk. Chỉ gửi `CHAT_RECEIVED` khi peer đã quảng bá `chatReceipt: true`, giữ tương thích peer v2 trước thay đổi này. `READY` xác nhận version 2. Client thực không nhận legacy FILE/CHAT qua đường v1; peer cũ cần nâng cấp, không tự công bố checksum/resume.
 
 | Thông điệp | Nội dung / điều kiện |
 | --- | --- |
-| `CHAT` | UUID, text tối đa 16000 byte UTF-8, timestamp, replyToId tùy chọn |
+| `CHAT` | UUID, text tối đa 16000 byte UTF-8, timestamp, replyToId và sequence tùy chọn; sequence tăng theo sender/scope để replay offline đúng thứ tự sau reload |
+| `CHAT_RECEIVED` | UUID; bên nhận đã gọi callback hiển thị trong bộ nhớ, chưa bảo đảm lưu bền, không phải đã đọc hoặc đã paint lên màn hình |
 | `CHAT_ACK` | UUID; chỉ sau khi receiver commit IndexedDB; trùng UUID/nội dung chỉ ACK lại |
 | `OFFER` | UUID tệp, name, size, mime, SHA-256 toàn tệp; chưa gửi byte trước consent |
 | `ACCEPT` | UUID, offset checkpoint; biên 1 MiB hoặc EOF |
@@ -53,7 +54,11 @@ Sai ID, offset, biên block, kích thước, hash hay framing bị từ chối t
 
 ## Chat: ý nghĩa ACK
 
-Sender commit history + outbox trong cùng IndexedDB transaction với durability strict trước gửi. Receiver commit trước ACK; lỗi quota/store không ACK. Sender cũng commit delivered + xóa outbox trước hiển thị delivered. Trạng thái queued → sending → delivered, hoặc failed/cancelled. Delivered không đồng nghĩa đã đọc.
+Khi online, sender khởi động transaction strict history + outbox song song với gửi mạng; không chờ flush đĩa trước khi gửi. `sendChat()` chỉ resolve sau journal ban đầu commit. Khi offline, chỉ tin đã commit outbox mới được bảo đảm replay sau crash/reload. Tin đang gửi online nhưng chưa journal có cửa sổ mất bản lưu phía gửi nếu crash; giao diện chưa đánh dấu delivered ở cửa sổ này.
+
+Receiver xác thực và dedup bằng index đã restore, hiển thị ngay ở trạng thái `received` (chưa lưu bền), phát receipt tùy khả năng peer và ghi strict transaction ở nền. Mỗi tin có commit barrier riêng: một lần ghi chậm không chặn hiển thị tin tiếp theo. Lỗi quota/store hiện `storageError`, không phát ACK và không đổi sang delivered. Sender ACK chờ journal ban đầu rồi commit delivered + xóa outbox trước khi công bố delivered. Cancel/clear chờ các write đang chạy để tránh outbox hoặc history sống lại sau thao tác. Delivered không đồng nghĩa đã đọc.
+
+RTT receipt và RTT durable ACK đo riêng bằng `performance.now()` tại sender, không trừ đồng hồ hai máy và không làm tròn tối thiểu thành 1 ms. Receipt RTT tính từ lần gửi mạng đầu tiên đến phản hồi callback bên nhận; không phải thời gian một chiều hay paint. `/client` cập nhật một DOM message mỗi sự kiện và dùng account/workspace/device làm khóa hội thoại, không dùng connectionId có thể đổi sau Wi-Fi reconnect. Kênh file đóng đưa toàn service về DISCONNECTED để reconnect; không để engine detached trong service CONNECTED. Hết timeout HELLO hoặc quá receive window cũng yêu cầu reconnect rõ ràng.
 
 Retry cùng UUID, tối đa 5 lần, backoff 1.5–15 giây; vẫn giữ outbox sau thất bại để người dùng gửi lại. Reconnect/reload flush outbox sau capability exchange. Outbox giới hạn 1000; restore hiển thị 1000 tin gần nhất, dedup dựa trên dữ liệu đã lưu. Logout giữ dữ liệu trong origin nhưng không gửi tiếp; đăng nhập tài khoản khác dùng scope khác. Xóa history đồng thời xóa outbox.
 
@@ -73,6 +78,6 @@ FINISH lặp tối đa 3 lần khi COMPLETE thất lạc. Receiver đã complete
 
 ## Bộ nhớ và kiểm thử
 
-Disk path: một block nguồn 1 MiB, một block nhận 1 MiB, frame tối đa 16 KiB, sender high water 256 KiB, hàng đợi nhận giới hạn khoảng 2.125 MiB. Hash cũng đọc từng 1 MiB. Đây là bounds do ứng dụng đặt; không phải trần RSS của Chrome, SCTP, OS cache hoặc file nguồn do người dùng chọn.
+Disk path: một block nguồn 1 MiB, một block nhận 1 MiB, frame tối đa 16 KiB, sender chờ trên ngưỡng 32 KiB, hàng đợi nhận giới hạn khoảng 2.125 MiB. Hash nguồn và hash từng block chạy worker; đọc từng 1 MiB, tránh chiếm main thread của chat. Đây là bounds do ứng dụng đặt; không phải trần RSS của Chrome, SCTP, OS cache hoặc file nguồn do người dùng chọn.
 
 Chạy `npm --prefix frontend test`, `npm run p2p:check`, test signaling Java và hai browser scripts trong [hướng dẫn LAN](../guides/P2P_LAN.md). Báo cáo chính xác bài đã chạy tại [P2P_IMPLEMENTATION_REPORT](../architecture/P2P_IMPLEMENTATION_REPORT.md).

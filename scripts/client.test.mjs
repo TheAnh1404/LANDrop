@@ -69,9 +69,11 @@ test('bundled realtime chat updates only the arriving message and keeps device h
   context.managerOptions.onChat(peer, message('one', 'First visible message'), 'team');
   const firstNode = elements.get('msg-one');
   context.managerOptions.onChat(peer, message('two', 'Second visible message'), 'team');
+  const secondNode = elements.get('msg-two');
   assert.equal(elements.get('msg-one'), firstNode, 'Unrelated message DOM must remain intact');
   assert.equal(elements.get('messages-stream').children.length, 2);
   context.managerOptions.onChat(peer, { ...message('two', 'Second visible message'), ack: true, status: 'delivered' }, 'team');
+  assert.equal(elements.get('msg-two'), secondNode, 'Receiver journal completion must not rebuild its message');
   assert.equal(elements.get('messages-stream').children.length, 2, 'Storage completion updates the same message');
   assert.equal(run('selectedPeer.connectionId'), 'new-connection');
   assert.equal(run(`conversationForPeer({ userId: 'bob', deviceId: 'bob-laptop', connectionId: 'another-connection' }).length`), 2);

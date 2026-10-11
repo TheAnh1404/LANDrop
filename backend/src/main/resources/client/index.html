@@ -1926,6 +1926,8 @@
     }
 
     // --- CHAT TIMELINE RENDERING ---
+    const chatTimeFormat = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' });
+    let chatScrollFrame = null;
     function conversationForPeer(peer, conversationWorkspace = workspaceId) {
       // A WebSocket connection ID changes after Wi-Fi reconnect. Conversation
       // identity must match the engine's account/workspace/device storage scope.
@@ -1936,11 +1938,30 @@
       if (!message) return;
       const stream = document.getElementById('messages-stream');
       const existing = document.getElementById('msg-' + message.id);
+      const previous = existing?._chatMessage;
+      if (existing?.parentNode === stream && previous?.type === 'text' && message.type === 'text'
+          && previous.text === message.text && previous.isSelf === message.isSelf
+          && !previous.storageError && !message.storageError && previous.status !== 'cancelled' && message.status !== 'cancelled') {
+        // Persistence and receipts do not change the message body. In
+        // particular a receiver's journal commit needs no DOM mutation at all.
+        existing._chatMessage = message;
+        const tick = existing.querySelector('.ack-tick');
+        if (tick) { const text = message.pending ? '⏳' : message.ack ? '✓✓' : '✓'; if (tick.textContent !== text) tick.textContent = text; tick.title = chatReceiptTitle(message); }
+        if (message.ack) existing.querySelector('[data-chat-actions]')?.remove();
+        return;
+      }
       const element = createMessageElement(message);
       // Receipt/journal updates must not replay the message entrance animation.
       element.style.animation = 'none';
       if (existing && existing.parentNode === stream) existing.replaceWith(element);
-      else { stream.appendChild(element); scrollChatToBottom(); }
+      else {
+        stream.appendChild(element);
+        // Keep synchronous layout out of the receive/receipt path. Multiple
+        // arrivals share one scroll in the next display frame.
+        if (window.requestAnimationFrame) {
+          if (chatScrollFrame === null) chatScrollFrame = window.requestAnimationFrame(() => { chatScrollFrame = null; scrollChatToBottom(); });
+        } else scrollChatToBottom();
+      }
     }
     function renderChatTimeline() {
       const stream = document.getElementById('messages-stream');
@@ -1958,11 +1979,12 @@
 
     function createMessageElement(msg) {
       const group = document.createElement('div');
+      group._chatMessage = msg;
       group.className = `msg-group ${msg.isSelf ? 'self' : 'peer'}`;
       group.style.userSelect = 'text';
       group.id = `msg-${msg.id}`;
 
-      const timeStr = new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      const timeStr = chatTimeFormat.format(new Date(msg.timestamp));
 
       if (msg.type === 'file') {
         const isTransferring = msg.transferStatus === 'transferring';
@@ -2010,7 +2032,7 @@
           </div>
         `;
         if (p2pManager && msg.isSelf && !msg.ack && msg.status !== 'cancelled') {
-          const actions = document.createElement('div'); actions.style.cssText = 'display:flex;gap:10px;margin-top:5px;font-size:10px';
+          const actions = document.createElement('div'); actions.setAttribute('data-chat-actions', ''); actions.style.cssText = 'display:flex;gap:10px;margin-top:5px;font-size:10px';
           for (const [action, label] of [['retry','Gửi lại'], ['cancel','Hủy gửi']]) {
             const button = document.createElement('button'); button.textContent = label; button.onclick = () => p2pMessageAction(action, msg.id); actions.append(button);
           }
@@ -2019,10 +2041,11 @@
         if (msg.status === 'cancelled') { const label = document.createElement('small'); label.textContent = 'Đã hủy gửi'; group.append(label); }
         if (msg.storageError) { const label = document.createElement('small'); label.textContent = 'Chưa lưu được lịch sử: ' + msg.storageError; group.append(label); }
         const tick = group.querySelector('.ack-tick');
-        if (tick) tick.title = msg.ack ? 'Bên nhận đã lưu lịch sử' : msg.received ? 'Bên nhận đã hiển thị · đang lưu lịch sử' : msg.pending ? 'Chờ kết nối hoặc lưu outbox' : 'Đã gửi qua mạng';
+        if (tick) tick.title = chatReceiptTitle(msg);
       }
       return group;
     }
+    function chatReceiptTitle(message) { return message.ack ? 'Bên nhận đã lưu lịch sử' : message.received ? 'Bên nhận đã hiển thị · đang lưu lịch sử' : message.pending ? 'Chờ kết nối hoặc lưu outbox' : 'Đã gửi qua mạng'; }
 
     function scrollChatToBottom() {
       const timeline = document.getElementById('chat-timeline');

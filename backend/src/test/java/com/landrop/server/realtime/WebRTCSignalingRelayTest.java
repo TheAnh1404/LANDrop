@@ -419,6 +419,24 @@ class WebRTCSignalingRelayTest {
         assertNull(b.socket().receive(100));
     }
 
+    @Test void v2LateIceAndStatusAfterCancelAreIgnoredWithoutForwardingOrRevivingSession() throws Exception {
+        Peer a = peer(), b = peer(), outsider = peer(); String id = request(a, b); accept(a, b, id);
+        command(a, "transfer.cancel", Map.of("transferId", id)); event(a, "transfer.status"); event(b, "transfer.cancel");
+        for (String type : List.of("webrtc.candidate", "webrtc.ice_candidate", "webrtc.connection-status")) {
+            Map<String, Object> payload = new HashMap<>(Map.of("transferId", id, "protocolVersion", 2, "status", "connected"));
+            payload.put("candidate", null);
+            command(b, type, payload);
+            JsonNode ack = event(b, type + "_ack");
+            assertEquals("ignored", ack.path("payload").path("status").asText());
+            assertEquals("SESSION_CANCELLED", ack.path("payload").path("reason").asText());
+            assertEquals(TransferStatus.CANCELLED, coordinator.getTransfer(id).orElseThrow().status());
+            assertNull(a.socket().receive(100));
+            error(outsider, "FORBIDDEN", type, payload);
+        }
+        auth.members.remove(b.identity().user().id());
+        error(b, "FORBIDDEN", "webrtc.candidate", Map.of("transferId", id, "protocolVersion", 2, "candidate", candidate()));
+    }
+
     @Test void connectedLeaseRenewsBeyondInitialDeadlineAndRechecksMembership() throws Exception {
         Peer a = peer(), b = peer(); String id = request(a, b); accept(a, b, id); offer(a, b, id); answer(b, a, id);
         relay(a, b, id, "webrtc.connection-status", "status", "connected");

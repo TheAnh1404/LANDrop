@@ -100,6 +100,7 @@ export interface ChatAckMessage {
 
 export interface P2PChatMessage {
   id: string;
+  sequence?: number;
   text: string;
   senderName: string;
   timestamp: number;

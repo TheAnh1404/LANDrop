@@ -64,6 +64,8 @@ export class WebRTCPeerService {
   private chatReceiveRttMs?: number;
   private chatDurableRttMs?: number;
   private resourceEpoch = 0;
+  private connectionRequestId: string | null = null;
+  private sessionConnectionId: string | null = null;
   private targetDeviceId: string | null = null;
   private generation = 0;
   private coordinatedConnected = false;
@@ -98,6 +100,7 @@ export class WebRTCPeerService {
       onChat: message => { if (message.direction === 'received') this.handleChatTyping({ type: 'CHAT_TYPING', isTyping: false }); const index = this.chatMessages.findIndex(item => item.id === message.id); if (index < 0) this.chatMessages.push(message); else this.chatMessages[index] = message; this.emitChatMessage(message); },
       onTasks: tasks => { this.tasks = tasks; this.receivedFiles = this.receivedFiles.filter(file => tasks.some(task => task.id === file.id)); this.taskListeners.forEach(listener => listener(tasks)); },
       onError: message => { this.lastError = message; this.emitDiagnostics(); },
+      onDisconnect: reason => { this.setState('DISCONNECTED', reason); this.cleanupPeerResources(); },
       onChatTiming: timing => { if (timing.stage === 'received') this.chatReceiveRttMs = timing.roundTripMs; else this.chatDurableRttMs = timing.roundTripMs; this.emitDiagnostics(); },
       onReceived: task => {
         const item: ReceivedFileItem = { id: task.id, fileName: task.name, fileSize: task.size, mimeType: task.mime, blobUrl: task.blobUrl, receivedAt: Date.now(), senderName: this.targetDeviceName || 'Peer' };
@@ -397,7 +400,9 @@ export class WebRTCPeerService {
       throw new Error(`Cannot initiate connection from state: ${this.state}`);
     }
 
-    this.cleanupPeerResources();
+    if (this.transferId && this.sessionConnectionId === this.realtimeClient.getConnectionId()) this.realtimeClient.sendEnvelope({ type: 'transfer.cancel', requestId: `retire-${uuid()}`, payload: { transferId: this.transferId, reason: 'Replace disconnected peer session' } });
+    this.cleanupPeerResources(); this.transferId = null;
+    this.sessionConnectionId = this.realtimeClient.getConnectionId();
     this.role = 'offerer';
     this.workspaceId = params.workspaceId;
     this.targetConnectionId = params.receiverConnectionId;
@@ -411,13 +416,16 @@ export class WebRTCPeerService {
     this.loadChatHistory();
     this.setState('REQUESTING');
     const resourceEpoch = this.resourceEpoch;
-    const reliable = this.ensureReliable(); if (reliable) await reliable.initialized;
+    const reliable = this.ensureReliable();
+    try { if (reliable) await reliable.initialized; }
+    catch (error) { if (this.resourceEpoch === resourceEpoch) { this.setState('FAILED', 'Cannot load local chat history. Check browser storage permissions.'); this.cleanupPeerResources(); } throw error; }
     if (this.resourceEpoch !== resourceEpoch || this.getState() !== 'REQUESTING') return;
     this.startSignalingTimeout();
 
+    this.connectionRequestId = `req-${uuid()}`;
     const sent = this.realtimeClient.sendEnvelope({
       type: 'transfer.request',
-      requestId: `req-${uuid()}`,
+      requestId: this.connectionRequestId,
       payload: {
         protocolVersion: 2,
         workspaceId: params.workspaceId,
@@ -450,6 +458,7 @@ export class WebRTCPeerService {
     this.cleanupPeerResources();
     this.role = 'answerer';
     this.transferId = targetId;
+    this.sessionConnectionId = this.realtimeClient.getConnectionId();
     this.workspaceId = this.incomingRequest.workspaceId;
     this.targetConnectionId = this.incomingRequest.senderConnectionId;
     this.targetUserId = this.incomingRequest.senderUserId;
@@ -503,7 +512,7 @@ export class WebRTCPeerService {
   // =========================================================================
 
   public cancelConnection(reason = 'Cancelled by user'): void {
-    if (this.transferId) {
+    if (this.transferId && (!this.configOptions?.localUserId || this.sessionConnectionId === this.realtimeClient.getConnectionId())) {
       this.realtimeClient.sendEnvelope({
         type: 'transfer.cancel',
         requestId: `can-${Date.now()}`,
@@ -566,6 +575,9 @@ export class WebRTCPeerService {
     if (type === 'error' && this.transferId && (envelope.requestId?.startsWith(`renew-${this.transferId}-`) || envelope.requestId?.startsWith(`restart-${this.transferId}-`))) {
       this.setState('FAILED', envelope.error?.message || 'Peer authorization could not be renewed.'); this.cleanupPeerResources(); return;
     }
+    if (type === 'error' && this.connectionRequestId && envelope.requestId === this.connectionRequestId) {
+      this.setState('FAILED', envelope.error?.message || 'Peer connection request failed.'); this.cleanupPeerResources(); return;
+    }
     if (type.startsWith('webrtc.')
         && (payload.transferId !== this.transferId || (payload.generation ?? 0) !== this.generation)
         && !['webrtc.restart', 'webrtc.restart_ack'].includes(type)) return;
@@ -578,7 +590,7 @@ export class WebRTCPeerService {
       }
 
       case 'transfer.status': {
-        this.handleTransferStatus(payload, envelope.timestamp);
+        this.handleTransferStatus(payload, envelope.timestamp, envelope.requestId);
         break;
       }
 
@@ -658,13 +670,15 @@ export class WebRTCPeerService {
     }
   }
 
-  private handleTransferStatus(payload: Record<string, any>, serverTimestamp?: string) {
+  private handleTransferStatus(payload: Record<string, any>, serverTimestamp?: string, requestId?: string | null) {
     const id = payload.transferId;
     const status = payload.status;
 
     if (!id) return;
 
-    if (this.role === 'offerer' && this.state === 'REQUESTING' && (!this.targetConnectionId || !payload.receiverConnectionId || payload.receiverConnectionId === this.targetConnectionId)) {
+    if (this.role === 'offerer' && this.state === 'REQUESTING' && ['REQUESTED', 'PENDING'].includes(status)
+        && (!requestId || !this.connectionRequestId || requestId === this.connectionRequestId)
+        && (!this.targetConnectionId || !payload.receiverConnectionId || payload.receiverConnectionId === this.targetConnectionId)) {
       this.transferId = id;
       if (status === 'REQUESTED' || status === 'PENDING') {
         this.setState('WAITING_ACCEPT');
@@ -847,15 +861,20 @@ export class WebRTCPeerService {
     const rtcConfig = getRtcConfiguration(this.configOptions);
     const pc = new RTCPeerConnection(rtcConfig);
     this.pc = pc;
+    const resourceEpoch = this.resourceEpoch;
+    const current = () => this.pc === pc && this.resourceEpoch === resourceEpoch;
 
     pc.onicecandidate = event => {
+      if (!current()) return;
       if (this.transferId && this.targetConnectionId) {
         this.realtimeClient.sendEnvelope({
           type: 'webrtc.candidate',
+          requestId: `candidate-${this.transferId}-${this.generation}-${uuid()}`,
           payload: {
             transferId: this.transferId,
             generation: this.generation,
             toConnectionId: this.targetConnectionId,
+            protocolVersion: this.configOptions?.localUserId ? 2 : 1,
             candidate: event.candidate ? {
               candidate: event.candidate.candidate,
               sdpMid: event.candidate.sdpMid,
@@ -868,6 +887,7 @@ export class WebRTCPeerService {
     };
 
     pc.oniceconnectionstatechange = () => {
+      if (!current()) return;
       this.emitDiagnostics();
       if (pc.iceConnectionState === 'failed') {
         if (this.configOptions?.localUserId) { this.recoverIce(); return; }
@@ -877,6 +897,7 @@ export class WebRTCPeerService {
     };
 
     pc.onconnectionstatechange = () => {
+      if (!current()) return;
       this.emitDiagnostics();
       if (pc.connectionState === 'connected') {
         if (this.iceRecoveryTimer) clearTimeout(this.iceRecoveryTimer); this.iceRecoveryTimer = null;
@@ -893,6 +914,7 @@ export class WebRTCPeerService {
     };
 
     pc.ondatachannel = event => {
+      if (!current()) { event.channel.close(); return; }
       if (event.channel.label === 'landrop-file-v2') { this.setupFileChannel(event.channel); return; }
       if (event.channel.label === 'landrop-chat-v2') { this.setupChatChannel(event.channel); return; }
       if (this.configOptions?.localUserId && event.channel.label !== 'landrop-p2p') { event.channel.close(); return; }
@@ -1747,9 +1769,11 @@ export class WebRTCPeerService {
     if (this.transferId) {
       this.realtimeClient.sendEnvelope({
         type: 'webrtc.connection-status',
+        requestId: `rtc-status-${this.transferId}-${this.generation}-${uuid()}`,
         payload: {
           transferId: this.transferId,
           generation: this.generation,
+          protocolVersion: this.configOptions?.localUserId ? 2 : 1,
           status,
         },
       });
@@ -1795,6 +1819,7 @@ export class WebRTCPeerService {
 
   private cleanupPeerResources() {
     this.resourceEpoch++;
+    this.connectionRequestId = null;
     if (this.iceRecoveryTimer) clearTimeout(this.iceRecoveryTimer); this.iceRecoveryTimer = null;
     this.iceRestartPending = false; this.leaseDeadline = 0;
     this.reliable?.detach(); this.generation = 0; this.coordinatedConnected = false;

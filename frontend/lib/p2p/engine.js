@@ -24,7 +24,7 @@ export class ReliablePeer {
   key(type, id = '') { return `${this.scope}|${type}|${id}`; }
   report(error) { this.options.onError?.(error instanceof Error ? error.message : String(error)); }
   emitTasks() { this.options.onTasks?.([...this.tasks.values()].map(task => ({ ...task }))); }
-  emitChat(message) { this.options.onChat?.({ ...message }); }
+  emitChat(message) { if (!this.clearingChat && !this.disposed) this.options.onChat?.({ ...message }); }
   async restore() {
     const messages = await this.store.list(this.key('chat'));
     this.chatSequence = 0;
@@ -45,6 +45,9 @@ export class ReliablePeer {
     this.initialized.then(() => {
       if (this.control !== control || control.readyState !== 'open') return;
       this.send('HELLO', { version: VERSION, blockSize: BLOCK_SIZE, maxMessageSize: this.maxMessageSize, durableChat: !this.store.memory, chatReceipt: true, disk: this.io.disk });
+      this.helloTimer = setTimeout(() => {
+        if (this.control === control && !this.capable) { const reason = 'Peer capability handshake timed out. Update both clients and reconnect.'; this.report(reason); this.detach(); this.options.onDisconnect?.(reason); }
+      }, this.options.timeoutMs || 30000);
     }).catch(error => this.report(error));
   }
   setFileChannel(channel) { this.files = channel; }
@@ -79,7 +82,7 @@ export class ReliablePeer {
     const size = typeof data === 'string' ? data.length * 2 : data.byteLength;
     this.queuedBytes += size;
     if (this.queuedBytes > 2 * BLOCK_SIZE + 131072) {
-      this.queuedBytes -= size; this.report('Peer exceeded the receiver buffer window.'); this.detach(); return true;
+      this.queuedBytes -= size; const reason = 'Peer exceeded the receiver buffer window.'; this.report(reason); this.detach(); this.options.onDisconnect?.(reason); return true;
     }
     // Control/chat are processed separately so a disk flush cannot block chat ACKs.
     const filePacket = ['BLOCK', 'BINARY', 'FINISH', 'CANCEL', 'PAUSE'].includes(packet.type);
@@ -106,9 +109,11 @@ export class ReliablePeer {
       case 'HELLO':
         if (packet.version !== VERSION || !Number.isSafeInteger(packet.maxMessageSize) || packet.maxMessageSize < 1024) throw new Error('Unsupported peer capabilities.');
         this.capable = true; this.remote = packet; this.options.onReady?.(packet);
+        clearTimeout(this.helloTimer);
         this.send('READY', { version: VERSION }); await this.flushOutbox(); void this.pump(); return;
       case 'READY':
         if (packet.version !== VERSION) throw new Error('Unsupported peer version.');
+        clearTimeout(this.helloTimer);
         this.capable = true; await this.flushOutbox(); void this.pump(); return;
       case 'CHAT': return this.receiveChat(packet);
       case 'CHAT_ACK': return this.ackChat(packet.id);
@@ -505,6 +510,7 @@ export class ReliablePeer {
     return { blobUrl, hash: task.hash, savedTo: task.savedTo };
   }
   detach() {
+    clearTimeout(this.helloTimer);
     this.capable = false; this.control = null; this.files = null; this.chat = null;
     for (const timer of this.retryTimers.values()) clearTimeout(timer); this.retryTimers.clear(); this.attempts.clear();
     for (const [key, waiter] of this.waiters) { clearTimeout(waiter.timer); waiter.reject(new Error('Peer disconnected.')); this.waiters.delete(key); }

@@ -5,7 +5,7 @@ export interface P2PTask {
   offset: number; speed?: number; verified?: boolean; disk?: boolean; error?: string; savedTo?: string; createdAt: number; updatedAt?: number;
 }
 export interface P2PMessage {
-  id: string; text: string; senderName: string; timestamp: number; replyToId?: string;
+  id: string; text: string; senderName: string; timestamp: number; replyToId?: string; sequence?: number;
   direction: 'sent' | 'received'; type: 'text' | 'file'; ack?: boolean; pending?: boolean; status?: string;
   received?: boolean; receiveRttMs?: number; durableRttMs?: number; storageError?: string;
 }
@@ -14,6 +14,7 @@ export interface ReliablePeerOptions {
   onChat?: (message: P2PMessage) => void; onTasks?: (tasks: P2PTask[]) => void;
   onOffer?: (task: P2PTask) => void; onReady?: (capabilities: unknown) => void; onError?: (message: string) => void;
   onChatTiming?: (timing: { id: string; stage: 'received' | 'durable'; roundTripMs: number }) => void;
+  onDisconnect?: (reason: string) => void;
   onReceived?: (task: P2PTask & { blobUrl: string; hash: string; savedTo: string }) => void;
 }
 export class ReliablePeer {
