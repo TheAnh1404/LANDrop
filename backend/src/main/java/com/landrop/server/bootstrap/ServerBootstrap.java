@@ -117,6 +117,7 @@ public class ServerBootstrap {
         if ("production".equalsIgnoreCase(config.getEnvironment())) {
             String adminPassword = com.landrop.config.EnvironmentFiles.resolve("landrop.admin.password", "ADMIN_PASSWORD");
             requireProductionAdminPassword(adminPassword);
+            com.landrop.auth.config.AuthConfig.validateProductionSecrets();
         }
 
         // Persistent APIs are exposed only after connectivity and schema verification succeed.

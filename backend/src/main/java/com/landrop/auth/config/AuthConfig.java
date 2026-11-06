@@ -40,13 +40,58 @@ public final class AuthConfig {
         return port;
     }
 
+    public static boolean isProduction() {
+        String env = getResolvedValue("landrop.environment", "NODE_ENV");
+        if (env == null || env.isBlank()) {
+            env = getResolvedValue("landrop.env", "ENVIRONMENT");
+        }
+        if (env == null || env.isBlank()) {
+            env = getResolvedValue("app.env", "APP_ENV");
+        }
+        return env != null && (env.equalsIgnoreCase("production") || env.equalsIgnoreCase("prod"));
+    }
+
+    public static void validateProductionSecret(String name, String secret, String defaultSecret) {
+        if (secret == null || secret.isBlank()) {
+            throw new IllegalStateException("Production requires " + name + " to be explicitly configured.");
+        }
+        String trimmed = secret.trim();
+        if (trimmed.equals(defaultSecret)) {
+            throw new IllegalStateException("Production cannot use the hardcoded default " + name + ".");
+        }
+        if (trimmed.startsWith("replace-with-") || trimmed.contains("example") || trimmed.contains("your-secret")) {
+            throw new IllegalStateException("Production cannot use placeholder " + name + ".");
+        }
+        if (trimmed.length() < 32) {
+            throw new IllegalStateException("Production requires " + name + " to have at least 32 characters (256 bits).");
+        }
+    }
+
+    public static void validateProductionSecrets() {
+        String accessSecret = getResolvedValue("landrop.jwt.access.secret", "JWT_ACCESS_SECRET");
+        validateProductionSecret("JWT_ACCESS_SECRET", accessSecret, DEFAULT_ACCESS_SECRET);
+
+        String refreshSecret = getResolvedValue("landrop.jwt.refresh.secret", "JWT_REFRESH_SECRET");
+        validateProductionSecret("JWT_REFRESH_SECRET", refreshSecret, DEFAULT_REFRESH_SECRET);
+
+        if (accessSecret.trim().equals(refreshSecret.trim())) {
+            throw new IllegalStateException("Production requires distinct JWT_ACCESS_SECRET and JWT_REFRESH_SECRET.");
+        }
+    }
+
     public static String getJwtAccessSecret() {
         String secret = getResolvedValue("landrop.jwt.access.secret", "JWT_ACCESS_SECRET");
+        if (isProduction()) {
+            validateProductionSecret("JWT_ACCESS_SECRET", secret, DEFAULT_ACCESS_SECRET);
+        }
         return (secret != null && !secret.isBlank()) ? secret.trim() : DEFAULT_ACCESS_SECRET;
     }
 
     public static String getJwtRefreshSecret() {
         String secret = getResolvedValue("landrop.jwt.refresh.secret", "JWT_REFRESH_SECRET");
+        if (isProduction()) {
+            validateProductionSecret("JWT_REFRESH_SECRET", secret, DEFAULT_REFRESH_SECRET);
+        }
         return (secret != null && !secret.isBlank()) ? secret.trim() : DEFAULT_REFRESH_SECRET;
     }
 
