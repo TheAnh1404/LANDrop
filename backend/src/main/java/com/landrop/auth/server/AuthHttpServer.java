@@ -11,8 +11,10 @@ import com.fasterxml.jackson.databind.module.SimpleModule;
 import com.landrop.auth.config.AuthConfig;
 import com.landrop.auth.dto.*;
 import com.landrop.auth.exception.AuthException;
+import com.landrop.auth.exception.RateLimitException;
 import com.landrop.auth.exception.ValidationException;
 import com.landrop.auth.repository.RefreshTokenRepository;
+import com.landrop.auth.security.AuthRateLimiter;
 import com.landrop.auth.security.JwtClaims;
 import com.landrop.auth.security.JwtService;
 import com.landrop.auth.service.AuthService;
@@ -55,6 +57,7 @@ public class AuthHttpServer {
     private final com.landrop.device.service.DeviceService deviceService;
     private final com.landrop.device.server.DeviceHttpHandler deviceHttpHandler;
     private final ObjectMapper objectMapper;
+    private final AuthRateLimiter rateLimiter;
     private HttpServer httpServer;
     private byte[] cachedPortalHtml;
     private byte[] cachedClientHtml;
@@ -105,6 +108,11 @@ public class AuthHttpServer {
         );
         this.deviceService = new com.landrop.device.service.DeviceService(new com.landrop.database.repository.DeviceRepository(), null);
         this.deviceHttpHandler = new com.landrop.device.server.DeviceHttpHandler(this.deviceService, authMiddleware, objectMapper);
+        this.rateLimiter = new AuthRateLimiter();
+    }
+
+    public AuthRateLimiter getRateLimiter() {
+        return rateLimiter;
     }
 
     public static ObjectMapper createObjectMapper() {
@@ -212,11 +220,17 @@ public class AuthHttpServer {
             return;
         }
 
+        String ip = AuthHttpHandler.getClientIp(exchange);
         try {
+            rateLimiter.checkIpRegister(ip);
             RegisterRequest req = parseRequestBody(exchange, RegisterRequest.class);
             AuthResponse response = authService.register(req);
+            rateLimiter.recordIpRegisterAttempt(ip);
             sendJsonResponse(exchange, 201, response);
         } catch (Exception e) {
+            if (!(e instanceof RateLimitException)) {
+                rateLimiter.recordIpRegisterAttempt(ip);
+            }
             handleError(exchange, e);
         }
     }
@@ -229,11 +243,28 @@ public class AuthHttpServer {
             return;
         }
 
+        String ip = AuthHttpHandler.getClientIp(exchange);
+        String accountKey = null;
         try {
+            rateLimiter.checkIpLogin(ip);
+
             LoginRequest req = parseRequestBody(exchange, LoginRequest.class);
+            accountKey = req.resolvedIdentifier() != null ? req.resolvedIdentifier().toLowerCase(java.util.Locale.ROOT) : "";
+
+            if (!accountKey.isEmpty()) {
+                rateLimiter.checkAccountLogin(accountKey);
+            }
+
             AuthResponse response = authService.loginClient(req);
+            rateLimiter.recordAccountLoginSuccess(accountKey);
             sendJsonResponse(exchange, 200, response);
         } catch (Exception e) {
+            if (!(e instanceof RateLimitException)) {
+                rateLimiter.recordIpLoginAttempt(ip);
+                if (accountKey != null && !accountKey.isEmpty()) {
+                    rateLimiter.recordAccountLoginFailure(accountKey);
+                }
+            }
             handleError(exchange, e);
         }
     }
@@ -443,6 +474,10 @@ public class AuthHttpServer {
         String errorName;
         String message = e.getMessage();
 
+        if (e instanceof RateLimitException rle) {
+            exchange.getResponseHeaders().set("Retry-After", String.valueOf(rle.getRetryAfterSeconds()));
+        }
+
         if (e instanceof AuthException ae) {
             status = ae.getStatusCode();
             errorName = switch (status) {
@@ -451,6 +486,7 @@ public class AuthHttpServer {
                 case 403 -> "Forbidden";
                 case 404 -> "Not Found";
                 case 409 -> "Conflict";
+                case 429 -> "Too Many Requests";
                 default -> "Authentication Error";
             };
         } else if (e instanceof SQLException) {

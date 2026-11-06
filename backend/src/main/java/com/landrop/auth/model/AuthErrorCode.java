@@ -19,6 +19,7 @@ public final class AuthErrorCode {
     public static final String AUTH_REQUIRED = "AUTH_REQUIRED";
     public static final String PROTOCOL_VERSION_UNSUPPORTED = "PROTOCOL_VERSION_UNSUPPORTED";
     public static final String FORBIDDEN = "FORBIDDEN";
+    public static final String TOO_MANY_REQUESTS = "TOO_MANY_REQUESTS";
     public static final String VALIDATION_ERROR = "VALIDATION_ERROR";
     /** A system administrator must authenticate through the Server Control Center. */
     public static final String ADMIN_LOGIN_REQUIRED = "ADMIN_LOGIN_REQUIRED";

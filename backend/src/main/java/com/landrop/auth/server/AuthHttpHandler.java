@@ -3,8 +3,10 @@ package com.landrop.auth.server;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.landrop.auth.dto.*;
 import com.landrop.auth.exception.AuthException;
+import com.landrop.auth.exception.RateLimitException;
 import com.landrop.auth.exception.ValidationException;
 import com.landrop.auth.model.AuthErrorCode;
+import com.landrop.auth.security.AuthRateLimiter;
 import com.landrop.auth.security.JwtClaims;
 import com.landrop.auth.service.AuthService;
 import com.landrop.server.clients.ClientRegistry;
@@ -17,6 +19,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.sql.SQLException;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
@@ -34,20 +37,30 @@ public class AuthHttpHandler {
     private final AuthMiddleware authMiddleware;
     private final ClientRegistry clientRegistry;
     private final ObjectMapper objectMapper;
+    private final AuthRateLimiter rateLimiter;
 
     public AuthHttpHandler(AuthService authService, AuthMiddleware authMiddleware) {
-        this(authService, authMiddleware, null, AuthHttpServer.createObjectMapper());
+        this(authService, authMiddleware, null, AuthHttpServer.createObjectMapper(), new AuthRateLimiter());
     }
 
     public AuthHttpHandler(AuthService authService, AuthMiddleware authMiddleware, ClientRegistry clientRegistry) {
-        this(authService, authMiddleware, clientRegistry, AuthHttpServer.createObjectMapper());
+        this(authService, authMiddleware, clientRegistry, AuthHttpServer.createObjectMapper(), new AuthRateLimiter());
     }
 
     public AuthHttpHandler(AuthService authService, AuthMiddleware authMiddleware, ClientRegistry clientRegistry, ObjectMapper objectMapper) {
+        this(authService, authMiddleware, clientRegistry, objectMapper, new AuthRateLimiter());
+    }
+
+    public AuthHttpHandler(AuthService authService, AuthMiddleware authMiddleware, ClientRegistry clientRegistry, ObjectMapper objectMapper, AuthRateLimiter rateLimiter) {
         this.authService = Objects.requireNonNull(authService, "authService cannot be null");
         this.authMiddleware = Objects.requireNonNull(authMiddleware, "authMiddleware cannot be null");
         this.clientRegistry = clientRegistry;
         this.objectMapper = objectMapper != null ? objectMapper : AuthHttpServer.createObjectMapper();
+        this.rateLimiter = rateLimiter != null ? rateLimiter : new AuthRateLimiter();
+    }
+
+    public AuthRateLimiter getRateLimiter() {
+        return rateLimiter;
     }
 
     public void register(HttpServer server) {
@@ -66,11 +79,17 @@ public class AuthHttpHandler {
             return;
         }
 
+        String ip = getClientIp(exchange);
         try {
+            rateLimiter.checkIpRegister(ip);
             RegisterRequest req = parseRequestBody(exchange, RegisterRequest.class);
             AuthResponse response = authService.register(req);
+            rateLimiter.recordIpRegisterAttempt(ip);
             sendJsonResponse(exchange, 201, response);
         } catch (Exception e) {
+            if (!(e instanceof RateLimitException)) {
+                rateLimiter.recordIpRegisterAttempt(ip);
+            }
             handleError(exchange, e);
         }
     }
@@ -82,11 +101,30 @@ public class AuthHttpHandler {
             return;
         }
 
+        String ip = getClientIp(exchange);
+        String accountKey = null;
         try {
+            // Check IP limit first before body reading or CPU-heavy PBKDF2 hashing
+            rateLimiter.checkIpLogin(ip);
+
             LoginRequest req = parseRequestBody(exchange, LoginRequest.class);
+            accountKey = req.resolvedIdentifier() != null ? req.resolvedIdentifier().toLowerCase(Locale.ROOT) : "";
+
+            // Check account limit before executing PBKDF2 hashing
+            if (!accountKey.isEmpty()) {
+                rateLimiter.checkAccountLogin(accountKey);
+            }
+
             AuthResponse response = authService.loginClient(req);
+            rateLimiter.recordAccountLoginSuccess(accountKey);
             sendJsonResponse(exchange, 200, response);
         } catch (Exception e) {
+            if (!(e instanceof RateLimitException)) {
+                rateLimiter.recordIpLoginAttempt(ip);
+                if (accountKey != null && !accountKey.isEmpty()) {
+                    rateLimiter.recordAccountLoginFailure(accountKey);
+                }
+            }
             handleError(exchange, e);
         }
     }
@@ -216,11 +254,26 @@ public class AuthHttpHandler {
         sendJsonResponse(exchange, 405, err);
     }
 
+    public static String getClientIp(HttpExchange exchange) {
+        String xff = exchange.getRequestHeaders().getFirst("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) {
+            return xff.split(",")[0].trim();
+        }
+        if (exchange.getRemoteAddress() != null && exchange.getRemoteAddress().getAddress() != null) {
+            return exchange.getRemoteAddress().getAddress().getHostAddress();
+        }
+        return "127.0.0.1";
+    }
+
     public void handleError(HttpExchange exchange, Exception e) throws IOException {
         int status;
         String errorName;
         String errorCode = null;
         String message = e.getMessage();
+
+        if (e instanceof RateLimitException rle) {
+            exchange.getResponseHeaders().set("Retry-After", String.valueOf(rle.getRetryAfterSeconds()));
+        }
 
         if (e instanceof AuthException ae) {
             status = ae.getStatusCode();
@@ -231,6 +284,7 @@ public class AuthHttpHandler {
                 case 403 -> "Forbidden";
                 case 404 -> "Not Found";
                 case 409 -> "Conflict";
+                case 429 -> "Too Many Requests";
                 default -> "Authentication Error";
             };
         } else if (e instanceof SQLException) {
