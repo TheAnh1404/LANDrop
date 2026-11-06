@@ -495,6 +495,19 @@ class FileManagementTest {
         assertEquals(404, resToOutsider.statusCode());
     }
 
+    @Test
+    void test10_oversizedBodyRejectedWith413() throws Exception {
+        // Send a body larger than 64KB (70KB)
+        String largePadding = "x".repeat(70 * 1024);
+        var res = httpSend("POST", "/api/transfers", userAnh, Map.of(
+            "fileId", UUID.randomUUID().toString(),
+            "receiverUserId", userKen.id().toString(),
+            "padding", largePadding
+        ));
+        assertEquals(413, res.statusCode(), "Payload larger than MAX_BODY_BYTES must return HTTP 413");
+        assertTrue(res.body().contains("PAYLOAD_TOO_LARGE"), "Error code should be PAYLOAD_TOO_LARGE: " + res.body());
+    }
+
     // =========================================================================
     // HTTP Helpers
     // =========================================================================

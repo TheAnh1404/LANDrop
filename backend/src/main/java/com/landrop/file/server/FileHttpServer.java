@@ -27,6 +27,7 @@ import java.util.*;
 public class FileHttpServer {
 
     private static final String TAG = "FileHttpServer";
+    public static final int MAX_BODY_BYTES = 64 * 1024;
 
     private final AuthMiddleware auth;
     private final FileManagementService fileService;
@@ -439,7 +440,10 @@ public class FileHttpServer {
 
     private JsonNode readBodyQuiet(HttpExchange exchange) throws IOException {
         try (InputStream in = exchange.getRequestBody()) {
-            byte[] bytes = in.readAllBytes();
+            byte[] bytes = in.readNBytes(MAX_BODY_BYTES + 1);
+            if (bytes.length > MAX_BODY_BYTES) {
+                throw new FileException(413, "PAYLOAD_TOO_LARGE", "Request body exceeds maximum size.");
+            }
             if (bytes.length == 0) return null;
             return mapper.readTree(bytes);
         }
