@@ -18,6 +18,7 @@ import java.sql.SQLException;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Map;
 import java.util.Set;
 import java.util.HashMap;
@@ -36,13 +37,27 @@ public final class DatabaseMigrator {
         "/db/migration/V4__persistent_chat_phase17.sql",
         "/db/migration/V5__file_management_phase18.sql",
         "/db/migration/V6__server_control_center_phase03.sql",
-        "/db/migration/V7__authentication_device_enrollment_phase04.sql"
+        "/db/migration/V7__authentication_device_enrollment_phase04.sql",
+        "/db/migration/V8__workspace_join_password.sql"
     );
 
-    private final DatabaseManager databaseManager;
+    public static List<String> getMigrationResources() {
+        return MIGRATION_RESOURCES;
+    }
+
+    @FunctionalInterface
+    public interface ConnectionProvider {
+        Connection getConnection() throws SQLException;
+    }
+
+    private final ConnectionProvider connectionProvider;
 
     public DatabaseMigrator(DatabaseManager databaseManager) {
-        this.databaseManager = databaseManager;
+        this(Objects.requireNonNull(databaseManager, "databaseManager cannot be null")::getConnection);
+    }
+
+    public DatabaseMigrator(ConnectionProvider connectionProvider) {
+        this.connectionProvider = Objects.requireNonNull(connectionProvider, "connectionProvider cannot be null");
     }
 
     public DatabaseMigrator() {
@@ -52,7 +67,7 @@ public final class DatabaseMigrator {
     /** Applies pending migrations atomically, serializing concurrent server startups. */
     public void migrate() throws SQLException, IOException {
         AppLogger.info(TAG, "Checking PostgreSQL schema migrations...");
-        try (Connection conn = databaseManager.getConnection()) {
+        try (Connection conn = connectionProvider.getConnection()) {
             conn.setAutoCommit(false);
             try (Statement stmt = conn.createStatement()) {
                 stmt.execute("SELECT pg_advisory_xact_lock(hashtext(current_database()), hashtext(current_schema() || ':landrop:migrations'))");
@@ -116,7 +131,7 @@ public final class DatabaseMigrator {
     public List<String> verifyTablesCreated() throws SQLException {
         Map<String, List<String>> required = Map.ofEntries(
             Map.entry("users", List.of("id", "email", "username", "display_name", "avatar_url", "password_hash", "status", "system_role", "created_at", "updated_at")),
-            Map.entry("workspaces", List.of("id", "name", "slug", "description", "owner_id", "created_at", "updated_at")),
+            Map.entry("workspaces", List.of("id", "name", "slug", "description", "owner_id", "join_policy", "join_password_hash", "created_at", "updated_at")),
             Map.entry("workspace_members", List.of("id", "workspace_id", "user_id", "role", "joined_at", "updated_at")),
             Map.entry("channels", List.of("id", "workspace_id", "name", "topic", "is_private", "created_at", "updated_at")),
             Map.entry("messages", List.of("id", "channel_id", "user_id", "parent_message_id", "client_message_id", "content", "created_at", "updated_at", "edited_at", "deleted_at")),
@@ -127,7 +142,7 @@ public final class DatabaseMigrator {
             Map.entry("transfers", List.of("id", "file_id", "sender_user_id", "receiver_user_id", "sender_device_id", "receiver_device_id", "status", "created_at", "started_at", "completed_at", "failed_at", "error_message"))
         );
         Map<String, Set<String>> actual = new HashMap<>();
-        try (Connection conn = databaseManager.getConnection(); Statement stmt = conn.createStatement();
+        try (Connection conn = connectionProvider.getConnection(); Statement stmt = conn.createStatement();
              ResultSet rs = stmt.executeQuery("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = current_schema()")) {
             while (rs.next()) actual.computeIfAbsent(rs.getString(1), ignored -> new HashSet<>()).add(rs.getString(2));
         }
