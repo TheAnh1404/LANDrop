@@ -20,6 +20,7 @@ interface Session {
   getAccessToken: () => string | null;
   serverUrl: string;
   refreshSession: () => Promise<string | null>;
+  retryRestore: () => Promise<boolean>;
   connectServer: (url: string) => Promise<boolean>;
   login: (identifier: string, password: string, admin?: boolean) => Promise<boolean>;
   register: (name: string, username: string, email: string, password: string) => Promise<boolean>;
@@ -113,12 +114,60 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
           }
           if (active && version === generation.current) { apply(auth); setServerInfo(s => ({ ...s, status: 'connected' })); }
         }
-      } catch { if (active && version === generation.current) clear(); }
+      } catch (failure) {
+        if (active && version === generation.current) {
+          const isAuthError = failure instanceof ApiError && [401, 403].includes(failure.status);
+          if (isAuthError) {
+            clear();
+          } else {
+            // Keep the refresh token stored so the user is not logged out during a transient outage.
+            setServerInfo(s => ({ ...s, status: 'error' }));
+            setError(`Không kết nối được server để khôi phục phiên: ${errorMessage(failure)}`);
+          }
+        }
+      }
       finally { if (active) setReady(true); }
     }
     // Defer so StrictMode's discarded effect never rotates a refresh token.
     const timer = setTimeout(restore, 0);
     return () => { active = false; clearTimeout(timer); controller.abort(); };
+  }, [apply, clear, enrollBrowser]);
+
+  const retryRestore = useCallback(async (): Promise<boolean> => {
+    const version = generation.current;
+    setError('');
+    setServerInfo(s => ({ ...s, status: 'connecting' }));
+    try {
+      const refreshToken = localStorage.getItem('landrop.refresh') || sessionStorage.getItem('landrop.refresh');
+      if (!refreshToken) {
+        setServerInfo(s => ({ ...s, status: 'disconnected' }));
+        return false;
+      }
+      const auth = await fetchJson<AuthResponse>(origin.current, '/api/auth/refresh', {
+        method: 'POST',
+        body: JSON.stringify({ refreshToken }),
+      });
+      if (version !== generation.current) return false;
+      localStorage.setItem('landrop.refresh', auth.refreshToken);
+      sessionStorage.setItem('landrop.refresh', auth.refreshToken);
+      sessionStorage.removeItem('landrop.mode');
+      await enrollBrowser(auth, origin.current);
+      if (version !== generation.current) return false;
+      apply(auth);
+      setServerInfo(s => ({ ...s, status: 'connected' }));
+      return true;
+    } catch (failure) {
+      if (version === generation.current) {
+        const isAuthError = failure instanceof ApiError && [401, 403].includes(failure.status);
+        if (isAuthError) {
+          clear();
+        } else {
+          setServerInfo(s => ({ ...s, status: 'error' }));
+        }
+        setError(errorMessage(failure));
+      }
+      return false;
+    }
   }, [apply, clear, enrollBrowser]);
 
   const request = useMemo(() => createAuthenticatedRequester({
@@ -167,11 +216,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const refreshSession = useCallback(async (): Promise<string | null> => {
     if (mode === 'demo') return null;
     try {
+      if (!tokens.current) {
+        const ok = await retryRestore();
+        return ok && tokens.current ? tokens.current.accessToken : null;
+      }
       return await request.refreshToken();
     } catch {
       return null;
     }
-  }, [mode, request]);
+  }, [mode, request, retryRestore]);
 
   const getAccessToken = useCallback(() => tokens.current?.accessToken || null, []);
 
@@ -186,6 +239,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     getAccessToken,
     serverUrl: origin.current,
     refreshSession,
+    retryRestore,
     login: (emailOrUsername, password, admin = false) => authenticate(admin ? '/api/admin/auth/login' : '/api/auth/login', { emailOrUsername, password }),
     register: (displayName, username, email, password) => authenticate('/api/auth/register', { displayName, username, email, password }),
     logout, enterDemo: () => { clear(); setMode('demo'); setUser(CURRENT_USER); sessionStorage.setItem('landrop.mode', 'demo'); setError(''); }

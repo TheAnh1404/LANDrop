@@ -276,3 +276,38 @@ test('moving metadata to the root sends explicit null using the Java contract ke
   assert.throws(() => metadataUpdate('file', ' ', ''), /255/);
   assert.throws(() => metadataUpdate('folder', 'a'.repeat(256), ''), /255/);
 });
+
+test('session restore classifies network errors vs auth errors correctly', async () => {
+  function handleRestoreOutcome(error, clearFn, keepFn) {
+    const isAuthError = error instanceof ApiError && [401, 403].includes(error.status);
+    if (isAuthError) {
+      clearFn();
+    } else {
+      keepFn();
+    }
+  }
+
+  let cleared = 0, kept = 0;
+  const onClear = () => { cleared++; };
+  const onKeep = () => { kept++; };
+
+  // Network error (timeout / connection refused / status 0)
+  handleRestoreOutcome(new ApiError('Network down', 0, 'NETWORK_ERROR'), onClear, onKeep);
+  assert.equal(cleared, 0);
+  assert.equal(kept, 1);
+
+  // Transient 503 / 500 server reboot
+  handleRestoreOutcome(new ApiError('Service Unavailable', 503, 'SERVICE_UNAVAILABLE'), onClear, onKeep);
+  assert.equal(cleared, 0);
+  assert.equal(kept, 2);
+
+  // Expired / invalid refresh token (401)
+  handleRestoreOutcome(new ApiError('Refresh token expired', 401, 'INVALID_TOKEN'), onClear, onKeep);
+  assert.equal(cleared, 1);
+  assert.equal(kept, 2);
+
+  // Forbidden token (403)
+  handleRestoreOutcome(new ApiError('Forbidden', 403, 'FORBIDDEN'), onClear, onKeep);
+  assert.equal(cleared, 2);
+  assert.equal(kept, 2);
+});
